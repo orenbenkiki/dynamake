@@ -1,0 +1,14 @@
+#!/bin/bash
+
+for SOURCE in *.py $(find dynamake -name '*.py') $(find tests -name '*.py')
+do
+    autopep8 -a -a -a -a --max-line-length 100 - < ${SOURCE} > .reformat
+    isort -q -sl -w 100 -p dynamake .reformat > /dev/null
+    if ! cmp -s ${SOURCE} .reformat
+    then
+        mv .reformat ${SOURCE}
+        echo Reformatted ${SOURCE}
+    fi
+done
+
+rm -rf .reformat

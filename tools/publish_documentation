@@ -1,0 +1,30 @@
+#!/bin/bash
+
+set -e
+
+python setup.py nose
+python setup.py html
+
+VERSION=$(grep __version__ dynamake/version.py | sed "s/^[^']*'//;s/'.*$//;")
+case "$VERSION" in
+    *dev*)
+        echo "Cowardly refuse to publish non-committed version $VERSION"
+        exit 1
+    ;;
+esac
+
+if test -d .publish_html
+then
+    cd .publish_html
+    hg pull
+    hg update
+else
+    hg clone ssh://hg@bitbucket.org/tanaylab/tanaylab.bitbucket.io .publish_html
+    cd .publish_html
+fi
+rm -rf dynamake
+cp -R ../html dynamake
+hg forget dynamake
+hg add dynamake
+hg commit -m "Document DynaMake version $VERSION"
+hg push

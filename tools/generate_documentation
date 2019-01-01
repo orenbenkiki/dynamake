@@ -1,0 +1,14 @@
+#!/bin/bash
+
+set -e
+
+if ! test -d cover
+then
+    echo "Generate coverage first by running: python setup.py nose"
+    exit 1
+fi
+
+sphinx-build -W -b html sphinx sphinx/generated | sed 's:sphinx/generated:./html:'
+test $PIPESTATUS == 0
+mv sphinx/generated html
+cp -R cover html/cover
