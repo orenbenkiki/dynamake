@@ -11,7 +11,6 @@ from unittest import TestCase
 
 from dynamake.application import ConfigArgs
 
-
 # pylint: disable=missing-docstring
 
 
