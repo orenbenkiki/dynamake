@@ -1,0 +1,18 @@
+#!/bin/bash
+rm -rf \
+    build \
+    cover \
+    .coverage \
+    dist \
+    dynamake/version.py \
+    *.egg-info \
+    .eggs \
+    $(find . -name __pycache__ -o -name .reformat) \
+    html \
+    junk* \
+    .mypy_cache \
+    .publish_html \
+    .reformat \
+    sphinx/generated \
+    sphinx/*.rst \
+    .tox
