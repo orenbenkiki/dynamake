@@ -116,11 +116,11 @@ class ConfigArgs:
 
             for name, value in entry.items():
                 if name not in self.values:
-                    if index == 1:
-                        raise RuntimeError('Unknown argument: %s '
-                                           'specified in the configuration file: %s'
-                                           % (name, path))
-                    continue
+                    if index == 0:
+                        continue
+                    raise RuntimeError('Unknown argument: %s '
+                                       'specified in the configuration file: %s'
+                                       % (name, path))
 
                 if isinstance(value, str):
                     try:
@@ -131,8 +131,15 @@ class ConfigArgs:
 
                 self.values[name] = value
 
+    @staticmethod
+    def reset() -> None:
+        """
+        Reset all the current state, for tests.
+        """
+        ConfigArgs.current = ConfigArgs({})
 
-ConfigArgs.current = ConfigArgs({})
+
+ConfigArgs.reset()
 
 
 #: The type of a wrapped function.
