@@ -20,7 +20,7 @@ def main_function() -> int:
     ConfigArgs.current = ConfigArgs({'bar': (1, int, 'The number of bars')})
     ConfigArgs.current.add_to_parser(parser)
     args = parser.parse_args()
-    ConfigArgs.current.parse(args)
+    ConfigArgs.current.parse_args(args)
     if args.bad:
         bad()
     return add(1) + Foo.add(0, bar=0)
@@ -43,7 +43,7 @@ def bad(*, baz: int = 0) -> int:
     return baz
 
 
-class TestArgs(TestWithFiles):
+class TestApplication(TestWithFiles):
 
     def test_defaults(self) -> None:
         sys.argv = ['test']
@@ -55,26 +55,40 @@ class TestArgs(TestWithFiles):
         self.assertEqual(main_function(), 2)
 
     def test_one_config(self) -> None:
-        write_file('config.yaml', '{bar: 2}')
+        write_file('config.yaml', '[{}, {bar: 2}]')
         sys.argv = ['test', '--config', 'config.yaml']
         self.assertEqual(main_function(), 3)
 
     def test_two_configs(self) -> None:
-        write_file('one.yaml', '{bar: 1}')
-        write_file('two.yaml', '{bar: 2}')
+        write_file('one.yaml', '[{}, {bar: 1}]')
+        write_file('two.yaml', '[{bar: 2}, {}]')
         sys.argv = ['test', '--config', 'one.yaml', '--config', 'two.yaml']
         self.assertEqual(main_function(), 3)
 
     def test_argument(self) -> None:
-        write_file('config.yaml', '{bar: 1}')
+        write_file('config.yaml', '[{}, {bar: 1}]')
         sys.argv = ['test', '--bar', '2', '--config', 'config.yaml']
         self.assertEqual(main_function(), 3)
 
-    def test_non_mapping(self) -> None:
+    def test_top_non_sequence(self) -> None:
+        write_file('config.yaml', '{}')
+        sys.argv = ['test', '--config', 'config.yaml']
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               'file: config.yaml .* top-level sequence',
+                               main_function)
+
+    def test_wrong_top_entries(self) -> None:
         write_file('config.yaml', '[]')
         sys.argv = ['test', '--config', 'config.yaml']
         self.assertRaisesRegex(RuntimeError,  # type: ignore
-                               'file: config.yaml .* top-level mapping',
+                               'file: config.yaml .* two entries',
+                               main_function)
+
+    def test_non_mapping_entry(self) -> None:
+        write_file('config.yaml', '[1, {}]')
+        sys.argv = ['test', '--config', 'config.yaml']
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               'entry: 0 .* file: config.yaml .* mapping',
                                main_function)
 
     def test_invalid_argument_value(self) -> None:
@@ -84,14 +98,19 @@ class TestArgs(TestWithFiles):
                                main_function)
 
     def test_invalid_config_value(self) -> None:
-        write_file('config.yaml', '{bar: x}')
+        write_file('config.yaml', '[{}, {bar: x}]')
         sys.argv = ['test', '--config', 'config.yaml']
         self.assertRaisesRegex(RuntimeError,  # type: ignore
                                'value: x .* argument: bar',
                                main_function)
 
-    def test_unknown_argument(self) -> None:
-        write_file('config.yaml', '{baz: x}')
+    def test_allowed_unknown_argument(self) -> None:
+        write_file('config.yaml', '[{baz: x}, {}]')
+        sys.argv = ['test', '--config', 'config.yaml']
+        self.assertEqual(main_function(), 2)
+
+    def test_forbidden_unknown_argument(self) -> None:
+        write_file('config.yaml', '[{}, {baz: x}]')
         sys.argv = ['test', '--config', 'config.yaml']
         self.assertRaisesRegex(RuntimeError,  # type: ignore
                                'argument: baz .* file: config.yaml',

@@ -30,8 +30,8 @@ class ConfigArgs:
         """
         Create a collection of arguments.
 
-        Each argument is a tuple containing its name, a function for parsing its value from a
-        string, and a description for the help message.
+        Each argument is a tuple containing its default value, a function for parsing its value from
+        a string, and a description for the help message.
         """
 
         #: The known arguments.
@@ -63,37 +63,23 @@ class ConfigArgs:
             by the following optional explicit command-line arguments. If the same
             argument is set in multiple locations, the last command line argument wins
             over the last loaded configuration file.
+
+            The file may be empty, or contain a list of two mappings. The first mapping
+            contains parameters which may or may not apply to the program; the second
+            mapping contains parameters which "must" apply; that is, it is an error for an
+            unknown parameter to appear in the second mapping. If the same parameter
+            appears in both mappings, the second one wins.
         """))
         for name, (default, _, description) in self.arguments.items():
             configurable.add_argument('--' + name, help=description + ' (default: %s)' % default)
 
-    def parse(self, args: Namespace) -> None:
+    def parse_args(self, args: Namespace) -> None:
         """
         Update the values based on loaded configuration files and/or explicit command line
         arguments.
         """
         for path in (args.config or []):
-            with open(path, 'r') as file:
-                data = yaml.load(file.read())
-                if data is None:
-                    data = {}
-                if not isinstance(data, dict):
-                    raise RuntimeError('The configuration file: %s '
-                                       'does not contain a top-level mapping' % path)
-                for name, value in data.items():
-                    if name not in self.values:
-                        raise RuntimeError('Unknown argument: %s '
-                                           'specified in the configuration file: %s'
-                                           % (name, path))
-
-                    if isinstance(value, str):
-                        try:
-                            value = self.arguments[name][1](value)
-                        except BaseException:
-                            raise RuntimeError('Invalid value: %s for the argument: %s'
-                                               % (value, name))
-
-                    self.values[name] = value
+            self.load(path)
 
         for name, (_, parser, _) in self.arguments.items():
             value = vars(args)[name]
@@ -103,6 +89,47 @@ class ConfigArgs:
                 except BaseException:
                     raise RuntimeError('Invalid value: %s for the argument: %s'
                                        % (vars(args)[name], name))
+
+    def load(self, path: str) -> None:
+        """
+        Load a configuration file.
+        """
+        with open(path, 'r') as file:
+            data = yaml.load(file.read())
+
+        if data is None:
+            data = [{}, {}]
+
+        if not isinstance(data, list):
+            raise RuntimeError('The configuration file: %s '
+                               'does not contain a top-level sequence' % path)
+        if len(data) != 2:
+            raise RuntimeError('The configuration file: %s '
+                               'top-level sequence does not contain two entries' % path)
+
+        for index in [0, 1]:
+            entry = data[index]
+            if not isinstance(entry, dict):
+                raise RuntimeError('The entry: %s '
+                                   'of the configuration file: %s '
+                                   'is not a mapping' % (index, path))
+
+            for name, value in entry.items():
+                if name not in self.values:
+                    if index == 1:
+                        raise RuntimeError('Unknown argument: %s '
+                                           'specified in the configuration file: %s'
+                                           % (name, path))
+                    continue
+
+                if isinstance(value, str):
+                    try:
+                        value = self.arguments[name][1](value)
+                    except BaseException:
+                        raise RuntimeError('Invalid value: %s for the argument: %s'
+                                           % (value, name))
+
+                self.values[name] = value
 
 
 ConfigArgs.current = ConfigArgs({})
