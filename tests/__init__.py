@@ -10,6 +10,7 @@ from textwrap import dedent
 from unittest import TestCase
 
 from dynamake.application import ConfigArgs
+from dynamake.config import Config
 
 # pylint: disable=missing-docstring
 
@@ -35,7 +36,8 @@ class TestWithFiles(TestCase):
         self.previous_directory = os.getcwd()
         self.temporary_directory = tempfile.mkdtemp()
         os.chdir(os.path.expanduser(self.temporary_directory))
-        ConfigArgs.current = ConfigArgs({})
+        ConfigArgs.reset()
+        Config.reset()
 
     def tearDown(self) -> None:
         os.chdir(self.previous_directory)

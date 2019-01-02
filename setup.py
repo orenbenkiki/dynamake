@@ -148,6 +148,7 @@ class PylintCommand(SimpleCommand):
                    'fixme',
                    'global-statement',
                    'no-member',
+                   'too-few-public-methods',
                    'ungrouped-imports',
                    'wrong-import-order',
                ]),
