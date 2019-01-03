@@ -7,11 +7,11 @@ from hashlib import md5
 from typing import Any
 from typing import Dict
 from typing import List
+from typing import Optional
+from typing.re import Pattern  # pylint: disable=import-error
 from uuid import UUID
 
 import yaml
-
-from .patterns import Pattern
 
 
 class Rule:  # pylint: disable=too-few-public-methods
@@ -37,74 +37,85 @@ class Rule:  # pylint: disable=too-few-public-methods
         #: The parameter values provided by the rule.
         self.then = then
 
-    def is_match(self, context: List[str], arguments: Dict[str, Any]) -> bool:
+    _BUILTINS = ['step', 'stack']
+
+    def is_match(self, context: Dict[str, Any]) -> bool:
         """
-        Whether the rule is a match for a step with the specified arguments.
+        Whether the rule is a match for a step invocation.
         """
-        if ('step' in self.when and not self._step_is_match(context)) \
-                or ('context' in self.when and not self._context_is_match(context)):
-            return False
-        for key, condition in self.when.items():
-            if key not in ['step', 'context'] \
-                    and not self._key_is_match(key, condition, context, arguments):
+        return self._match_step_and_stack(context) \
+            and self._verify_known_parameters(context) \
+            and self._match_other_conditions(context)
+
+    def _match_step_and_stack(self, context: Dict[str, Any]) -> bool:
+        for key in Rule._BUILTINS:
+            if key in self.when and not self._key_is_match(key, self.when[key], context):
                 return False
         return True
 
-    def is_specific(self) -> bool:
-        """
-        Whether the rule applies to specific steps.
+    def _verify_known_parameters(self, context: Dict[str, Any]) -> bool:
+        for key in self.when:
+            if key in Rule._BUILTINS:
+                continue
+            if key.startswith('lambda '):
+                for name in key[7:].split(','):
+                    self._parameter_name(name.strip(), context)
+            else:
+                self._parameter_name(key, context)
+        return True
 
-        If it does, then we'll complain about unrecognized parameters.
-        """
-        return 'step' in self.when or 'context' in self.when
+    def _match_other_conditions(self, context: Dict[str, Any]) -> bool:
+        for key, condition in self.when.items():
+            if key not in Rule._BUILTINS and not self._key_is_match(key, condition, context):
+                return False
+        return True
 
-    def _step_is_match(self, context: List[str]) -> bool:
-        step = context[-1]
-        condition = self.when['step']
-        if isinstance(condition, list):
-            return step in condition
-        return step == condition
-
-    def _context_is_match(self, context: List[str]) -> bool:
-        condition = self.when['context']
-        try:
-            for pattern in condition:
-                if pattern.is_match(context):
-                    return True
-            return False
-        except BaseException:
-            return condition.is_match(context)
-
-    def _key_is_match(self, key: str, condition: Any,
-                      context: List[str], arguments: Dict[str, Any]) -> bool:
+    def _key_is_match(self, key: str, condition: Any, context: Dict[str, Any]) -> bool:
         if key.startswith('lambda '):
-            return Rule._match_lambda(key[7:],  # pylint: disable=protected-access
-                                      condition, arguments)
+            return self._match_lambda(key[7:],  # pylint: disable=protected-access
+                                      condition, context)
+        parameter_name = self._parameter_name(key, context)
+        return parameter_name is not None and Rule._match_value(context[parameter_name], condition)
 
-        if key not in arguments:
-            if self.is_specific():
-                raise RuntimeError('Unknown parameter: %s '
-                                   'for the step: %s '
-                                   'in the rule: %s '
-                                   'of the file: %s'
-                                   % (key, '.'.join(context), self.index, self.path))
-            return False
+    def _match_lambda(self, arguments: str, condition: str, context: Dict[str, Any]) -> bool:
+        parameter_values: Dict[str, Any] = {}
+        for argument in arguments.split(','):
+            parameter_name = self._parameter_name(argument.strip(), context)
+            if parameter_name is None:
+                return False
+            parameter_values[parameter_name] = context[parameter_name]
+        evaluator = eval('lambda %s: %s'  # pylint: disable=eval-used
+                         % (arguments.replace('?', ''), condition))
+        return evaluator(**parameter_values)
 
-        try:
-            return arguments[key] in condition
-        except BaseException:
-            return arguments[key] == condition
+    def _parameter_name(self, parameter_name: str, context: Dict[str, Any]) -> Optional[str]:
+        is_optional = parameter_name.endswith('?')
+        if is_optional:
+            parameter_name = parameter_name[:-1]
+
+        if parameter_name in context:
+            return parameter_name
+
+        if not is_optional:
+            raise RuntimeError('Unknown parameter: %s '
+                               'for the step: %s '
+                               'in the rule: %s '
+                               'of the file: %s'
+                               % (parameter_name, context['stack'], self.index, self.path))
+        return None
 
     @staticmethod
-    def _match_lambda(parameters: str, condition: str, arguments: Dict[str, Any]) -> bool:
-        parameter_values: Dict[str, Any] = {}
-        parameter_names = [parameter_name.strip() for parameter_name in parameters.split(',')]
-        for parameter_name in parameter_names:
-            if parameter_name not in arguments:
-                return False
-            parameter_values[parameter_name] = arguments[parameter_name]
-        evaluator = eval('lambda %s: %s' % (parameters, condition))  # pylint: disable=eval-used
-        return evaluator(**parameter_values)
+    def _match_value(value: Any, condition: Any) -> bool:
+        if isinstance(condition, list):
+            for alternative in condition:
+                if Rule._match_value(value, alternative):
+                    return True
+            return False
+
+        if isinstance(condition, Pattern):
+            return bool(condition.match(value))
+
+        return value == condition
 
     @staticmethod
     def _load_rule(path: str, index: int, rule: Any) -> 'Rule':
@@ -122,18 +133,6 @@ class Rule:  # pylint: disable=too-few-public-methods
                                'in the file: %s'
                                % (key, index, path))
 
-        when = data['when']
-        if 'context' in when:
-            try:
-                if isinstance(when['context'], list):
-                    when['context'] = [Pattern(pattern) for pattern in when['context']]
-                else:
-                    when['context'] = Pattern(when['context'])
-            except BaseException:
-                raise RuntimeError('Invalid pattern(s) for context '
-                                   'in the rule: %s '
-                                   'in the file: %s'
-                                   % (index, path))
         return Rule(path, index, **data)
 
     @staticmethod
@@ -186,7 +185,7 @@ class Rule:  # pylint: disable=too-few-public-methods
 
 class Config:
     """
-    Snakemake integration class.
+    Global configuration class.
     """
 
     #: All the known configuration rules (including for per-rule parameters).
@@ -196,35 +195,34 @@ class Config:
     DIRECTORY: str
 
     @staticmethod
-    def load(path: str) -> None:
+    def context_for_step(stack: List[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Load a YAML configuration file into `:py:attr:`snakeconf.config.Config.rules`.
-
-        The rules from the loaded files will override any values specified by previously loaded
-        rules. In general, the last matching rule wins.
+        Prepare a context identifying the specific invocation of a step.
         """
-        Config.rules += Rule.load(path)
+        context = arguments.copy()
+        context['stack'] = '/' + '/'.join(stack)
+        context['step'] = stack[-1]
+        return context
 
     @staticmethod
-    def path_for_step(context: List[str], arguments: Dict[str, Any]) -> str:
+    def path_for_context(context: Dict[str, Any]) -> str:
         """
         Return the path name of a configuration file for a specific step invocation.
 
-        The file name is based on a digest of the full invocation context and all the arguments.
+        The file name is based on a digest of the full invocation context.
         """
         digester = md5()
         digester.update(yaml.dump(context).encode('utf-8'))
-        digester.update(yaml.dump(arguments).encode('utf-8'))
         return os.path.join(Config.DIRECTORY, 'config.%s.yaml' % UUID(bytes=digester.digest()))
 
     @staticmethod
-    def values_for_step(context: List[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
+    def values_for_context(context: Dict[str, Any]) -> Dict[str, Any]:
         """
         Return the configuration values for a specific step invocation.
         """
         values: Dict[str, Any] = {}
         for rule in Config.rules:
-            if rule.is_match(context, arguments):
+            if rule.is_match(context):
                 values.update(rule.then)
         return values
 

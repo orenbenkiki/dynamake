@@ -1,53 +1,81 @@
 """
-Simple pattern matching for step paths.
+Allow simple loading of regular expressions in configuration YAML files.
 """
 
+import re
 from typing import List
+from typing.re import Pattern  # pylint: disable=import-error
+
+import yaml
+from yaml import Loader
+from yaml import Node
 
 
-class Pattern:
+def glob2re(glob: str) -> Pattern:  # pylint: disable=too-many-branches
     """
-    A pattern for matching a '.'-separated path.
-
-    A ``.+.`` will match one or more path element.
-    A ``.*.`` will match zero or more path elements.
-    A ``.?.`` will match any single path element.
-    Otherwise, a ``.something.`` will match the exact ``something`` path element.
+    Translate a ``glob`` pattern to the equivalent ``re.Pattern``.
     """
 
-    def __init__(self, pattern: str) -> None:
-        """
-        Initialize the matcher with a '.'-separated pattern.
-        """
-        self._parts = pattern.split('.')
+    index = 0
+    size = len(glob)
+    results: List[str] = []
 
-    def is_match(self, path: List[str]) -> bool:
-        """
-        Test whether the pattern matches the path.
-        """
-        return Pattern._is_match(self._parts, path)
+    while index < size:
+        char = glob[index]
+        index = index + 1
 
-    @staticmethod
-    def _is_match(parts: List[str], path: List[str]) -> bool:  # pylint: disable=too-many-return-statements
-        if not parts:
-            return not path
+        if char == '*':
+            if index < size and glob[index] == '*':
+                index += 1
+                if results and results[-1] == '\\/' and index < size and glob[index] == '/':
+                    results.append('(.*/)?')
+                    index += 1
+                else:
+                    results.append('.*')
+            else:
+                results.append('[^/]*')
 
-        if not path:
-            for part in parts:
-                if part != '*':
-                    return False
-            return True
+        elif char == '?':
+            results.append('[^/]')
 
-        if parts[0] == '?':
-            return Pattern._is_match(parts[1:], path[1:])
+        elif char == '[':
+            end_index = index
+            while end_index < size and glob[end_index] != ']':
+                end_index += 1
 
-        if parts[0] == '+':
-            return Pattern._is_match(parts[1:], path[1:]) or Pattern._is_match(parts, path[1:])
+            if end_index >= size:
+                results.append('\\[')
 
-        if parts[0] == '*':
-            return Pattern._is_match(parts[1:], path) or Pattern._is_match(parts, path[1:])
+            else:
+                characters = glob[index:end_index].replace('\\', '\\\\')
+                index = end_index + 1
 
-        if parts[0] == path[0]:
-            return Pattern._is_match(parts[1:], path[1:])
+                results.append('[')
 
-        return False
+                if characters[0] == '!':
+                    results.append('^/')
+                    characters = characters[1:]
+                elif characters[0] == '^':
+                    results.append('\\')
+
+                results.append(characters)
+                results.append(']')
+
+        else:
+            results.append(re.escape(char))
+
+    return re.compile(''.join(results))
+
+
+def _load_glob(loader: Loader, node: Node) -> Pattern:
+    return glob2re(loader.construct_scalar(node))
+
+
+yaml.add_constructor('!g', _load_glob)
+
+
+def _load_regexp(loader: Loader, node: Node) -> Pattern:
+    return re.compile(loader.construct_scalar(node))
+
+
+yaml.add_constructor('!r', _load_regexp)
