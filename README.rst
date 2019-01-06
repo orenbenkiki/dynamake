@@ -212,14 +212,14 @@ An example of a slightly more dynamic build script is:
     def compile_objects(source_dir: str, object_dir: str) -> List[str]:
        return [compiled.output for compiled
                in dm.foreach(wildcards, compile_file,
-                             source_path='{$source_dir}/{$name}.c',
-                             object_path='{$object_dir}/{$name}.o')]
+                             source_path='{source_dir}/{name}.c',
+                             object_path='{object_dir}/{name}.o')]
 
     @dm.action()
     def link_objects(objects: List[str], executable_path: str) -> dm.Action:
         return dm.Action(input=objects,
                          output=executable_path,
-                         run=['ld', '{$input}', '-o', '{$output}'])
+                         run=['ld', '{input}', '-o', '{output}'])
 
     @dm.plan()
     def build_executable(source_dir: str, object_dir: str, executable_path: str) -> None:
@@ -230,9 +230,9 @@ An example of a slightly more dynamic build script is:
 
 This demonstrates some additional concepts:
 
-* All DynaMake functions will automatically expand ``{$name}`` inside strings.
+* All DynaMake functions will automatically expand ``{name}`` inside strings.
   The ``name`` can be the name of a function parameter, or the name of a wildcard.
-  In actions one can also use ``{$input}`` and ``{$output}``.
+  In actions one can also use ``{input}`` and ``{output}``.
 
 * The: py: func: `dynamake.make.glob` function acts similarly to ``glob.glob``, but will return a list
   of dictionaries, where each one assigns a value to each ``{*name}`` given in the pattern.
