@@ -113,7 +113,7 @@ def foreach_string(*args: Strings) -> Iterator[str]:
             yield from foreach_string(*strings)
 
 
-def expand_strings(wildcards: List[Dict[str, Any]], *patterns: Strings) -> Strings:
+def expand_strings(wildcards: List[Dict[str, Any]], *patterns: Strings) -> List[str]:
     """
     Given a list of wildcard dictionaries, and a pattern (Python format string),
     generate one output per dictionary using the pattern.
@@ -328,7 +328,7 @@ def _capture_string(capture: str, regexp: Pattern, string: str) -> Dict[str, Any
     return values
 
 
-def capture_glob(wildcards: Dict[str, Any], capture: str) -> List[Dict[str, Any]]:
+def capture_glob(wildcards: Dict[str, Any], *patterns: Strings) -> List[Dict[str, Any]]:
     """
     Given a glob pattern containing ``...{name}...{*captured_name}...``,
     return a list of dictionaries containing the captured values for each
@@ -351,5 +351,11 @@ def capture_glob(wildcards: Dict[str, Any], capture: str) -> List[Dict[str, Any]
         A list of the dictionary of values for the captured names from each existing file
         that matches the capture glob pattern.
     """
-    return capture_strings(wildcards, capture,
-                           glob_files(capture2glob(capture).format(**wildcards)))
+    def _generator() -> Iterator[Dict[str, Any]]:
+        for capture in foreach_string(*patterns):
+            glob = capture2glob(capture).format(**wildcards)
+            regexp = capture2re(capture).format(**wildcards)
+            for string in glob_files(glob):
+                yield _capture_string(capture, regexp, string)
+
+    return list(_generator())
