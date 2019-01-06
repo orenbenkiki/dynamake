@@ -70,7 +70,7 @@ class TestConfig(TestWithFiles):
     def test_last_one_wins(self) -> None:
         write_file('config.yaml', """
             - when: {}
-              then: {p: 2, q: 2}
+              then: {'p?': 2, q: 2}
 
             - when: {a: 1}
               then: {p: 1}
@@ -79,7 +79,7 @@ class TestConfig(TestWithFiles):
 
         self.assertEqual(Config.values_for_context({'a': 1}), {'p': 1, 'q': 2})
 
-        self.assertEqual(Config.values_for_context({'a': 0}), {'p': 2, 'q': 2})
+        self.assertEqual(Config.values_for_context({'a': 0}), {'p?': 2, 'q': 2})
 
     def test_match_step(self) -> None:
         write_file('config.yaml', """

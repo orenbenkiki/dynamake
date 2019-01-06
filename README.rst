@@ -313,14 +313,14 @@ will complain about unused parameters whose ``when`` condition explicitly tested
 name. This will detect most typos and "useless" parameters which have no effect on the build.
 
 If :py:func:`dynamake.make.config_file` was invoked, then DynaMake will assume the file is processed
-by (some) action, which will take responsibility over detecting unrecognized parameters. To
-facilitate this, the generated YAML configuration file contains a sequence of two mappings. The
-first contains parameters which need not be used by the action (that is, whose ``when`` clause did
-not test the ``step`` name), and the second contains parameters which should be used by the action
-(that is, whose ``when`` clause did test the ``step`` name). This allows specifying default
-parameters for a large set of steps in a generic rule without complaints about unrecognized
-configuration parameters. The generated redundant parameters are somewhat reduced by the fact that a
-``when`` clause is automatically false if it examines an argument which does not exist for the step.
+by (some) action, which will take responsibility over detecting unrecognized parameters. To enable
+this, the generated YAML configurable file contains a mapping using the same convention as the
+``then`` section of a configuration rule; that is, if the name of an unrecognized parameter ends
+with a ``?``, then it will be silently ignored, otherwise it will be an error. This allows
+specifying default parameters for a large set of steps in a generic rule without complaints about
+unrecognized configuration parameters. The generated redundant parameters are somewhat reduced by
+the fact that a ``when`` clause is automatically false if it examines an argument which does not
+exist for the step.
 
 The generated configuration file is created in a special directory. By default, this is
 ``.dynamake``, but this can be overriden using :py:func:`dynamake.make.set_config_dir`, or, if using
