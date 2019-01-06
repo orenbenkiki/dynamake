@@ -223,7 +223,14 @@ class Config:
         values: Dict[str, Any] = {}
         for rule in Config.rules:
             if rule.is_match(context):
-                values.update(rule.then)
+                for name, value in rule.then.items():
+                    if name.endswith('?'):
+                        other_name = name[:-1]
+                    else:
+                        other_name = name + '?'
+                    if other_name in values:
+                        del values[other_name]
+                    values[name] = value
         return values
 
     @staticmethod

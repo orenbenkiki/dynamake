@@ -17,77 +17,75 @@ from typing import TypeVar
 import yaml
 
 
-class ConfigArgs:
+class ApplicationParameters:
     """
-    Hold all the configuration command line arguments for a (hopefully small) program execution.
+    Hold all the configurable parameters for a (hopefully small) program execution.
     """
 
     #: The global arguments currently in effect.
     #: This is typically set in the ``main`` function.
-    current: 'ConfigArgs' = None  # type: ignore
+    current: 'ApplicationParameters' = None  # type: ignore
 
-    def __init__(self, arguments: Dict[str, Tuple[Any, Callable[[str], Any], str]]) -> None:
+    def __init__(self, parameters: Dict[str, Tuple[Any, Callable[[str], Any], str]]) -> None:
         """
-        Create a collection of arguments.
+        Create a collection of parameters.
 
-        Each argument is a tuple containing its default value, a function for parsing its value from
-        a string, and a description for the help message.
+        Each parameter is a tuple containing its default value, a function for parsing its value
+        from a string, and a description for the help message.
         """
 
-        #: The known arguments.
-        self.arguments = arguments
+        #: The known parameters.
+        self.parameters = parameters
 
-        #: The value for each argument.
-        self.values: Dict[str, Any] = {name: argument[0] for name, argument in arguments.items()}
+        #: The value for each parameter.
+        self.values: Dict[str, Any] = {name: parameter[0] for name, parameter in parameters.items()}
 
     def get(self, name: str, function: Callable) -> Any:
         """
-        Access the value of some argument.
+        Access the value of some parameter.
         """
         if name not in self.values:
-            raise RuntimeError('Unknown argument: %s used by the function: %s.%s'
+            raise RuntimeError('Unknown parameter: %s used by the function: %s.%s'
                                % (name, function.__module__, function.__qualname__))
         return self.values[name]
 
     def add_to_parser(self, parser: ArgumentParser) -> None:
         """
-        Add an argument for each argument to the parser to allow overriding argument
+        Add a command line flag for each parameter to the parser to allow overriding parameter
         values directly from the command line.
         """
         parser.add_argument('--config', metavar='FILE', action='append',
-                            help='Load a arguments configuration YAML file.')
+                            help='Load a parameters configuration YAML file.')
 
-        configurable = parser.add_argument_group('configuration arguments', dedent("""
-            The optional configuration arguments are used by internal functions. The
+        configurable = parser.add_argument_group('configuration parameters', dedent("""
+            The optional configuration parameters are used by internal functions. The
             defaults are overriden by any configuration files given to ``--config`` and
-            by the following optional explicit command-line arguments. If the same
-            argument is set in multiple locations, the last command line argument wins
+            by the following optional explicit command-line parameters. If the same
+            parameter is set in multiple locations, the last command line parameter wins
             over the last loaded configuration file.
 
-            The file may be empty, or contain a list of two mappings. The first mapping
-            contains parameters which may or may not apply to the program; the second
-            mapping contains parameters which "must" apply; that is, it is an error for an
-            unknown parameter to appear in the second mapping. If the same parameter
-            appears in both mappings, the second one wins.
+            The file may be empty, or contain a mapping from parameter names to values.
+            If the name does not end with '?', then the parameter must be one of the
+            recognized parameters. Otherwise, if the name is not recognized, it is silently
+            ignored.
         """))
-        for name, (default, _, description) in self.arguments.items():
+        for name, (default, _, description) in self.parameters.items():
             configurable.add_argument('--' + name, help=description + ' (default: %s)' % default)
 
     def parse_args(self, args: Namespace) -> None:
         """
-        Update the values based on loaded configuration files and/or explicit command line
-        arguments.
+        Update the values based on loaded configuration files and/or explicit command line flags.
         """
         for path in (args.config or []):
             self.load(path)
 
-        for name, (_, parser, _) in self.arguments.items():
+        for name, (_, parser, _) in self.parameters.items():
             value = vars(args)[name]
             if value is not None:
                 try:
                     self.values[name] = parser(value)
                 except BaseException:
-                    raise RuntimeError('Invalid value: %s for the argument: %s'
+                    raise RuntimeError('Invalid value: %s for the parameter: %s'
                                        % (vars(args)[name], name))
 
     def load(self, path: str) -> None:
@@ -98,48 +96,47 @@ class ConfigArgs:
             data = yaml.load(file.read())
 
         if data is None:
-            data = [{}, {}]
+            data = {}
 
-        if not isinstance(data, list):
+        if not isinstance(data, dict):
             raise RuntimeError('The configuration file: %s '
-                               'does not contain a top-level sequence' % path)
-        if len(data) != 2:
-            raise RuntimeError('The configuration file: %s '
-                               'top-level sequence does not contain two entries' % path)
+                               'does not contain a top-level mapping' % path)
 
-        for index in [0, 1]:
-            entry = data[index]
-            if not isinstance(entry, dict):
-                raise RuntimeError('The entry: %s '
-                                   'of the configuration file: %s '
-                                   'is not a mapping' % (index, path))
+        for name, value in data.items():
+            is_optional = name.endswith('?')
+            if is_optional:
+                name = name[:-1]
+                if name in data:
+                    raise RuntimeError('Conflicting entries for both: %s '
+                                       'and: %s? '
+                                       'in the configuration file: %s'
+                                       % (name, name, path))
 
-            for name, value in entry.items():
-                if name not in self.values:
-                    if index == 0:
-                        continue
-                    raise RuntimeError('Unknown argument: %s '
-                                       'specified in the configuration file: %s'
-                                       % (name, path))
+            if name not in self.values:
+                if is_optional:
+                    continue
+                raise RuntimeError('Unknown parameter: %s '
+                                   'specified in the configuration file: %s'
+                                   % (name, path))
 
-                if isinstance(value, str):
-                    try:
-                        value = self.arguments[name][1](value)
-                    except BaseException:
-                        raise RuntimeError('Invalid value: %s for the argument: %s'
-                                           % (value, name))
+            if isinstance(value, str):
+                try:
+                    value = self.parameters[name][1](value)
+                except BaseException:
+                    raise RuntimeError('Invalid value: %s for the parameter: %s'
+                                       % (value, name))
 
-                self.values[name] = value
+            self.values[name] = value
 
     @staticmethod
     def reset() -> None:
         """
         Reset all the current state, for tests.
         """
-        ConfigArgs.current = ConfigArgs({})
+        ApplicationParameters.current = ApplicationParameters({})
 
 
-ConfigArgs.reset()
+ApplicationParameters.reset()
 
 
 #: The type of a wrapped function.
@@ -156,7 +153,7 @@ def config(wrapped: Wrapped) -> Wrapped:
     def _wrapped_function(*args: Any, **kwargs: Any) -> Any:
         for name in parameter_names:
             if name not in kwargs:
-                kwargs[name] = ConfigArgs.current.get(name, function)
+                kwargs[name] = ApplicationParameters.current.get(name, function)
         return function(*args, **kwargs)
 
     return _wrapped_function  # type: ignore
