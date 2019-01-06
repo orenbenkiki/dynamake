@@ -210,8 +210,9 @@ An example of a slightly more dynamic build script is:
 
     @dm.plan()
     def compile_objects(source_dir: str, object_dir: str) -> List[str]:
+       names = dm.glob('{source_dir}/{*name}.c')
        return [compiled.output for compiled
-               in dm.foreach(wildcards, compile_file,
+               in dm.foreach(names, compile_file,
                              source_path='{source_dir}/{name}.c',
                              object_path='{object_dir}/{name}.o')]
 

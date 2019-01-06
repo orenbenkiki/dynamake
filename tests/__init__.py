@@ -11,6 +11,7 @@ from unittest import TestCase
 
 from dynamake.application import ApplicationParameters
 from dynamake.config import Config
+from dynamake.make import Make
 
 # pylint: disable=missing-docstring
 
@@ -38,6 +39,7 @@ class TestWithFiles(TestCase):
         os.chdir(os.path.expanduser(self.temporary_directory))
         ApplicationParameters.reset()
         Config.reset()
+        Make.reset()
 
     def tearDown(self) -> None:
         os.chdir(self.previous_directory)
