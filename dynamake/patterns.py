@@ -9,6 +9,7 @@ from typing import Any
 from typing import Dict
 from typing import Iterator
 from typing import List
+from typing import Sequence
 from typing import Union
 from typing.re import Pattern  # pylint: disable=import-error
 
@@ -94,32 +95,150 @@ yaml.add_constructor('!r', _load_regexp)
 #: An arbitrarily nested list of strings.
 #:
 #: This should really have been ``Strings = Union[str, List[Strings]]`` but ``mypy`` can't handle
-#: nested types.
+#: nested types. Therefore, do not use this as a return type; as much as possible, return a concrete
+#: type (``str``, ``List[str]``, etc.). Instead use ``Strings`` as an argument type, for functions
+#: that :py:func:`dynamake.patterns.flatten` their arguments. This will allow the callers to easily
+#: nest lists without worrying about flattening themselves.
 Strings = Union[str,
-                List[str],
-                List[List[str]],
-                List[List[List[str]]],
-                List[List[List[List[str]]]]]
+                Sequence[str],
+                Sequence[Sequence[str]],
+                Sequence[Sequence[Sequence[str]]],
+                Sequence[Sequence[Sequence[Sequence[str]]]]]
 
 
-def foreach_string(*args: Strings) -> Iterator[str]:
+def each_string(*args: Strings) -> Iterator[str]:
     """
-    Flatten an arbitrarily nested list of strings into a simple list for processing.
+    Iterate on all strings in an arbitrarily nested list of strings.
     """
     for strings in args:
         if isinstance(strings, str):
             yield strings
         else:
-            yield from foreach_string(*strings)
+            yield from each_string(*strings)
 
 
-def expand_strings(wildcards: List[Dict[str, Any]], *patterns: Strings) -> List[str]:
+def flatten(*args: Strings) -> List[str]:
     """
-    Given a list of wildcard dictionaries, and a pattern (Python format string),
-    generate one output per dictionary using the pattern.
+    Flatten an arbitrarily nested list of strings into a simple list for processing.
     """
-    return [pattern.format(**values)
-            for values in wildcards for pattern in foreach_string(*patterns)]
+    return list(each_string(*args))
+
+
+def expand_strings(wildcards: Dict[str, Any], *patterns: Strings) -> List[str]:
+    """
+    Given some wildcards values and a pattern (Python format string),
+    generate one output per pattern using these values.
+    """
+    return [pattern.format(**wildcards) for pattern in each_string(*patterns)]
+
+
+class Captured:
+    """
+    The results of a :py:func:`dynamake.make.capture` operation.
+    """
+
+    def __init__(self) -> None:
+        """
+        Create an empty capture results.
+        """
+
+        #: The list of existing paths that matched the capture pattern.
+        self.paths: List[str] = []
+
+        #: The list of wildcard values captured from the matched paths.
+        self.wildcards: List[Dict[str, Any]] = []
+
+
+def capture_globs(wildcards: Dict[str, Any], *patterns: Strings) -> Captured:
+    """
+    Given a glob pattern containing ``...{name}...{*captured_name}...``,
+    return a list of dictionaries containing the captured values for each
+    existing file that matches the pattern.
+
+    Parameters
+    ----------
+    wildcards
+        Provide the values for expanding ``...{name}...``.
+    capture
+        The pattern may contain ``...{name}...``, ``...{*captured_name}...``, as well as normal
+        ``glob`` patterns (``*``, ``**``). The ``...{name}..`` is
+        expanded using the provided ``wildcards``. The ``*`` and
+        ``**`` are ``glob``-ed. A capture expression will cause the matching substring to be
+        collected in a list of dictionaries (one per matching existing path name). Valid capture
+        patterns are:
+
+        * ``...{*captured_name}...`` is treated as if it was a ``*`` glob pattern, and the matching
+          zero or more characters are entered into the dictionary under the ``captured_name`` key.
+
+        * ``...{*captured_name:pattern}...`` is similar but allows you to explicitly specify the
+          glob pattern (e.g., ``...{*foo:*.py}...`` will capture the glob pattern ``*.py`` and
+          capture it under the key ``foo``.
+
+        * ``...{**captured_name}...`` is a shorthand for ``...{*captured_name:**}...``. That is, it
+          acts similarly to ``...{*captured_name}...`` except that the glob pattern is ``**``.
+
+    Returns
+    -------
+    Captured
+        The list of existing file paths that match the patterns, and the list of dictionaries with
+        the captured values for each such path.
+    """
+
+    captured = Captured()
+    for capture in each_string(*patterns):
+        regexp = capture2re(capture).format(**wildcards)
+        glob = capture2glob(capture).format(**wildcards)
+        # Sorted to make tests deterministic.
+        for path in sorted(glob_files(glob)):
+            captured.paths.append(path)
+            captured.wildcards.append(_capture_string(capture, regexp, path))
+    return captured
+
+
+def glob_strings(wildcards: Dict[str, Any], *patterns: Strings) -> List[str]:
+    """
+    Similar to :py:func:`dynamake.patterns.capture_globs`, except that it just returns
+    the list of existing paths that match any of the expanded ``glob`` patterns,
+    without doing any capturing of sub-strings. Using ``...{*captured_name}...`` is
+    still allowed, but has no effect beyond being interpreted as a glob pattern.
+    """
+    paths: List[str] = []
+    for capture in each_string(*patterns):
+        glob = capture2glob(capture).format(**wildcards)
+        # Sorted to make tests deterministic.
+        paths += sorted(glob_files(glob))
+    return paths
+
+
+def extract_strings(wildcards: Dict[str, Any], capture: str, *strings: Strings) \
+        -> List[Dict[str, Any]]:
+    """
+    Similar to :py:func:`dynamake.patterns.capture_globs`, except that it just captures
+    the values of the ``...{*captured_name}...`` from the expanded strings, without
+    any call to ``glob`` to discover existing file paths.
+
+    Returns
+    -------
+    List[Dict[str, Any]]
+        A list of the dictionary of values for the captured names from each string.
+    """
+    regexp = capture2re(capture).format(**wildcards)
+    return [_capture_string(capture, regexp, string) for string in each_string(*strings)]
+
+
+def _capture_string(capture: str, regexp: Pattern, string: str) -> Dict[str, Any]:
+    match = re.fullmatch(regexp, string)
+    if not match:
+        raise RuntimeError('The string: %s does not match the capture pattern: %s'
+                           % (string, capture))
+
+    values = match.groupdict()
+    for name, value in values.items():
+        try:
+            values[name] = yaml.load(value)
+        except BaseException:
+            pass
+    return values
 
 
 _REGEXP_ERROR_POSITION = re.compile(r'(.*) at position (\d+)')
@@ -286,76 +405,3 @@ def capture2glob(capture: str) -> str:  # pylint: disable=too-many-statements
             results.append(char)
 
     return ''.join(results)
-
-
-def capture_strings(wildcards: Dict[str, Any], capture: str, *strings: Strings) \
-        -> List[Dict[str, Any]]:
-    """
-    Given a capture pattern containing ``...{name}...{*captured_name}...``, and some strings which
-    must match the pattern, return a list of dictionaries containing the captured values for each
-    string.
-
-    Parameters
-    ----------
-    wildcards
-        Provide the values for expanding ``...{name}...``.
-    capture
-        The pattern containing ``...{name}...`` and ``...{*captured_name}...``.
-    strings
-        The strings to capture values froms.
-
-    Returns
-    -------
-    List[Dict[str, Any]]
-        A list of the dictionary of values for the captured names from each string.
-    """
-    regexp = capture2re(capture).format(**wildcards)
-    return [_capture_string(capture, regexp, string) for string in foreach_string(*strings)]
-
-
-def _capture_string(capture: str, regexp: Pattern, string: str) -> Dict[str, Any]:
-    match = re.fullmatch(regexp, string)
-    if not match:
-        raise RuntimeError('The string: %s does not match the capture pattern: %s'
-                           % (string, capture))
-
-    values = match.groupdict()
-    for name, value in values.items():
-        try:
-            values[name] = yaml.load(value)
-        except BaseException:
-            pass
-    return values
-
-
-def capture_glob(wildcards: Dict[str, Any], *patterns: Strings) -> List[Dict[str, Any]]:
-    """
-    Given a glob pattern containing ``...{name}...{*captured_name}...``,
-    return a list of dictionaries containing the captured values for each
-    existing file that matches the pattern.
-
-    Parameters
-    ----------
-    wildcards
-        Provide the values for expanding ``...{name}...``.
-    capture
-        The pattern containing ``...{name}...`` and ``...{*captured_name}...``. This serves both to
-        specify the glob pattern (where ``{*captured_name}`` is converted to ``*`` and
-        ``{**captured_name}`` is converted to ``**``, and the specify the keys in the dictionary to
-        fill with the captured matching parts of the existing file names that match this glob
-        pattern.
-
-    Returns
-    -------
-    List[Dict[str, Any]]
-        A list of the dictionary of values for the captured names from each existing file
-        that matches the capture glob pattern.
-    """
-    def _generator() -> Iterator[Dict[str, Any]]:
-        for capture in foreach_string(*patterns):
-            glob = capture2glob(capture).format(**wildcards)
-            regexp = capture2re(capture).format(**wildcards)
-            for string in glob_files(glob):
-                yield _capture_string(capture, regexp, string)
-
-    return list(_generator())

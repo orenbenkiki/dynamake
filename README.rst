@@ -209,18 +209,20 @@ An example of a slightly more dynamic build script is:
                          run=['cc', '-o', object_path, source_path])
 
     @dm.plan()
-    def compile_objects(source_dir: str, object_dir: str) -> List[str]:
-       names = dm.glob('{source_dir}/{*name}.c')
-       return [compiled.output for compiled
-               in dm.foreach(names, compile_file,
+    def compile_objects(source_dir: str, object_dir: str) -> dm.Strings:
+       sources = dm.capture('{source_dir}/{*name}.c')
+       return [compiled.output
+               for compiled
+               in dm.foreach(sources.wildcards,
+                             compile_file,
                              source_path='{source_dir}/{name}.c',
                              object_path='{object_dir}/{name}.o')]
 
     @dm.action()
-    def link_objects(objects: List[str], executable_path: str) -> dm.Action:
+    def link_objects(objects: dm.Strings, executable_path: str) -> dm.Action:
         return dm.Action(input=objects,
                          output=executable_path,
-                         run=['ld', '{input}', '-o', '{output}'])
+                         run=['ld', objects, '-o', executable_path])
 
     @dm.plan()
     def build_executable(source_dir: str, object_dir: str, executable_path: str) -> None:
@@ -233,19 +235,19 @@ This demonstrates some additional concepts:
 
 * All DynaMake functions will automatically expand ``{name}`` inside strings.
   The ``name`` can be the name of a function parameter, or the name of a wildcard.
-  In actions one can also use ``{input}`` and ``{output}``.
 
-* The: py: func: `dynamake.make.glob` function acts similarly to ``glob.glob``, but will return a list
-  of dictionaries, where each one assigns a value to each ``{*name}`` given in the pattern.
+* The :py:func:`dynamake.make.capture` function acts similarly to ``glob.glob``, but will
+  return both a list of paths and also a list of dictionaries, where each one assigns a value to
+  each ``{*name}`` given in the pattern.
 
   Wildcards lists-of-dictionaries can be used to generate file lists, and/or to invoke multiple
   steps with different parameters.
 
-  DynaMake scripts make heavy use of globbing. The current implementation inefficiently re-executes
-  such globs. If this turns out to be a bottleneck, it should be modified to cache the glob results
-  to drastically reduce the number of slow file system operations.
+  DynaMake scripts make heavy use of captures. The current implementation inefficiently re-executes
+  such captures. If this turns out to be a bottleneck, it should be modified to cache the glob
+  results to drastically reduce the number of slow file system operations.
 
-  Globbing allows steps to have dynamic outputs in a controlled way. By specifying a glob pattern
+  Captures allows steps to have dynamic outputs in a controlled way. By specifying a glob pattern
   for the outputs of an action, DynaMake can still detect when it needs to be executed, even if the
   set of these files is dynamic: run the action if any of the input files is newer than any of the
   existing files that match the output glob pattern. Either way, the actual list of outputs is

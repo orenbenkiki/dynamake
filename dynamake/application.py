@@ -26,6 +26,13 @@ class ApplicationParameters:
     #: This is typically set in the ``main`` function.
     current: 'ApplicationParameters' = None  # type: ignore
 
+    @staticmethod
+    def reset() -> None:
+        """
+        Reset all the current state, for tests.
+        """
+        ApplicationParameters.current = ApplicationParameters({})
+
     def __init__(self, parameters: Dict[str, Tuple[Any, Callable[[str], Any], str]]) -> None:
         """
         Create a collection of parameters.
@@ -127,13 +134,6 @@ class ApplicationParameters:
                                        % (value, name))
 
             self.values[name] = value
-
-    @staticmethod
-    def reset() -> None:
-        """
-        Reset all the current state, for tests.
-        """
-        ApplicationParameters.current = ApplicationParameters({})
 
 
 ApplicationParameters.reset()

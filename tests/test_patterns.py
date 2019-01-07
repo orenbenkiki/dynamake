@@ -6,22 +6,28 @@ Test the pattern matching.
 import re
 from typing import Callable
 from typing import List
-from unittest import TestCase
 
 import yaml
 
 from dynamake.patterns import capture2glob
 from dynamake.patterns import capture2re
-from dynamake.patterns import capture_glob
+from dynamake.patterns import capture_globs
 from dynamake.patterns import expand_strings
+from dynamake.patterns import extract_strings
+from dynamake.patterns import flatten
 from dynamake.patterns import glob2re
+from dynamake.patterns import glob_strings
 from tests import TestWithFiles
+from tests import TestWithReset
 from tests import write_file
 
 # pylint: disable=missing-docstring
 
 
-class TestPatterns(TestCase):
+class TestPatterns(TestWithReset):
+
+    def test_flatten(self) -> None:
+        self.assertEqual(flatten('a', ['b', ['c']]), ['a', 'b', 'c'])
 
     def test_load_regexp(self) -> None:
         pattern = yaml.load('!r a.*b')
@@ -32,8 +38,7 @@ class TestPatterns(TestCase):
         self.assertEqual(str(pattern), "re.compile('a[^/]*b')")
 
     def test_expand_strings(self) -> None:
-        self.assertEqual(list(expand_strings([{'a': 1}, {'a': 2}], ['{a}.foo', '{a}.bar'])),
-                         ['1.foo', '1.bar', '2.foo', '2.bar'])
+        self.assertEqual(expand_strings({'a': 1}, ['{a}.foo', '{a}.bar']), ['1.foo', '1.bar'])
 
     def test_glob2re(self) -> None:
         self.check_2re(glob2re, string='', compiled='', match=[''], not_match=['a'])
@@ -129,20 +134,40 @@ class TestPatterns(TestCase):
                                          '        ^ missing }'),
                                capture2glob, 'foo{*bar')
 
+    def test_extract_strings(self) -> None:
+        self.assertEqual(extract_strings({'foo': 'x'}, '{foo}/{*bar}.txt', 'x/@a.txt'),
+                         [{'bar': '@a'}])
+
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               r'string: x/y.png .* pattern: {foo}/{\*bar}.txt',
+                               extract_strings, {'foo': 'x'}, '{foo}/{*bar}.txt', 'x/y.png')
+
 
 class TestGlob(TestWithFiles):
 
     def test_no_match(self) -> None:
-        self.assertEqual(capture_glob({'foo': 'x'}, '{foo}.txt'), [])
+        captured = capture_globs({'foo': 'x'}, '{foo}.txt')
+        self.assertEqual(captured.paths, [])
+        self.assertEqual(captured.wildcards, [])
+        self.assertEqual(glob_strings({'foo': 'x'}, '{foo}.txt'), [])
 
     def test_no_capture(self) -> None:
         write_file('x.txt', '')
-        self.assertEqual(capture_glob({'foo': 'x'}, '{foo}.txt'), [{}])
+        captured = capture_globs({'foo': 'x'}, '{foo}.txt')
+        self.assertEqual(captured.paths, ['x.txt'])
+        self.assertEqual(captured.wildcards, [{}])
+        self.assertEqual(glob_strings({'foo': 'x'}, '{foo}.txt'), ['x.txt'])
 
     def test_capture_string(self) -> None:
         write_file('x.txt', '')
-        self.assertEqual(capture_glob({}, '{*foo}.txt'), [{'foo': 'x'}])
+        captured = capture_globs({}, '{*foo}.txt')
+        self.assertEqual(captured.paths, ['x.txt'])
+        self.assertEqual(captured.wildcards, [{'foo': 'x'}])
+        self.assertEqual(glob_strings({}, '{*foo}.txt'), ['x.txt'])
 
     def test_capture_int(self) -> None:
         write_file('12.txt', '')
-        self.assertEqual(capture_glob({}, '{*foo}.txt'), [{'foo': 12}])
+        captured = capture_globs({}, '{*foo}.txt')
+        self.assertEqual(captured.paths, ['12.txt'])
+        self.assertEqual(captured.wildcards, [{'foo': 12}])
+        self.assertEqual(glob_strings({}, '{*foo}.txt'), ['12.txt'])
