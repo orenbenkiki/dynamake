@@ -23,23 +23,29 @@ def undent(content: str) -> str:
     return content
 
 
-def write_file(path: str, content: str) -> None:
+def write_file(path: str, content: str = '') -> None:
     with open(path, 'w') as file:
         file.write(undent(content))
 
 
-class TestWithFiles(TestCase):
+class TestWithReset(TestCase):
 
     def setUp(self) -> None:
+        ApplicationParameters.reset()
+        Config.reset()
+        Make.reset()
+
+
+class TestWithFiles(TestWithReset):
+
+    def setUp(self) -> None:
+        super().setUp()
         self.maxDiff = None  # pylint: disable=invalid-name
         if sys.path[0] != os.getcwd():
             sys.path.insert(0, os.getcwd())
         self.previous_directory = os.getcwd()
         self.temporary_directory = tempfile.mkdtemp()
         os.chdir(os.path.expanduser(self.temporary_directory))
-        ApplicationParameters.reset()
-        Config.reset()
-        Make.reset()
 
     def tearDown(self) -> None:
         os.chdir(self.previous_directory)

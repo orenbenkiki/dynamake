@@ -195,6 +195,14 @@ class Config:
     DIRECTORY: str
 
     @staticmethod
+    def reset() -> None:
+        """
+        Reset all the current state, for tests.
+        """
+        Config.rules = []
+        Config.DIRECTORY = '.dynamake'
+
+    @staticmethod
     def context_for_step(stack: List[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
         Prepare a context identifying the specific invocation of a step.
@@ -232,14 +240,6 @@ class Config:
                         del values[other_name]
                     values[name] = value
         return values
-
-    @staticmethod
-    def reset() -> None:
-        """
-        Reset all the current state, for tests.
-        """
-        Config.rules = []
-        Config.DIRECTORY = '.dynamake'
 
 
 Config.reset()
