@@ -2,13 +2,19 @@
 Utilities for dynamic make.
 """
 
+# pylint: disable=too-many-lines
+
 import argparse
 import inspect
 import logging
 import os
 import shutil
 import subprocess
+import threading
 from abc import abstractmethod
+from concurrent.futures import Executor
+from concurrent.futures import Future
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from enum import Enum
 from enum import unique
@@ -79,6 +85,9 @@ class Make:  # pylint: disable=too-many-instance-attributes
     Global build state.
     """
 
+    #: The executor for parallel steps.
+    executor: Executor
+
     #: Known (wrapped) step functions.
     step_by_name: Dict[str, Callable]
 
@@ -126,6 +135,7 @@ class Make:  # pylint: disable=too-many-instance-attributes
         """
         Reset all the current state, for tests.
         """
+        Make.executor = ThreadPoolExecutor(thread_name_prefix='MakeThread')
         Make.step_by_name = {}
         Make.logger = logging.getLogger('dynamake')
         Make.missing_inputs = MissingInputs.forbidden
@@ -141,15 +151,37 @@ class Step:  # pylint: disable=too-many-instance-attributes
     A single step function execution state.
     """
 
-    #: The current step.
-    current: 'Step'
+    _thread_local: threading.local
+
+    @staticmethod
+    def current() -> 'Step':
+        """
+        Acccess the current step.
+        """
+        return getattr(Step._thread_local, 'current')
+
+    @staticmethod
+    def set_current(step: 'Step') -> None:
+        """
+        Set the current step for the current thread.
+        """
+        setattr(Step._thread_local, 'current', step)
 
     @staticmethod
     def reset() -> None:
         """
         Reset all the current state, for tests.
         """
-        Step.current = Planner(None, None, (), {})
+        Step._thread_local = threading.local()
+        Step.set_current(Planner(None, None, (), {}))
+
+    @staticmethod
+    def call_in_parallel(parent: 'Step', step: Callable, *args: Any, **kwargs: Any) -> Any:
+        """
+        Invoke a step inside a parallel thread.
+        """
+        Step.set_current(parent)
+        return step(*args, **kwargs)
 
     @staticmethod
     def call_current(make: type, function: Callable,
@@ -157,12 +189,12 @@ class Step:  # pylint: disable=too-many-instance-attributes
         """
         Invoke the specified build step function.
         """
-        parent = Step.current
-        Step.current = make(parent, function, args, kwargs)
+        parent = Step.current()
+        Step.set_current(make(parent, function, args, kwargs))
         try:
-            return Step.current.call()
+            return Step.current().call()
         finally:
-            Step.current = parent
+            Step.set_current(parent)
 
     def __init__(self, parent: Optional['Step'], function: Optional[Callable],
                  args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> None:
@@ -424,10 +456,10 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         self.missing_input_patterns: List[str]
 
         self.input_paths, self.missing_input_patterns = Action._collect_glob(self.input)
-        Make.logger.debug('%s: input: %s', Step.current.stack,
+        Make.logger.debug('%s: input: %s', Step.current().stack,
                           ' '.join(self.input) or 'None')
         Make.logger.debug('%s: input paths: %s',
-                          Step.current.stack, ' '.join(self.input_paths) or 'None')
+                          Step.current().stack, ' '.join(self.input_paths) or 'None')
         if self.missing_inputs == MissingInputs.forbidden:
             Action._raise_missing('input', self.missing_input_patterns)
 
@@ -435,9 +467,9 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         #: patterns.
         self.output_paths_before = self._collect_outputs()
         Make.logger.debug('%s: output: %s',
-                          Step.current.stack, ' '.join(self.output) or 'None')
+                          Step.current().stack, ' '.join(self.output) or 'None')
         Make.logger.debug('%s: output paths before: %s',
-                          Step.current.stack, ' '.join(self.output_paths_before) or 'None')
+                          Step.current().stack, ' '.join(self.output_paths_before) or 'None')
 
         #: The path of the existing output files after the execution, matching the output ``glob``
         #: patterns.
@@ -456,42 +488,42 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
     def _needs_to_execute(self) -> bool:
         if not self.output:
             Make.logger.debug('%s: needs to execute because has no outputs',
-                              Step.current.stack)
+                              Step.current().stack)
             return True
 
         minimal_output_mtime = Action._collect_mtime(self.output_paths_before, min)
         if Make.logger.isEnabledFor(logging.DEBUG):
             Make.logger.debug('%s: minimal output mtime: %s',
-                              Step.current.stack, _ns2str(minimal_output_mtime))
+                              Step.current().stack, _ns2str(minimal_output_mtime))
 
         if minimal_output_mtime is None:
             # TODO: This is wrong if the next step(s) override Action.missing_inputs.
             if Make.missing_inputs == MissingInputs.forbidden:
                 Make.logger.debug('%s: need to execute assuming next step(s) need all inputs',
-                                  Step.current.stack)
+                                  Step.current().stack)
                 return True
             Make.logger.debug('%s: no need to execute assuming next step(s) allow missing inputs',
-                              Step.current.stack)
+                              Step.current().stack)
             return False
 
         maximal_input_mtime = \
-            Action._collect_mtime(self.input_paths, max, Step.current.config_path)
+            Action._collect_mtime(self.input_paths, max, Step.current().config_path)
         if Make.logger.isEnabledFor(logging.DEBUG):
             Make.logger.debug('%s: maximal input mtime: %s',
-                              Step.current.stack, _ns2str(maximal_input_mtime))
+                              Step.current().stack, _ns2str(maximal_input_mtime))
 
         if maximal_input_mtime is None:
             Make.logger.debug('%s: no need to execute ignoring missing inputs',
-                              Step.current.stack)
+                              Step.current().stack)
             return False
 
         if maximal_input_mtime < minimal_output_mtime:
             Make.logger.debug('%s: no need to execute since outputs are newer',
-                              Step.current.stack)
+                              Step.current().stack)
             return False
 
         Make.logger.debug('%s: need to execute since inputs are newer',
-                          Step.current.stack)
+                          Step.current().stack)
         return True
 
     @staticmethod
@@ -516,14 +548,14 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
             self._delete_outputs('stale', self.output_paths_before)
 
         for command in self.run:
-            Make.logger.info('%s: run: %s', Step.current.stack, ' '.join(command))
+            Make.logger.info('%s: run: %s', Step.current().stack, ' '.join(command))
             if self.shell:
                 completed = subprocess.run(' '.join(command), shell=True)
             else:
                 completed = subprocess.run(command)
             if completed.returncode != 0 and not self.ignore_exit_status:
                 Make.logger.debug('%s: failed with exit status: %s',
-                                  Step.current.stack, completed.returncode)
+                                  Step.current().stack, completed.returncode)
                 self._fail(command)
 
         self._success()
@@ -534,12 +566,12 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         if self.delete_failed_outputs:
             self._delete_outputs('failed', self.output_paths_after)
 
-        raise RuntimeError('%s: failed command: %s' % (Step.current.stack, ' '.join(command)))
+        raise RuntimeError('%s: failed command: %s' % (Step.current().stack, ' '.join(command)))
 
     def _success(self) -> None:
         self.output_paths_after, self.missing_outputs_patterns = Action._collect_glob(self.output)
         Make.logger.debug('%s: output paths after: %s',
-                          Step.current.stack, ' '.join(self.output_paths_after) or 'None')
+                          Step.current().stack, ' '.join(self.output_paths_after) or 'None')
 
         if self.missing_outputs == MissingOutputs.forbidden \
                 or (self.missing_outputs == MissingOutputs.partial and not self.output_paths_after):
@@ -547,7 +579,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
 
         if self.touch_success_outputs and self.output_paths_after:
             Make.logger.debug('%s: touch outputs: %s',
-                              Step.current.stack, ' '.join(self.output_paths_after))
+                              Step.current().stack, ' '.join(self.output_paths_after))
             for path in self.output_paths_after:
                 os.utime(path)
 
@@ -556,7 +588,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
             return
 
         Make.logger.debug('%s: delete %s outputs: %s',
-                          Step.current.stack, reason, ' '.join(paths))
+                          Step.current().stack, reason, ' '.join(paths))
 
         for path in paths:
             path = os.path.abspath(path)
@@ -602,12 +634,12 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         if expanded == pattern:
             raise RuntimeError('Missing %s(s): %s '
                                'for the action step: %s'
-                               % (direction, pattern, Step.current.stack))
+                               % (direction, pattern, Step.current().stack))
 
         raise RuntimeError('Missing %s(s): %s '
                            'for the pattern: %s '
                            'for the action step: %s'
-                           % (direction, expanded, pattern, Step.current.stack))
+                           % (direction, expanded, pattern, Step.current().stack))
 
 
 def _ns2str(nanoseconds: Optional[int]) -> str:
@@ -682,7 +714,7 @@ def expand(*patterns: Strings) -> List[str]:
 
     See :py:func:`dynamake.patterns.expand_strings`.
     """
-    return dp.expand_strings(Step.current.wildcards, *patterns)
+    return dp.expand_strings(Step.current().wildcards, *patterns)
 
 
 def glob(*patterns: Strings) -> List[str]:
@@ -692,7 +724,7 @@ def glob(*patterns: Strings) -> List[str]:
 
     See :py:func:`dynamake.patterns.glob_strings`.
     """
-    return dp.glob_strings(Step.current.wildcards, *patterns)
+    return dp.glob_strings(Step.current().wildcards, *patterns)
 
 
 def extract(pattern: str, *strings: Strings) -> List[Dict[str, Any]]:
@@ -705,7 +737,7 @@ def extract(pattern: str, *strings: Strings) -> List[Dict[str, Any]]:
 
     See :py:func:`dynamake.patterns.extract_strings`.
     """
-    return dp.extract_strings(Step.current.wildcards, pattern, *strings)
+    return dp.extract_strings(Step.current().wildcards, pattern, *strings)
 
 
 def capture(*patterns: Strings) -> Captured:
@@ -718,7 +750,7 @@ def capture(*patterns: Strings) -> Captured:
 
     See :py:func:`dynamake.patterns.capture_globs`.
     """
-    return dp.capture_globs(Step.current.wildcards, *patterns)
+    return dp.capture_globs(Step.current().wildcards, *patterns)
 
 
 def foreach(wildcards: List[Dict[str, Any]], function: Callable, *args: Any, **kwargs: Any) \
@@ -733,7 +765,7 @@ def foreach(wildcards: List[Dict[str, Any]], function: Callable, *args: Any, **k
     results = []
 
     for values in wildcards:
-        expanded_values = Step.current.wildcards.copy()
+        expanded_values = Step.current().wildcards.copy()
         expanded_values.update(values)
 
         expanded_args: List[str] = []
@@ -753,6 +785,24 @@ def foreach(wildcards: List[Dict[str, Any]], function: Callable, *args: Any, **k
         results.append(function(*expanded_args, **expanded_kwargs))
 
     return results
+
+
+def pareach(wildcards: List[Dict[str, Any]], function: Callable, *args: Any, **kwargs: Any) \
+        -> List[Any]:
+    """
+    Similar to :py:func:`dynamake.make.foreach` but invoke the functions in parallel.
+    """
+    futures = foreach(wildcards, parallel, function, *args, **kwargs)
+    results = [future.result() for future in futures]
+    return results
+
+
+def parcall(*steps: Tuple[Callable, List[Any], Dict[str, Any]]) -> List[Any]:
+    """
+    Invoke multiple arbitrary functions in parallel.
+    """
+    futures = [parallel(step, *args, **kwargs) for step, args, kwargs in steps]
+    return [future.result() for future in futures]
 
 
 def load_config(path: str) -> None:
@@ -821,7 +871,7 @@ def config_param(name: str, default: Any = None) -> Any:
 
     It is an error if no default is specified and no value is specified in the loaded configuration.
     """
-    return Step.current.config_param(name, default)
+    return Step.current().config_param(name, default)
 
 
 def config_file() -> str:
@@ -831,7 +881,14 @@ def config_file() -> str:
     If this is invoked, it is assumed the file is passed to some invoked action,
     so no testing is done to ensure all specified parameters are actually used.
     """
-    return Step.current.config_file()
+    return Step.current().config_file()
+
+
+def parallel(step: Callable, *args: Any, **kwargs: Any) -> Future:
+    """
+    Invoke a step in parallel to the main thread.
+    """
+    return Make.executor.submit(Step.call_in_parallel, Step.current(), step, *args, **kwargs)
 
 
 def main(parser: argparse.ArgumentParser, default_step: Callable) -> None:
