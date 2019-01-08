@@ -297,33 +297,37 @@ Generated Configuration Files
 .............................
 
 To ensure that changing the configuration of a action will trigger re-computation, if either
-:py:func:`dynamake.make.config_file` or :py:func:`dynamake.make.config_param` is invoked in the
-action step, then DynaMake wll generate a configuration file for the specific action step invocation
-(depending on the step name as well as the values of its function arguments).
+:py:func:`dynamake.make.config_file` is invoked in the action step, then DynaMake wll generate a
+configuration file for the specific action step invocation (depending on the step name as well as
+the values of its function arguments).
 
 For action steps, this file is automatically considered as a dependency. That is, if its content
 changes, the action will re-execute. However the configuration file is not added to
 :py:attr:`dynamake.make.Action.input`, to make it easier for plan steps to use it as the "real"
 inputs file list. Plan steps are always executed so there is no question of dependencies.
 
-The step code can either access the parameter values using :py:func:`dynamake.make.config_param`, or
-pass the whole generated file as an action command line argument by invoking
-:py:func:`dynamake.make.config_file` (e.g., if the action is implemented using DynaMake's utilities
-for writing configurable applications).
+The step code can pass the path of the generated file as an action command line argument (e.g., if
+the action is implemented using DynaMake's utilities for writing configurable applications).
 
-If only :py:func:`dynamake.make.config_param` was invoked, then when the step completes, DynaMake
-will complain about unused parameters whose ``when`` condition explicitly tested for the ``step``
-name. This will detect most typos and "useless" parameters which have no effect on the build.
+The step code may also
+access the parameter values using :py:func:`dynamake.make.config_param`,
+regardless of whether a configuration file is generated. It may directly use these values or
+pass them as per-parameter command line arguments to an action command.
+
+If :py:func:`dynamake.make.config_file` was not invoked, then when the step completes, DynaMake will
+complain about unused parameters, whose name was not suffixed by a ``?``. This will detect most
+typos and "useless" parameters which have no effect on the build.
 
 If :py:func:`dynamake.make.config_file` was invoked, then DynaMake will assume the file is processed
 by (some) action, which will take responsibility over detecting unrecognized parameters. To enable
 this, the generated YAML configurable file contains a mapping using the same convention as the
 ``then`` section of a configuration rule; that is, if the name of an unrecognized parameter ends
-with a ``?``, then it will be silently ignored, otherwise it will be an error. This allows
-specifying default parameters for a large set of steps in a generic rule without complaints about
-unrecognized configuration parameters. The generated redundant parameters are somewhat reduced by
-the fact that a ``when`` clause is automatically false if it examines an argument which does not
-exist for the step.
+with a ``?``, then it will be silently ignored, otherwise it will be an error.
+
+This allows specifying default parameters for a large set of steps in a generic rule without
+complaints about unrecognized configuration parameters. The generated redundant parameters are
+somewhat reduced by the fact that a ``when`` clause is automatically false if it examines an
+argument which does not exist for the step.
 
 The generated configuration file is created in a special directory. By default, this is
 ``.dynamake``, but this can be overriden using :py:func:`dynamake.make.set_config_dir`, or, if using
