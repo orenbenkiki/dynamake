@@ -18,10 +18,13 @@ from dynamake.make import MissingInputs
 from dynamake.make import MissingOutputs
 from dynamake.make import action
 from dynamake.make import capture
+from dynamake.make import config_file
+from dynamake.make import config_param
 from dynamake.make import expand
 from dynamake.make import extract
 from dynamake.make import foreach
 from dynamake.make import glob
+from dynamake.make import load_config
 from dynamake.make import plan
 from tests import TestWithFiles
 from tests import TestWithReset
@@ -61,13 +64,13 @@ class TestMake(TestWithReset):
 
         @action()
         def tactics() -> None:
-            self.assertEqual(Make.current.stack, '/strategy/tactics')
-            self.assertEqual(Make.current.step, 'tactics')
+            self.assertEqual(Make.current_step.stack, '/strategy/tactics')
+            self.assertEqual(Make.current_step.name, 'tactics')
 
         @plan()
         def strategy() -> None:
-            self.assertEqual(Make.current.stack, '/strategy')
-            self.assertEqual(Make.current.step, 'strategy')
+            self.assertEqual(Make.current_step.stack, '/strategy')
+            self.assertEqual(Make.current_step.name, 'strategy')
             tactics()
 
         strategy()
@@ -91,19 +94,19 @@ class TestMake(TestWithReset):
 
         @action()
         def tactics() -> None:
-            self.assertEqual(Make.current.stack, '/strategy/scheme/tactics')
-            self.assertEqual(Make.current.step, 'tactics')
+            self.assertEqual(Make.current_step.stack, '/strategy/scheme/tactics')
+            self.assertEqual(Make.current_step.name, 'tactics')
 
         @plan()
         def scheme() -> None:
-            self.assertEqual(Make.current.stack, '/strategy/scheme')
-            self.assertEqual(Make.current.step, 'scheme')
+            self.assertEqual(Make.current_step.stack, '/strategy/scheme')
+            self.assertEqual(Make.current_step.name, 'scheme')
             tactics()
 
         @plan()
         def strategy() -> None:
-            self.assertEqual(Make.current.stack, '/strategy')
-            self.assertEqual(Make.current.step, 'strategy')
+            self.assertEqual(Make.current_step.stack, '/strategy')
+            self.assertEqual(Make.current_step.name, 'strategy')
             scheme()
 
         strategy()
@@ -389,7 +392,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', StringComparison('/touch: minimal output mtime: .*')),
                   ('dynamake', 'DEBUG', StringComparison('/touch: maximal input mtime:.*')),
                   ('dynamake', 'DEBUG', '/touch: need to execute since inputs are newer'),
-                  ('dynamake', 'DEBUG', '/touch: delete stale outputs: '),
+                  ('dynamake', 'DEBUG', '/touch: delete stale outputs: output.txt'),
                   ('dynamake', 'INFO', '/touch: run: touch output.txt'),
                   ('dynamake', 'DEBUG', '/touch: output paths after: output.txt'))
 
@@ -413,7 +416,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', StringComparison('/fail: minimal output mtime: .*')),
                   ('dynamake', 'DEBUG', StringComparison('/fail: maximal input mtime:.*')),
                   ('dynamake', 'DEBUG', '/fail: need to execute since inputs are newer'),
-                  ('dynamake', 'DEBUG', '/fail: delete stale outputs: '),
+                  ('dynamake', 'DEBUG', '/fail: delete stale outputs: output.txt'),
                   ('dynamake', 'INFO', '/fail: run: false'),
                   ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'))
 
@@ -440,7 +443,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', StringComparison('/fail: minimal output mtime: .*')),
                   ('dynamake', 'DEBUG', StringComparison('/fail: maximal input mtime:.*')),
                   ('dynamake', 'DEBUG', '/fail: need to execute since inputs are newer'),
-                  ('dynamake', 'DEBUG', '/fail: delete stale outputs: '),
+                  ('dynamake', 'DEBUG', '/fail: delete stale outputs: output.txt'),
                   ('dynamake', 'INFO', '/fail: run: touch output.txt'),
                   ('dynamake', 'INFO', '/fail: run: false'),
                   ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'),
@@ -493,7 +496,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', StringComparison('/mkdir: minimal output mtime: .*')),
                   ('dynamake', 'DEBUG', StringComparison('/mkdir: maximal input mtime:.*')),
                   ('dynamake', 'DEBUG', '/mkdir: need to execute since inputs are newer'),
-                  ('dynamake', 'DEBUG', '/mkdir: delete stale outputs: '),
+                  ('dynamake', 'DEBUG', '/mkdir: delete stale outputs: output.dir'),
                   ('dynamake', 'INFO', '/mkdir: run: mkdir output.dir'),
                   ('dynamake', 'DEBUG', '/mkdir: output paths after: output.dir'))
 
@@ -550,8 +553,130 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', StringComparison('/fail: minimal output mtime: .*')),
                   ('dynamake', 'DEBUG', StringComparison('/fail: maximal input mtime:.*')),
                   ('dynamake', 'DEBUG', '/fail: need to execute since inputs are newer'),
-                  ('dynamake', 'DEBUG', '/fail: delete stale outputs: '),
+                  ('dynamake', 'DEBUG', '/fail: delete stale outputs: output.dir/output.txt'),
                   ('dynamake', 'INFO', '/fail: run: false'),
                   ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'))
 
         self.assertFalse(os.path.exists('output.dir'))
+
+    def test_use_strict_param(self) -> None:
+        @action()
+        def use_param() -> Action:
+            return Action(input=[], output=[], run=[], foo=config_param('foo'))
+
+        write_file('config.yaml', '- { when: {}, then: { foo: 1 } }')
+        load_config('config.yaml')
+
+        result = use_param()
+
+        self.assertEqual(result.foo, 1)
+
+    def test_use_optional_param(self) -> None:
+        @action()
+        def use_param() -> Action:
+            return Action(input=[], output=[], run=[], foo=config_param('foo'))
+
+        write_file('config.yaml', '- { when: {}, then: { "foo?": 1 } }')
+        load_config('config.yaml')
+
+        result = use_param()
+
+        self.assertEqual(result.foo, 1)
+
+    def test_not_use_strict_param(self) -> None:
+        @action()
+        def not_use_param() -> Action:
+            return Action(input=[], output=[], run=[])
+
+        write_file('config.yaml', '- { when: {}, then: { foo: 1 } }')
+        load_config('config.yaml')
+
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               r'Unused .* parameter: foo .* step: /not_use_param',
+                               not_use_param)
+
+    def test_not_use_optional_param(self) -> None:
+        @action()
+        def not_use_param() -> Action:
+            return Action(input=[], output=[], run=[])
+
+        write_file('config.yaml', '- { when: {}, then: { "foo?": 1 } }')
+        load_config('config.yaml')
+
+        with LogCapture() as log:
+            not_use_param()
+
+        log.check(('dynamake', 'DEBUG', '/not_use_param: input: None'),
+                  ('dynamake', 'DEBUG', '/not_use_param: input paths: None'),
+                  ('dynamake', 'DEBUG', '/not_use_param: output: None'),
+                  ('dynamake', 'DEBUG', '/not_use_param: output paths before: None'),
+                  ('dynamake', 'DEBUG',
+                   '/not_use_param: needs to execute because has no outputs'),
+                  ('dynamake', 'DEBUG', '/not_use_param: output paths after: None'))
+
+    def test_use_config_file(self) -> None:
+        @action()
+        def use_file() -> Action:
+            config_file()  # Test multiple invocations.
+            return Action(input=[], output=['output.yaml'],
+                          run=['cp', config_file(), 'output.yaml'])
+
+        write_file('config.yaml', '- { when: {}, then: { foo: 1 } }')
+        load_config('config.yaml')
+
+        with LogCapture() as log:
+            use_file()
+        self.expect_file('output.yaml', '{foo: 1}\n')
+
+        log.check(('dynamake', 'DEBUG',
+                   '/use_file: writing new configuration file: '
+                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml'),
+                  ('dynamake', 'DEBUG', '/use_file: input: None'),
+                  ('dynamake', 'DEBUG', '/use_file: input paths: None'),
+                  ('dynamake', 'DEBUG', '/use_file: output: output.yaml'),
+                  ('dynamake', 'DEBUG', '/use_file: output paths before: None'),
+                  ('dynamake', 'DEBUG', '/use_file: minimal output mtime: None'),
+                  ('dynamake', 'DEBUG',
+                   '/use_file: need to execute assuming next step(s) need all inputs'),
+                  ('dynamake', 'INFO', '/use_file: run: cp '
+                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
+                  ('dynamake', 'DEBUG', '/use_file: output paths after: output.yaml'))
+
+        write_file('config.yaml', '- { when: { step: use_file }, then: { foo: 1 } }')
+        load_config('config.yaml')
+
+        with LogCapture() as log:
+            use_file()
+
+        log.check(('dynamake', 'DEBUG',
+                   '/use_file: using existing configuration file: '
+                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml'),
+                  ('dynamake', 'DEBUG', '/use_file: input: None'),
+                  ('dynamake', 'DEBUG', '/use_file: input paths: None'),
+                  ('dynamake', 'DEBUG', '/use_file: output: output.yaml'),
+                  ('dynamake', 'DEBUG', '/use_file: output paths before: output.yaml'),
+                  ('dynamake', 'DEBUG', StringComparison('/use_file: minimal output mtime: .*')),
+                  ('dynamake', 'DEBUG', StringComparison('/use_file: maximal input mtime:.*')),
+                  ('dynamake', 'DEBUG', '/use_file: no need to execute since outputs are newer'))
+
+        write_file('config.yaml', '- { when: {}, then: { foo: 2 } }')
+        load_config('config.yaml')
+
+        with LogCapture() as log:
+            use_file()
+        self.expect_file('output.yaml', '{foo: 2}\n')
+
+        log.check(('dynamake', 'DEBUG',
+                   '/use_file: writing new configuration file: '
+                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml'),
+                  ('dynamake', 'DEBUG', '/use_file: input: None'),
+                  ('dynamake', 'DEBUG', '/use_file: input paths: None'),
+                  ('dynamake', 'DEBUG', '/use_file: output: output.yaml'),
+                  ('dynamake', 'DEBUG', '/use_file: output paths before: output.yaml'),
+                  ('dynamake', 'DEBUG', StringComparison('/use_file: minimal output mtime: .*')),
+                  ('dynamake', 'DEBUG', StringComparison('/use_file: maximal input mtime:.*')),
+                  ('dynamake', 'DEBUG', '/use_file: need to execute since inputs are newer'),
+                  ('dynamake', 'DEBUG', '/use_file: delete stale outputs: output.yaml'),
+                  ('dynamake', 'INFO', '/use_file: run: cp '
+                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
+                  ('dynamake', 'DEBUG', '/use_file: output paths after: output.yaml'))

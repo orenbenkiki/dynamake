@@ -203,16 +203,6 @@ class Config:
         Config.DIRECTORY = '.dynamake'
 
     @staticmethod
-    def context_for_step(stack: List[str], arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Prepare a context identifying the specific invocation of a step.
-        """
-        context = arguments.copy()
-        context['stack'] = '/' + '/'.join(stack)
-        context['step'] = stack[-1]
-        return context
-
-    @staticmethod
     def path_for_context(context: Dict[str, Any]) -> str:
         """
         Return the path name of a configuration file for a specific step invocation.

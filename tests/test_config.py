@@ -2,6 +2,9 @@
 Test the configuration classes.
 """
 
+from typing import Any
+from typing import Dict
+
 from dynamake.config import Config
 from dynamake.make import load_config
 from tests import TestWithFiles
@@ -186,9 +189,12 @@ class TestConfig(TestWithFiles):
         self.assertEqual(Config.values_for_context({}), {})
 
     def test_path_for_context(self) -> None:
-        empty_path = Config.path_for_context(Config.context_for_step(['foo'], {}))
-        one_path = Config.path_for_context(Config.context_for_step(['foo'], {'a': 1}))
-        two_path = Config.path_for_context(Config.context_for_step(['foo'], {'a': 2}))
+        context: Dict[str, Any] = {'stack': '/foo', 'step': 'foo'}
+        empty_path = Config.path_for_context(context)
+        context['a'] = 1
+        one_path = Config.path_for_context(context)
+        context['a'] = 2
+        two_path = Config.path_for_context(context)
 
         self.assertNotEqual(empty_path, one_path)
         self.assertNotEqual(empty_path, two_path)
