@@ -141,7 +141,7 @@ if ``bar`` does not exist, or if ``foo`` is newer than ``bar``:
     def all() -> None:
         copy_file(input_path='foo', output_path='bar')
 
-    dm.main(default_step=all)
+    dm.main(argparse.ArgumentParser(description='...'), all)
 
 A build script consists of:
 
@@ -229,7 +229,7 @@ An example of a slightly more dynamic build script is:
         objects = compile_objects(source_dir, object_dir)
         link_objects(objects, executable_path)
 
-    dm.main(default_step=build_executable)
+    dm.main(argparse.ArgumentParser(description='...'), build_executable)
 
 This demonstrates some additional concepts:
 
