@@ -308,6 +308,39 @@ Using :py:func:`dynamake.make.pareach` is especially convenient in combination w
         names = dm.extract('{*name}.c')
         dm.pareach(names, compile_file, '{name}.c', object_path='{name}.o')
 
+Parallel Resources
+..................
+
+When executing in parallel, it is useful to be able to restrict the maximal number of simultaneous
+actions. By default, the :py:attr:`dynamake.make.Make.executor` is a `ThreadPoolExecutor` which
+allows a large number of action to be invoked at the same time. You can simply reduce the maximal
+number of workers in this pool, but that would still provide only a coarse-grained control over
+parallel actions.
+
+the recommended way to control parallel actions is by declaring some
+:py:func:`dynamake.make.available_resources`, and then specifying the amount of resources needed by
+each :py:class:`dynamake.make.Action`. This allows for fine-grained control over the parallel
+actions. For example, it makes it easy to restrict the number of actions executed locally (using a
+``threads`` resource), while allowing a larger number of actions to be executed remotely (using
+``qsub`` and a ``jobs`` resource):
+
+.. code-block:: python
+
+    @dm.action()
+    def local(...) -> None:
+        ...
+        return Action(..., run=[...], resources={'threads': 1})
+
+    @dm.action()
+    def remote(...) -> None:
+        ...
+        return Action(..., run=['qsub', ...], resources={'jobs': 1})
+
+    dm.available_resources(threads=10, jobs=100)
+
+You can also specify resources for expected memory usage, I/O, network bandwidth - anything which
+may be relevant for restricting the number of actions executed at the same time.
+
 Configuration Control
 .....................
 
@@ -488,25 +521,14 @@ WHAT NOT (YET)
 Since DynaMake is very new, there are many features that should be implemented, but haven't been
 worked on yet:
 
-Performance Features
-....................
-
-* Associate resources with actions to limit the parallelism.
-
 * Sumbit actions to a cluster/grid/etc. when possible and sensible. This may require some
   annotation inside the flow (not all actions deserve being distributed). Possibly add a
   ``distributed`` call, and some configuration to allow interfacing with different cluster/grid
   systems. Ensure distribution resources are distinct from parallelism resources.
 
-* Cache the results of glob calls, only invalidate when relevant actions are executed.
+* Allow forcing rebuilding (some) targets.
 
-Debugging Features
-..................
-
-* Generate a serialized log of actions so that the user can manually run a specific one for
-  debugging.
-
-* Generate a reason for each executed action.
+* Generate a more detailed reason for each executed action.
 
 * Dry run. While it is impossible in general to print the full set of dry run actions, if should
   be easy to just print the 1st action(s) that need to be executed. This should provide most of the
@@ -529,21 +551,14 @@ Debugging Features
   and 100% exact, by tracking the expanded action inputs and outputs.
 
 * Generate a timeline of action executions showing start and end times, and resources consumption.
-  In case of distributed actions, make a distinction between submission and completeion times and
+  In case of distributed actions, make a distinction between submission and completion times and
   actual start/end times to track the cluster/grid overheads.
 
 * Generate several types of help messages: basic, list all steps, detailed help for a step,
   help of shell action of a step (for parameters).
 
-Application Features
-....................
-
 * Application "hub" skeleton for invoking arbitrary (registered) functions with different sets of
   parameters.
 
-Core Features
-.............
-
-* Allow skipping missing input or intermediate files if the outputs exist, at least as an option.
-
-* Allow forcing rebuilding some targets.
+* Cache the results of glob calls, only invalidate when relevant actions are executed (if this
+  proves to be a performance bottleneck).

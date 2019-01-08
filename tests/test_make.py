@@ -2,11 +2,14 @@
 Test the make utilities.
 """
 
+# pylint: disable=too-many-lines
+
 import argparse
 import os
 import sys
 import threading
 from concurrent.futures import wait
+from datetime import datetime
 from time import sleep
 from typing import Any
 from typing import Dict
@@ -22,6 +25,7 @@ from dynamake.make import MissingInputs
 from dynamake.make import MissingOutputs
 from dynamake.make import Step
 from dynamake.make import action
+from dynamake.make import available_resources
 from dynamake.make import capture
 from dynamake.make import config_file
 from dynamake.make import config_param
@@ -57,7 +61,6 @@ class TestMake(TestWithReset):
         self.assertTrue(called_function)
 
     def test_conflicting_function(self) -> None:
-
         @action()
         def function() -> None:  # pylint: disable=unused-variable
             pass
@@ -74,7 +77,6 @@ class TestMake(TestWithReset):
                                _register)
 
     def test_call_static_method(self) -> None:
-
         class Klass:
             called_static_method = False
 
@@ -87,7 +89,6 @@ class TestMake(TestWithReset):
         self.assertTrue(Klass.called_static_method)
 
     def test_action_in_plan(self) -> None:
-
         @action()
         def tactics() -> None:
             self.assertEqual(Step.current().stack, '/strategy/tactics')
@@ -102,7 +103,6 @@ class TestMake(TestWithReset):
         strategy()
 
     def test_action_in_action(self) -> None:
-
         @action()
         def tactics() -> None:
             pass
@@ -117,7 +117,6 @@ class TestMake(TestWithReset):
                                strategy)
 
     def test_action_in_plan_in_plan(self) -> None:
-
         @action()
         def tactics() -> None:
             self.assertEqual(Step.current().stack, '/strategy/scheme/tactics')
@@ -138,7 +137,6 @@ class TestMake(TestWithReset):
         strategy()
 
     def test_parallel_plan(self) -> None:
-
         main_thread = threading.current_thread().name
         left_thread = main_thread
         right_thread = main_thread
@@ -168,7 +166,6 @@ class TestMake(TestWithReset):
         self.assertNotEqual(left_thread, right_thread)
 
     def test_parcall_plan(self) -> None:
-
         main_thread = threading.current_thread().name
         left_thread = main_thread
         right_thread = main_thread
@@ -196,7 +193,6 @@ class TestMake(TestWithReset):
         self.assertNotEqual(left_thread, right_thread)
 
     def test_pareach_plan(self) -> None:
-
         main_thread = threading.current_thread().name
 
         @action()
@@ -215,8 +211,64 @@ class TestMake(TestWithReset):
         self.assertNotEqual(threads[1], main_thread)
         self.assertNotEqual(threads[0], threads[1])
 
-    def test_expand_in_step(self) -> None:
+    def test_resources_plan(self) -> None:
+        available_resources(foo=2)
 
+        @action()
+        def foo(amount: float) -> Action:
+            return Action(input=[], output=[], run=['sleep', '1'], resources={'foo': amount})
+
+        @plan()
+        def foos() -> None:
+            parcall((foo, [1], {}),
+                    (foo, [1], {}),
+                    (foo, [3], {}))
+
+        start_time = datetime.now()
+        foos()
+        duration = (datetime.now() - start_time).total_seconds()
+        self.assertTrue(duration > 1.5)  # Did not run all three in parallel.
+        self.assertTrue(duration < 2.5)  # Did run first two in parallel.
+
+    def test_conflicting_resources(self) -> None:
+        available_resources(foo=2)
+
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               r'Multiple .* resource: foo',
+                               available_resources, foo=2)
+
+    def test_negative_resources(self) -> None:
+        available_resources(foo=2)
+
+        @action()
+        def foo(amount: float) -> Action:
+            return Action(input=[], output=[], run=['true'], resources={'foo': amount})
+
+        @plan()
+        def foos() -> None:
+            parcall((foo, [1], {}),
+                    (foo, [-1], {}))
+
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               'Negative amount: -1 .* resource: foo .* step: /foos/foo',
+                               foos)
+
+    def test_unknown_resources(self) -> None:
+        @action()
+        def foo(amount: float) -> Action:
+            return Action(input=[], output=[], run=['sleep', '1'], resources={'foo': amount})
+
+        @plan()
+        def foos() -> None:
+            parcall((foo, [1], {}),
+                    (foo, [1], {}),
+                    (foo, [3], {}))
+
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               'Unknown resource: foo .* step: /foos/foo',
+                               foos)
+
+    def test_expand_in_step(self) -> None:
         @plan()
         def expander(foo: str, *, bar: str) -> List[str]:  # pylint: disable=unused-argument
             return expand('{foo}/{bar}')
@@ -224,7 +276,6 @@ class TestMake(TestWithReset):
         self.assertEqual(expander('a', bar='b'), ['a/b'])
 
     def test_extract_in_step(self) -> None:
-
         @plan()
         def extractor(foo: str, *, bar: str) -> List[Dict[str, Any]]:  # pylint: disable=unused-argument
             return extract('{foo}/{bar}.{*baz}', 'a/b.c')
@@ -232,7 +283,6 @@ class TestMake(TestWithReset):
         self.assertEqual(extractor('a', bar='b'), [{'baz': 'c'}])
 
     def test_foreach_in_step(self) -> None:
-
         def collect(*args: str, **kwargs: Dict[str, Any]) -> str:
             return '%s %s' % (args, kwargs)
 
@@ -262,7 +312,7 @@ class TestMake(TestWithReset):
     def test_true_action(self) -> None:
         @action()
         def empty() -> Action:
-            return Action(input=[], output=[], run=['true'])
+            return Action(input=[], output=[], run='true')
 
         with LogCapture() as log:
             empty()

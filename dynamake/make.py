@@ -15,13 +15,16 @@ from abc import abstractmethod
 from concurrent.futures import Executor
 from concurrent.futures import Future
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime
 from enum import Enum
 from enum import unique
+from threading import Condition
 from types import SimpleNamespace
 from typing import Any
 from typing import Callable
 from typing import Dict
+from typing import Iterator
 from typing import List
 from typing import Optional
 from typing import Set
@@ -88,6 +91,18 @@ class Make:  # pylint: disable=too-many-instance-attributes
     #: The executor for parallel steps.
     executor: Executor
 
+    #: A condition variable for synchronizing access to the available resources.
+    condition: Condition
+
+    #: The amount of available resources for restricting parallel actions.
+    available_resources: Dict[str, float]
+
+    #: The amount of resources currently being used by parallel actions.
+    used_resources: Dict[str, float]
+
+    #: The number of parallel actions currently being executed.
+    parallel_actions: int
+
     #: Known (wrapped) step functions.
     step_by_name: Dict[str, Callable]
 
@@ -136,6 +151,10 @@ class Make:  # pylint: disable=too-many-instance-attributes
         Reset all the current state, for tests.
         """
         Make.executor = ThreadPoolExecutor(thread_name_prefix='MakeThread')
+        Make.condition = Condition()
+        Make.available_resources = {}
+        Make.used_resources = {}
+        Make.parallel_actions = 0
         Make.step_by_name = {}
         Make.logger = logging.getLogger('dynamake')
         Make.missing_inputs = MissingInputs.forbidden
@@ -330,8 +349,88 @@ class Agent(Step):
     def _call(self) -> Any:
         result = self.function(*self.args, **self.kwargs)
         if isinstance(result, Action) and result.needs_to_execute:
-            result.call()
+            if result.resources:
+                with _request_resources(result.resources):
+                    result.call()
+            else:
+                result.call()
         return result
+
+
+def available_resources(**kwargs: float) -> None:
+    """
+    Declare resources for restricting parallel action execution.
+
+    This should be done before invoking the top-level step function.
+    """
+    for name, amount in kwargs.items():
+        if name in Make.available_resources:
+            raise RuntimeError('Multiple declarations of the resource: %s' % name)
+        Make.available_resources[name] = amount
+        Make.used_resources[name] = 0
+
+
+@contextmanager
+def _request_resources(resources: Dict[str, float]) -> Iterator[None]:
+    for name, amount in resources.items():
+        if name not in Make.available_resources:
+            raise RuntimeError('Unknown resource: %s '
+                               'requested by the step: %s'
+                               % (name, Step.current().stack))
+        if amount < 0:
+            raise RuntimeError('Negative amount: %s '
+                               'requested for the resource: %s '
+                               'by the step: %s'
+                               % (amount, name, Step.current().stack))
+
+    with Make.condition:
+        while Make.parallel_actions > 0 and not _has_resources(resources):
+            Make.condition.wait()
+        assert Make.parallel_actions >= 0
+        Make.parallel_actions += 1
+        _use_resources(resources)
+
+    try:
+        yield
+    finally:
+        with Make.condition:
+            _free_resources(resources)
+            Make.parallel_actions -= 1
+            assert Make.parallel_actions >= 0
+            Make.condition.notify_all()
+
+
+def _has_resources(resources: Dict[str, float]) -> bool:
+    for name, amount in resources.items():
+        remaining = Make.available_resources[name] - Make.used_resources[name]
+        if amount > remaining:
+            Make.logger.debug('%s: waiting for resource: %s amount: %s remaining: %s',
+                              Step.current().stack, name, amount, remaining)
+            return False
+    return True
+
+
+def _use_resources(resources: Dict[str, float]) -> None:
+    for name, amount in resources.items():
+        if amount > Make.available_resources[name]:
+            Make.logger.warn('%s: requested resource: %s amount: %s is more than available: %s',
+                             Step.current().stack, name, amount, Make.available_resources[name])
+            amount = Make.available_resources[name]
+
+        Make.logger.debug('%s: use resource: %s amount: %s remaining: %s',
+                          Step.current().stack, name, amount,
+                          Make.available_resources[name] - amount)
+        Make.used_resources[name] += amount
+        assert 0 <= Make.used_resources[name] <= Make.available_resources[name]
+
+
+def _free_resources(resources: Dict[str, float]) -> None:
+    for name, amount in resources.items():
+        if amount <= Make.available_resources[name]:
+            Make.used_resources[name] -= amount
+        else:
+            Make.used_resources[name] = 0
+        assert 0 <= Make.used_resources[name] <= Make.available_resources[name]
 
 
 class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
@@ -340,7 +439,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
     """
 
     def __init__(self, *, input: Strings,  # pylint: disable=redefined-builtin
-                 output: Strings, run: List[Strings],
+                 output: Strings, run: Strings,
                  shell: bool = False,
                  ignore_exit_status: bool = False,
                  missing_inputs: Optional[MissingInputs] = None,
@@ -349,6 +448,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                  touch_success_outputs: Optional[bool] = None,
                  delete_failed_outputs: Optional[bool] = None,
                  delete_empty_directories: Optional[bool] = None,
+                 resources: Optional[Dict[str, Any]] = None,
                  **kwargs: Any) -> None:
         """
         Create (but not execute yet) an action.
@@ -395,6 +495,9 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         delete_empty_directories
             Optional override for :py:attr:`dynamake.make.Make.delete_empty_directories` for this
             action.
+        resources
+            Optional resources to restrict parallel action execution. Specified
+            resources must be pre-declared via :py:func:`dynamake.resource`.
         kwargs
             Any additional named parameters are injected into the action object
             (``SimpleNamespace``). This makes it easy to return additional values from an action
@@ -434,6 +537,9 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
             Make.delete_empty_directories if delete_empty_directories is None \
             else delete_empty_directories
 
+        #: The resources needed by the action, to restrict parallel action execution.
+        self.resources = resources
+
         #: Whether to use a shell to execute the commands.
         self.shell = shell
 
@@ -442,8 +548,9 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
 
         if not run:
             run = []
-
-        if run and isinstance(run[0], str):
+        elif isinstance(run, str):
+            run = [[run]]
+        elif run and isinstance(run[0], str):
             run = [run]  # type: ignore
 
         #: The expanded command(s) to execute.
