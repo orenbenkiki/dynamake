@@ -2,7 +2,9 @@
 Test the make utilities.
 """
 
+import argparse
 import os
+import sys
 from time import sleep
 from typing import Any
 from typing import Dict
@@ -16,6 +18,7 @@ from dynamake.make import Captured
 from dynamake.make import Make
 from dynamake.make import MissingInputs
 from dynamake.make import MissingOutputs
+from dynamake.make import Step
 from dynamake.make import action
 from dynamake.make import capture
 from dynamake.make import config_file
@@ -25,6 +28,7 @@ from dynamake.make import extract
 from dynamake.make import foreach
 from dynamake.make import glob
 from dynamake.make import load_config
+from dynamake.make import main
 from dynamake.make import plan
 from tests import TestWithFiles
 from tests import TestWithReset
@@ -47,6 +51,23 @@ class TestMake(TestWithReset):
         function()
         self.assertTrue(called_function)
 
+    def test_conflicting_function(self) -> None:
+
+        @action()
+        def function() -> None:  # pylint: disable=unused-variable
+            pass
+
+        def _register() -> None:
+            @action()
+            def function() -> None:  # pylint: disable=unused-variable
+                pass
+
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               'Conflicting .* step: function .* '
+                               'both: .*.test_conflicting_function.<locals>.function '
+                               'and: .*._register.<locals>.function',
+                               _register)
+
     def test_call_static_method(self) -> None:
 
         class Klass:
@@ -64,13 +85,13 @@ class TestMake(TestWithReset):
 
         @action()
         def tactics() -> None:
-            self.assertEqual(Make.current_step.stack, '/strategy/tactics')
-            self.assertEqual(Make.current_step.name, 'tactics')
+            self.assertEqual(Step.current.stack, '/strategy/tactics')
+            self.assertEqual(Step.current.name, 'tactics')
 
         @plan()
         def strategy() -> None:
-            self.assertEqual(Make.current_step.stack, '/strategy')
-            self.assertEqual(Make.current_step.name, 'strategy')
+            self.assertEqual(Step.current.stack, '/strategy')
+            self.assertEqual(Step.current.name, 'strategy')
             tactics()
 
         strategy()
@@ -94,19 +115,19 @@ class TestMake(TestWithReset):
 
         @action()
         def tactics() -> None:
-            self.assertEqual(Make.current_step.stack, '/strategy/scheme/tactics')
-            self.assertEqual(Make.current_step.name, 'tactics')
+            self.assertEqual(Step.current.stack, '/strategy/scheme/tactics')
+            self.assertEqual(Step.current.name, 'tactics')
 
         @plan()
         def scheme() -> None:
-            self.assertEqual(Make.current_step.stack, '/strategy/scheme')
-            self.assertEqual(Make.current_step.name, 'scheme')
+            self.assertEqual(Step.current.stack, '/strategy/scheme')
+            self.assertEqual(Step.current.name, 'scheme')
             tactics()
 
         @plan()
         def strategy() -> None:
-            self.assertEqual(Make.current_step.stack, '/strategy')
-            self.assertEqual(Make.current_step.name, 'strategy')
+            self.assertEqual(Step.current.stack, '/strategy')
+            self.assertEqual(Step.current.name, 'strategy')
             scheme()
 
         strategy()
@@ -244,6 +265,131 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG',
                    '/missing: need to execute assuming next step(s) need all inputs'),
                   ('dynamake', 'DEBUG', '/missing: output paths after: None'))
+
+    def test_main_default_step(self) -> None:
+        @action()
+        def do_nothing() -> Action:
+            return Action(input=[], output=[], run=[])
+
+        sys.argv = ['main_defaults', '-ll', 'DEBUG']
+        with LogCapture() as log:
+            main(argparse.ArgumentParser(), do_nothing)
+
+        log.check(('dynamake', 'DEBUG', '/do_nothing: input: None'),
+                  ('dynamake', 'DEBUG', '/do_nothing: input paths: None'),
+                  ('dynamake', 'DEBUG', '/do_nothing: output: None'),
+                  ('dynamake', 'DEBUG', '/do_nothing: output paths before: None'),
+                  ('dynamake', 'DEBUG', '/do_nothing: needs to execute because has no outputs'),
+                  ('dynamake', 'DEBUG', '/do_nothing: output paths after: None'))
+
+    def test_main_non_default_step(self) -> None:
+        @action()
+        def do_nothing() -> Action:
+            return Action(input=[], output=[], run=[])
+
+        @action()
+        def do_something() -> Action:  # pylint: disable=unused-variable
+            return Action(input=[], output=[], run=[])
+
+        sys.argv = ['main_defaults', '-ll', 'DEBUG', 'do_something']
+
+        with LogCapture() as log:
+            main(argparse.ArgumentParser(), do_nothing)
+
+        log.check(('dynamake', 'DEBUG', '/do_something: input: None'),
+                  ('dynamake', 'DEBUG', '/do_something: input paths: None'),
+                  ('dynamake', 'DEBUG', '/do_something: output: None'),
+                  ('dynamake', 'DEBUG', '/do_something: output paths before: None'),
+                  ('dynamake', 'DEBUG', '/do_something: needs to execute because has no outputs'),
+                  ('dynamake', 'DEBUG', '/do_something: output paths after: None'))
+
+    def test_non_step_function(self) -> None:
+        def do_nothing() -> Action:
+            return Action(input=[], output=[], run=[])
+
+        sys.argv = ['main_defaults']
+
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               r'function: .*.test_non_step_function.<locals>.do_nothing',
+                               main, argparse.ArgumentParser(), do_nothing)
+
+    def test_missing_step_function(self) -> None:
+        @action()
+        def do_nothing() -> Action:
+            return Action(input=[], output=[], run=[])
+
+        sys.argv = ['main_defaults', 'do_something']
+
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               r'Unknown step: do_something',
+                               main, argparse.ArgumentParser(), do_nothing)
+
+    def test_main_flags(self) -> None:
+        @action()
+        def do_nothing() -> Action:
+            return Action(input=[], output=[], run=[])
+
+        sys.argv = ['main_defaults',
+                    '-mi', 'optional',
+                    '-mo', 'partial',
+                    '-tso',
+                    '-dso', 'f',
+                    '-ded', 't']
+        main(argparse.ArgumentParser(), do_nothing)
+
+        self.assertTrue(Make.touch_success_outputs)
+        self.assertFalse(Make.delete_stale_outputs)
+        self.assertTrue(Make.delete_empty_directories)
+        self.assertEqual(Make.missing_inputs, MissingInputs.optional)
+        self.assertEqual(Make.missing_outputs, MissingOutputs.partial)
+
+    def test_main_parameters(self) -> None:
+        collected = 'bar'
+
+        @action()
+        def do_nothing(foo: str) -> Action:
+            nonlocal collected
+            collected = foo
+            return Action(input=[], output=[], run=[])
+
+        sys.argv = ['main_defaults', '-p', 'foo=baz']
+
+        main(argparse.ArgumentParser(), do_nothing)
+
+        self.assertEqual(collected, 'baz')
+
+    def test_invalid_main_parameters(self) -> None:
+        @action()
+        def do_nothing(foo: str) -> Action:  # pylint: disable=unused-argument
+            return Action(input=[], output=[], run=[])
+
+        sys.argv = ['main_defaults', '-p', 'foo']
+
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               r'Invalid parameter flag: foo',
+                               main, argparse.ArgumentParser(), do_nothing)
+
+    def test_unused_main_parameters(self) -> None:
+        @action()
+        def do_nothing(foo: str) -> Action:  # pylint: disable=unused-argument
+            return Action(input=[], output=[], run=[])
+
+        sys.argv = ['main_defaults', '-p', 'foo=[', '-p', 'bar=baz']
+
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               r'Unused top-level .* parameter: bar',
+                               main, argparse.ArgumentParser(), do_nothing)
+
+    def test_missing_main_parameters(self) -> None:
+        @action()
+        def do_nothing(foo: str) -> Action:  # pylint: disable=unused-argument
+            return Action(input=[], output=[], run=[])
+
+        sys.argv = ['main_defaults']
+
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               r'Missing top-level parameter: foo .* step: /do_nothing',
+                               main, argparse.ArgumentParser(), do_nothing)
 
 
 class TestFiles(TestWithFiles):
@@ -680,3 +826,45 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'INFO', '/use_file: run: cp '
                    '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: output paths after: output.yaml'))
+
+    def test_main_config(self) -> None:
+        @action()
+        def do_nothing() -> Action:
+            return Action(input=[], output=[], run=[])
+
+        sys.argv = ['main_defaults', '-tso']
+
+        write_file('Config.yaml', """
+            - when: {step: /}
+              then:
+                missing_inputs: optional
+                missing_outputs: partial
+                touch_success_outputs: False
+                delete_stale_outputs: False
+                delete_empty_directories: True
+        """)
+
+        main(argparse.ArgumentParser(), do_nothing)
+
+        self.assertTrue(Make.touch_success_outputs)
+        self.assertFalse(Make.delete_stale_outputs)
+        self.assertTrue(Make.delete_empty_directories)
+        self.assertEqual(Make.missing_inputs, MissingInputs.optional)
+        self.assertEqual(Make.missing_outputs, MissingOutputs.partial)
+
+    def test_unused_main_config(self) -> None:
+        @action()
+        def do_nothing() -> Action:
+            return Action(input=[], output=[], run=[])
+
+        sys.argv = ['main_defaults', '-tso']
+
+        write_file('Config.yaml', """
+            - when: {stack: /}
+              then:
+                foo: True
+        """)
+
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               r'Unused top-level .* parameter: foo',
+                               main, argparse.ArgumentParser(), do_nothing)

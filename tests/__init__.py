@@ -12,6 +12,7 @@ from unittest import TestCase
 from dynamake.application import ApplicationParameters
 from dynamake.config import Config
 from dynamake.make import Make
+from dynamake.make import Step
 
 # pylint: disable=missing-docstring
 
@@ -34,6 +35,8 @@ class TestWithReset(TestCase):
         ApplicationParameters.reset()
         Config.reset()
         Make.reset()
+        Step.reset()
+        Make.logger.setLevel('DEBUG')
 
 
 class TestWithFiles(TestWithReset):

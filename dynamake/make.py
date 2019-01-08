@@ -2,6 +2,7 @@
 Utilities for dynamic make.
 """
 
+import argparse
 import inspect
 import logging
 import os
@@ -78,8 +79,8 @@ class Make:  # pylint: disable=too-many-instance-attributes
     Global build state.
     """
 
-    #: The current build step.
-    current_step: 'Step'
+    #: Known (wrapped) step functions.
+    step_by_name: Dict[str, Callable]
 
     #: The logger for tracking the build flow.
     logger: logging.Logger
@@ -125,7 +126,7 @@ class Make:  # pylint: disable=too-many-instance-attributes
         """
         Reset all the current state, for tests.
         """
-        Make.current_step = Planner(None, None, (), {})
+        Make.step_by_name = {}
         Make.logger = logging.getLogger('dynamake')
         Make.missing_inputs = MissingInputs.forbidden
         Make.missing_outputs = MissingOutputs.forbidden
@@ -134,24 +135,34 @@ class Make:  # pylint: disable=too-many-instance-attributes
         Make.delete_failed_outputs = True
         Make.delete_empty_directories = False
 
-    @staticmethod
-    def call_step(make: type, function: Callable,
-                  args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
-        """
-        Invoke the specified build step function.
-        """
-        parent = Make.current_step
-        Make.current_step = make(parent, function, args, kwargs)
-        try:
-            return Make.current_step.call()
-        finally:
-            Make.current_step = parent
-
 
 class Step:  # pylint: disable=too-many-instance-attributes
     """
     A single step function execution state.
     """
+
+    #: The current step.
+    current: 'Step'
+
+    @staticmethod
+    def reset() -> None:
+        """
+        Reset all the current state, for tests.
+        """
+        Step.current = Planner(None, None, (), {})
+
+    @staticmethod
+    def call_current(make: type, function: Callable,
+                     args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Any:
+        """
+        Invoke the specified build step function.
+        """
+        parent = Step.current
+        Step.current = make(parent, function, args, kwargs)
+        try:
+            return Step.current.call()
+        finally:
+            Step.current = parent
 
     def __init__(self, parent: Optional['Step'], function: Optional[Callable],
                  args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> None:
@@ -413,10 +424,10 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         self.missing_input_patterns: List[str]
 
         self.input_paths, self.missing_input_patterns = Action._collect_glob(self.input)
-        Make.logger.debug('%s: input: %s', Make.current_step.stack,
+        Make.logger.debug('%s: input: %s', Step.current.stack,
                           ' '.join(self.input) or 'None')
         Make.logger.debug('%s: input paths: %s',
-                          Make.current_step.stack, ' '.join(self.input_paths) or 'None')
+                          Step.current.stack, ' '.join(self.input_paths) or 'None')
         if self.missing_inputs == MissingInputs.forbidden:
             Action._raise_missing('input', self.missing_input_patterns)
 
@@ -424,9 +435,9 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         #: patterns.
         self.output_paths_before = self._collect_outputs()
         Make.logger.debug('%s: output: %s',
-                          Make.current_step.stack, ' '.join(self.output) or 'None')
+                          Step.current.stack, ' '.join(self.output) or 'None')
         Make.logger.debug('%s: output paths before: %s',
-                          Make.current_step.stack, ' '.join(self.output_paths_before) or 'None')
+                          Step.current.stack, ' '.join(self.output_paths_before) or 'None')
 
         #: The path of the existing output files after the execution, matching the output ``glob``
         #: patterns.
@@ -445,42 +456,42 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
     def _needs_to_execute(self) -> bool:
         if not self.output:
             Make.logger.debug('%s: needs to execute because has no outputs',
-                              Make.current_step.stack)
+                              Step.current.stack)
             return True
 
         minimal_output_mtime = Action._collect_mtime(self.output_paths_before, min)
         if Make.logger.isEnabledFor(logging.DEBUG):
             Make.logger.debug('%s: minimal output mtime: %s',
-                              Make.current_step.stack, _ns2str(minimal_output_mtime))
+                              Step.current.stack, _ns2str(minimal_output_mtime))
 
         if minimal_output_mtime is None:
             # TODO: This is wrong if the next step(s) override Action.missing_inputs.
             if Make.missing_inputs == MissingInputs.forbidden:
                 Make.logger.debug('%s: need to execute assuming next step(s) need all inputs',
-                                  Make.current_step.stack)
+                                  Step.current.stack)
                 return True
             Make.logger.debug('%s: no need to execute assuming next step(s) allow missing inputs',
-                              Make.current_step.stack)
+                              Step.current.stack)
             return False
 
         maximal_input_mtime = \
-            Action._collect_mtime(self.input_paths, max, Make.current_step.config_path)
+            Action._collect_mtime(self.input_paths, max, Step.current.config_path)
         if Make.logger.isEnabledFor(logging.DEBUG):
             Make.logger.debug('%s: maximal input mtime: %s',
-                              Make.current_step.stack, _ns2str(maximal_input_mtime))
+                              Step.current.stack, _ns2str(maximal_input_mtime))
 
         if maximal_input_mtime is None:
             Make.logger.debug('%s: no need to execute ignoring missing inputs',
-                              Make.current_step.stack)
+                              Step.current.stack)
             return False
 
         if maximal_input_mtime < minimal_output_mtime:
             Make.logger.debug('%s: no need to execute since outputs are newer',
-                              Make.current_step.stack)
+                              Step.current.stack)
             return False
 
         Make.logger.debug('%s: need to execute since inputs are newer',
-                          Make.current_step.stack)
+                          Step.current.stack)
         return True
 
     @staticmethod
@@ -505,14 +516,14 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
             self._delete_outputs('stale', self.output_paths_before)
 
         for command in self.run:
-            Make.logger.info('%s: run: %s', Make.current_step.stack, ' '.join(command))
+            Make.logger.info('%s: run: %s', Step.current.stack, ' '.join(command))
             if self.shell:
                 completed = subprocess.run(' '.join(command), shell=True)
             else:
                 completed = subprocess.run(command)
             if completed.returncode != 0 and not self.ignore_exit_status:
                 Make.logger.debug('%s: failed with exit status: %s',
-                                  Make.current_step.stack, completed.returncode)
+                                  Step.current.stack, completed.returncode)
                 self._fail(command)
 
         self._success()
@@ -523,12 +534,12 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         if self.delete_failed_outputs:
             self._delete_outputs('failed', self.output_paths_after)
 
-        raise RuntimeError('%s: failed command: %s' % (Make.current_step.stack, ' '.join(command)))
+        raise RuntimeError('%s: failed command: %s' % (Step.current.stack, ' '.join(command)))
 
     def _success(self) -> None:
         self.output_paths_after, self.missing_outputs_patterns = Action._collect_glob(self.output)
         Make.logger.debug('%s: output paths after: %s',
-                          Make.current_step.stack, ' '.join(self.output_paths_after) or 'None')
+                          Step.current.stack, ' '.join(self.output_paths_after) or 'None')
 
         if self.missing_outputs == MissingOutputs.forbidden \
                 or (self.missing_outputs == MissingOutputs.partial and not self.output_paths_after):
@@ -536,7 +547,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
 
         if self.touch_success_outputs and self.output_paths_after:
             Make.logger.debug('%s: touch outputs: %s',
-                              Make.current_step.stack, ' '.join(self.output_paths_after))
+                              Step.current.stack, ' '.join(self.output_paths_after))
             for path in self.output_paths_after:
                 os.utime(path)
 
@@ -545,7 +556,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
             return
 
         Make.logger.debug('%s: delete %s outputs: %s',
-                          Make.current_step.stack, reason, ' '.join(paths))
+                          Step.current.stack, reason, ' '.join(paths))
 
         for path in paths:
             path = os.path.abspath(path)
@@ -591,12 +602,12 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         if expanded == pattern:
             raise RuntimeError('Missing %s(s): %s '
                                'for the action step: %s'
-                               % (direction, pattern, Make.current_step.stack))
+                               % (direction, pattern, Step.current.stack))
 
         raise RuntimeError('Missing %s(s): %s '
                            'for the pattern: %s '
                            'for the action step: %s'
-                           % (direction, expanded, pattern, Make.current_step.stack))
+                           % (direction, expanded, pattern, Step.current.stack))
 
 
 def _ns2str(nanoseconds: Optional[int]) -> str:
@@ -625,12 +636,28 @@ def action() -> Callable[[Wrapped], Wrapped]:
 def _step(make: type) -> Callable[[Wrapped], Wrapped]:
     def _wrap_function(wrapped: Wrapped) -> Wrapped:
         function = _callable_function(wrapped)
+
+        def _wrapper_function(*args: Any, **kwargs: Any) -> Any:
+            return Step.call_current(make, function, args, kwargs)
+
+        setattr(_wrapper_function, '_dynamake_wrapped_function', function)
         setattr(function, '_dynamake_positional_argument_names',
                 _positional_argument_names(function))
 
-        def _wrapper_function(*args: Any, **kwargs: Any) -> Any:
-            return Make.call_step(make, function, args, kwargs)
+        conflicting = Make.step_by_name.get(function.__name__)
+        if conflicting is not None:
+            conflicting = getattr(conflicting, '_dynamake_wrapped_function')
+            assert conflicting is not None
+            raise RuntimeError('Conflicting definitions for the step: %s '
+                               'in both: %s.%s '
+                               'and: %s.%s'
+                               % (function.__name__,
+                                  conflicting.__module__, conflicting.__qualname__,
+                                  function.__module__, function.__qualname__))
+        Make.step_by_name[function.__name__] = _wrapper_function
+
         return _wrapper_function  # type: ignore
+
     return _wrap_function
 
 
@@ -655,7 +682,7 @@ def expand(*patterns: Strings) -> List[str]:
 
     See :py:func:`dynamake.patterns.expand_strings`.
     """
-    return dp.expand_strings(Make.current_step.wildcards, *patterns)
+    return dp.expand_strings(Step.current.wildcards, *patterns)
 
 
 def glob(*patterns: Strings) -> List[str]:
@@ -665,7 +692,7 @@ def glob(*patterns: Strings) -> List[str]:
 
     See :py:func:`dynamake.patterns.glob_strings`.
     """
-    return dp.glob_strings(Make.current_step.wildcards, *patterns)
+    return dp.glob_strings(Step.current.wildcards, *patterns)
 
 
 def extract(pattern: str, *strings: Strings) -> List[Dict[str, Any]]:
@@ -678,7 +705,7 @@ def extract(pattern: str, *strings: Strings) -> List[Dict[str, Any]]:
 
     See :py:func:`dynamake.patterns.extract_strings`.
     """
-    return dp.extract_strings(Make.current_step.wildcards, pattern, *strings)
+    return dp.extract_strings(Step.current.wildcards, pattern, *strings)
 
 
 def capture(*patterns: Strings) -> Captured:
@@ -691,7 +718,7 @@ def capture(*patterns: Strings) -> Captured:
 
     See :py:func:`dynamake.patterns.capture_globs`.
     """
-    return dp.capture_globs(Make.current_step.wildcards, *patterns)
+    return dp.capture_globs(Step.current.wildcards, *patterns)
 
 
 def foreach(wildcards: List[Dict[str, Any]], function: Callable, *args: Any, **kwargs: Any) \
@@ -706,7 +733,7 @@ def foreach(wildcards: List[Dict[str, Any]], function: Callable, *args: Any, **k
     results = []
 
     for values in wildcards:
-        expanded_values = Make.current_step.wildcards.copy()
+        expanded_values = Step.current.wildcards.copy()
         expanded_values.update(values)
 
         expanded_args: List[str] = []
@@ -794,7 +821,7 @@ def config_param(name: str, default: Any = None) -> Any:
 
     It is an error if no default is specified and no value is specified in the loaded configuration.
     """
-    return Make.current_step.config_param(name, default)
+    return Step.current.config_param(name, default)
 
 
 def config_file() -> str:
@@ -804,4 +831,165 @@ def config_file() -> str:
     If this is invoked, it is assumed the file is passed to some invoked action,
     so no testing is done to ensure all specified parameters are actually used.
     """
-    return Make.current_step.config_file()
+    return Step.current.config_file()
+
+
+def main(parser: argparse.ArgumentParser, default_step: Callable) -> None:
+    """
+    A generic ``main`` function for build scripts.
+    """
+    if not hasattr(default_step, '_dynamake_wrapped_function'):
+        raise RuntimeError('The function: %s.%s is not a DynaMake step'
+                           % (default_step.__module__, default_step.__qualname__))
+
+    _add_arguments(parser, default_step)
+    args = parser.parse_args()
+    _configure_by_arguments(args)
+    _call_steps(default_step, args)
+
+
+def _add_arguments(parser: argparse.ArgumentParser, default_step: Callable) -> None:
+    parser.add_argument('-c', '--config', metavar='CONFIG.yaml',
+                        help='The configuration file to use (default: Config.yaml)')
+
+    parser.add_argument('-ll', '--log_level', metavar='LEVEL', default='INFO',
+                        help='The log level to use (default: INFO)')
+
+    parser.add_argument('-mi', '--missing_inputs', metavar='POLICY', type=_mi2enum,
+                        help='default: forbidden; other options: assume_up_to_date, optional')
+
+    parser.add_argument('-mo', '--missing_outputs', metavar='POLICY', type=_mo2enum,
+                        help='default: forbidden; other options: partial, optional')
+
+    parser.add_argument('-dso', '--delete_stale_outputs', metavar='BOOL',
+                        type=_str2bool, nargs='?', const=True,
+                        help='Whether to delete outputs before executing actions '
+                             '(default: %s)' % Make.delete_stale_outputs)
+
+    parser.add_argument('-tso', '--touch_success_outputs', metavar='BOOL', nargs='?',
+                        type=_str2bool, const=True,
+                        help='Whether to touch output files after successful actions '
+                             '(default: %s)' % Make.touch_success_outputs)
+
+    parser.add_argument('-dfo', '--delete_failed_outputs', metavar='BOOL', nargs='?',
+                        type=_str2bool, const=True,
+                        help='Whether to delete outputs after failed actions '
+                             '(default: %s)' % Make.delete_failed_outputs)
+
+    parser.add_argument('-ded', '--delete_empty_directories', metavar='BOOL',
+                        type=_str2bool, nargs='?', const=True,
+                        help='Whether to delete empty directories containing deleted outputs '
+                             '(default: %s)' % Make.delete_empty_directories)
+
+    parser.add_argument('-p', '--parameter', metavar='NAME=VALUE', action='append',
+                        help='Specify a value for a top-level step parameter')
+
+    parser.add_argument('step', metavar='FUNCTION', nargs='*',
+                        help='The top-level step function(s) to execute (default: %s)'
+                        % getattr(default_step, '_dynamake_wrapped_function').__name__)
+
+
+def _str2bool(string: str) -> bool:
+    if string.lower() in ['yes', 'true', 't', 'y', '1']:
+        return True
+    if string.lower() in ['no', 'false', 'f', 'n', '0']:
+        return False
+    raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
+def _str2enum(enum: type, string: str) -> Any:
+    try:
+        return enum[string.lower()]  # type: ignore
+    except BaseException:
+        raise argparse.ArgumentTypeError('Expected one of: %s'
+                                         % ' '.join([value.name for value in enum]))  # type: ignore
+
+
+def _mi2enum(string: str) -> MissingInputs:
+    return _str2enum(MissingInputs, string)
+
+
+def _mo2enum(string: str) -> MissingOutputs:
+    return _str2enum(MissingOutputs, string)
+
+
+def _configure_by_arguments(args: argparse.Namespace) -> None:
+    if args.config is None and os.path.exists('Config.yaml'):
+        args.config = 'Config.yaml'
+    if args.config is not None:
+        load_config(args.config)
+
+    config_values = Config.values_for_context({'stack': '/', 'step': '/'})
+    used_values: Set[str] = set()
+
+    def _get(name: str, parser: Callable, default: Any) -> Any:
+        used_values.add(name)
+        if name in vars(args):
+            value = vars(args)[name]
+            if value is not None:
+                return vars(args)[name]
+        value = config_values.get(name, config_values.get(name + '?', default))
+        if isinstance(value, str):
+            value = parser(value)
+        return value
+
+    Make.logger.setLevel(_get('log_level', str, 'INFO'))
+
+    Make.missing_inputs = _get('missing_inputs', _mi2enum, Make.missing_inputs)
+    Make.missing_outputs = _get('missing_outputs', _mo2enum, Make.missing_outputs)
+
+    Make.delete_stale_outputs = \
+        _get('delete_stale_outputs', _str2bool, Make.delete_stale_outputs)
+
+    Make.touch_success_outputs = \
+        _get('touch_success_outputs', _str2bool, Make.touch_success_outputs)
+
+    Make.delete_failed_outputs = \
+        _get('delete_failed_outputs', _str2bool, Make.delete_failed_outputs)
+
+    Make.delete_empty_directories = \
+        _get('delete_empty_directories', _str2bool, Make.delete_empty_directories)
+
+    for parameter_name in config_values:
+        if parameter_name not in used_values and not parameter_name.endswith('?'):
+            raise RuntimeError('Unused top-level configuration parameter: %s ' % parameter_name)
+
+
+def _call_steps(default_step: Callable, args: argparse.Namespace) -> None:
+    step_parameters: Dict[str, Any] = {}
+    used_parameters: Set[str] = set()
+
+    for parameter in args.parameter or []:
+        parts = parameter.split('=')
+        if len(parts) != 2:
+            raise RuntimeError('Invalid parameter flag: %s' % parameter)
+        name, value = parts
+        try:
+            value = yaml.load(value)
+        except BaseException:
+            pass
+        step_parameters[name] = value
+
+    def _call_step(step_function: Callable) -> None:
+        function = getattr(step_function, '_dynamake_wrapped_function')
+        kwargs: Dict[str, Any] = {}
+        for parameter in inspect.signature(function).parameters.values():
+            if parameter.name not in step_parameters:
+                raise RuntimeError('Missing top-level parameter: %s for the step: /%s'
+                                   % (parameter.name, function.__name__))
+            kwargs[parameter.name] = step_parameters[parameter.name]
+            used_parameters.add(parameter.name)
+        step_function(**kwargs)
+
+    if not args.step:
+        _call_step(default_step)
+    else:
+        for step_name in args.step:
+            if step_name not in Make.step_by_name:
+                raise RuntimeError('Unknown step: %s' % step_name)
+        for step_name in args.step:
+            _call_step(Make.step_by_name[step_name])
+
+    for parameter_name in step_parameters:
+        if parameter_name not in used_parameters:
+            raise RuntimeError('Unused top-level step parameter: %s' % parameter_name)
