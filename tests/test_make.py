@@ -5,6 +5,8 @@ Test the make utilities.
 import argparse
 import os
 import sys
+import threading
+from concurrent.futures import wait
 from time import sleep
 from typing import Any
 from typing import Dict
@@ -29,6 +31,9 @@ from dynamake.make import foreach
 from dynamake.make import glob
 from dynamake.make import load_config
 from dynamake.make import main
+from dynamake.make import parallel
+from dynamake.make import parcall
+from dynamake.make import pareach
 from dynamake.make import plan
 from tests import TestWithFiles
 from tests import TestWithReset
@@ -85,13 +90,13 @@ class TestMake(TestWithReset):
 
         @action()
         def tactics() -> None:
-            self.assertEqual(Step.current.stack, '/strategy/tactics')
-            self.assertEqual(Step.current.name, 'tactics')
+            self.assertEqual(Step.current().stack, '/strategy/tactics')
+            self.assertEqual(Step.current().name, 'tactics')
 
         @plan()
         def strategy() -> None:
-            self.assertEqual(Step.current.stack, '/strategy')
-            self.assertEqual(Step.current.name, 'strategy')
+            self.assertEqual(Step.current().stack, '/strategy')
+            self.assertEqual(Step.current().name, 'strategy')
             tactics()
 
         strategy()
@@ -115,22 +120,100 @@ class TestMake(TestWithReset):
 
         @action()
         def tactics() -> None:
-            self.assertEqual(Step.current.stack, '/strategy/scheme/tactics')
-            self.assertEqual(Step.current.name, 'tactics')
+            self.assertEqual(Step.current().stack, '/strategy/scheme/tactics')
+            self.assertEqual(Step.current().name, 'tactics')
 
         @plan()
         def scheme() -> None:
-            self.assertEqual(Step.current.stack, '/strategy/scheme')
-            self.assertEqual(Step.current.name, 'scheme')
+            self.assertEqual(Step.current().stack, '/strategy/scheme')
+            self.assertEqual(Step.current().name, 'scheme')
             tactics()
 
         @plan()
         def strategy() -> None:
-            self.assertEqual(Step.current.stack, '/strategy')
-            self.assertEqual(Step.current.name, 'strategy')
+            self.assertEqual(Step.current().stack, '/strategy')
+            self.assertEqual(Step.current().name, 'strategy')
             scheme()
 
         strategy()
+
+    def test_parallel_plan(self) -> None:
+
+        main_thread = threading.current_thread().name
+        left_thread = main_thread
+        right_thread = main_thread
+
+        @action()
+        def left() -> None:
+            sleep(0.01)
+            nonlocal left_thread
+            left_thread = threading.current_thread().name
+
+        @action()
+        def right() -> None:
+            sleep(0.01)
+            nonlocal right_thread
+            right_thread = threading.current_thread().name
+
+        @plan()
+        def both() -> None:
+            left_future = parallel(left)
+            right_future = parallel(right)
+            wait([left_future, right_future])
+
+        both()
+
+        self.assertNotEqual(left_thread, main_thread)
+        self.assertNotEqual(right_thread, main_thread)
+        self.assertNotEqual(left_thread, right_thread)
+
+    def test_parcall_plan(self) -> None:
+
+        main_thread = threading.current_thread().name
+        left_thread = main_thread
+        right_thread = main_thread
+
+        @action()
+        def left() -> None:
+            sleep(0.01)
+            nonlocal left_thread
+            left_thread = threading.current_thread().name
+
+        @action()
+        def right() -> None:
+            sleep(0.01)
+            nonlocal right_thread
+            right_thread = threading.current_thread().name
+
+        @plan()
+        def both() -> None:
+            parcall((left, [], {}), (right, [], {}))
+
+        both()
+
+        self.assertNotEqual(left_thread, main_thread)
+        self.assertNotEqual(right_thread, main_thread)
+        self.assertNotEqual(left_thread, right_thread)
+
+    def test_pareach_plan(self) -> None:
+
+        main_thread = threading.current_thread().name
+
+        @action()
+        def in_parallel() -> str:
+            sleep(0.01)
+            return threading.current_thread().name
+
+        @plan()
+        def every() -> List[str]:
+            return pareach([{}, {}], in_parallel)
+
+        threads = every()
+
+        self.assertEqual(len(threads), 2)
+        self.assertNotEqual(threads[0], main_thread)
+        self.assertNotEqual(threads[1], main_thread)
+        self.assertNotEqual(threads[0], threads[1])
 
     def test_expand_in_step(self) -> None:
 
@@ -505,7 +588,7 @@ class TestFiles(TestWithFiles):
 
         write_file('foo.txt')
         write_file('bar.txt')
-        sleep(1e-3)
+        sleep(0.01)
         write_file('output.txt')
 
         with LogCapture() as log:
@@ -525,7 +608,7 @@ class TestFiles(TestWithFiles):
             return Action(input=['input.txt'], output=['output.txt'], run=['touch', 'output.txt'])
 
         write_file('output.txt')
-        sleep(1e-3)
+        sleep(0.01)
         write_file('input.txt')
 
         with LogCapture() as log:

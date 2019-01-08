@@ -253,6 +253,61 @@ This demonstrates some additional concepts:
   existing files that match the output glob pattern. Either way, the actual list of outputs is
   available in the returned action object, available to be used by additional steps.
 
+Parallel Actions
+................
+
+A plan may explicitly execute sub-steps in :py:func:`dynamake.make.parallel`.
+
+.. note::
+
+    Be *very* careful not to modify shared variables in parallel step functions. This includes
+    shared parameters, class data members, and global variables. In general step functions should be
+    simple enough so this isn't an issue.
+
+.. code-block:: python
+
+    @dm.action()
+    def compile_two_files() -> None:
+        a_future = dm.parallel(compile_file, source_path='a.c', object_path='a.o')
+        b_future = dm.parallel(compile_file, source_path='b.c', object_path='b.o')
+        wait([a_future, b_future])
+
+This allows executing any arbitrary combination of sub-steps in parallel. However, it requires
+manual boilerplate code to deal with the resulting future objects.
+
+It is possible to avoid dealing with futures when using :py:func:`dynamake.make.parcall`:
+
+.. code-block:: python
+
+    @dm.action()
+    def compile_two_files() -> None:
+        dm.parcall((compile_file, [], {'source_path': 'a.c', 'object_path': 'a.o'}),
+                   (compile_file, ['b.f', 'b.o']))
+
+However this forces one to use an unnatural syntax for the sub-step invocation (giving an explicit
+list of positional arguments and an explicit dictionary of named arguments).
+
+In the common use case of invoking the same function multiple times, with the same set of
+parameters, with different values in each call, the most convenient way is
+:py:func:`dynamake.make.pareach`, which is a parallel version of :py:func:`dynamake.make.foreach`:
+
+.. code-block:: python
+
+    @dm.action()
+    def compile_two_files() -> None:
+        dm.pareach([{'name': 'a'}, {'name': 'b'}],
+                    compile_file, '{name}.c', object_path='{name}.o')
+
+Using :py:func:`dynamake.make.pareach` is especially convenient in combination with
+:py:func:`dynamake.make.capture` or :py:func:`dynamake.make.extract`:
+
+.. code-block:: python
+
+    @dm.action()
+    def compile_all_files() -> None:
+        names = dm.extract('{*name}.c')
+        dm.pareach(names, compile_file, '{name}.c', object_path='{name}.o')
+
 Configuration Control
 .....................
 
@@ -435,9 +490,6 @@ worked on yet:
 
 Performance Features
 ....................
-
-* Parallelize execution of actions when possible. Add a ``parallel`` function that invokes
-  multiple sub-steps in parallel, allow actions in ``foreach`` to run in parallel, etc.
 
 * Associate resources with actions to limit the parallelism.
 
