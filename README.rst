@@ -131,13 +131,13 @@ if ``bar`` does not exist, or if ``foo`` is newer than ``bar``:
 
     import dynamake.make as dm
 
-    @dm.action()
+    @dm.action
     def copy_file(input_path: str, output_path: str) -> dm.Action:
         return dm.Action(input=input_path,
                          output=output_path,
                          run=['cp', input_path, output_path])
 
-    @dm.plan()
+    @dm.plan
     def all() -> None:
         copy_file(input_path='foo', output_path='bar')
 
@@ -202,13 +202,13 @@ An example of a slightly more dynamic build script is:
     import dynamake.make as dm
     from c_source_files import scan_included_files  # Assume this for simplicity.
 
-    @dm.action()
+    @dm.action
     def compile_file(source_path: str, object_path: str) -> dm.Action:
         return dm.Action(input=scan_included_files(source_path),
                          output=object_path,
                          run=['cc', '-o', object_path, source_path])
 
-    @dm.plan()
+    @dm.plan
     def compile_objects(source_dir: str, object_dir: str) -> dm.Strings:
        sources = dm.capture('{source_dir}/{*name}.c')
        return [compiled.output
@@ -218,13 +218,13 @@ An example of a slightly more dynamic build script is:
                              source_path='{source_dir}/{name}.c',
                              object_path='{object_dir}/{name}.o')]
 
-    @dm.action()
+    @dm.action
     def link_objects(objects: dm.Strings, executable_path: str) -> dm.Action:
         return dm.Action(input=objects,
                          output=executable_path,
                          run=['ld', objects, '-o', executable_path])
 
-    @dm.plan()
+    @dm.plan
     def build_executable(source_dir: str, object_dir: str, executable_path: str) -> None:
         objects = compile_objects(source_dir, object_dir)
         link_objects(objects, executable_path)
@@ -266,7 +266,7 @@ A plan may explicitly execute sub-steps in :py:func:`dynamake.make.parallel`.
 
 .. code-block:: python
 
-    @dm.action()
+    @dm.action
     def compile_two_files() -> None:
         a_future = dm.parallel(compile_file, source_path='a.c', object_path='a.o')
         b_future = dm.parallel(compile_file, source_path='b.c', object_path='b.o')
@@ -279,7 +279,7 @@ It is possible to avoid dealing with futures when using :py:func:`dynamake.make.
 
 .. code-block:: python
 
-    @dm.action()
+    @dm.action
     def compile_two_files() -> None:
         dm.parcall((compile_file, [], {'source_path': 'a.c', 'object_path': 'a.o'}),
                    (compile_file, ['b.f', 'b.o']))
@@ -293,7 +293,7 @@ parameters, with different values in each call, the most convenient way is
 
 .. code-block:: python
 
-    @dm.action()
+    @dm.action
     def compile_two_files() -> None:
         dm.pareach([{'name': 'a'}, {'name': 'b'}],
                     compile_file, '{name}.c', object_path='{name}.o')
@@ -303,7 +303,7 @@ Using :py:func:`dynamake.make.pareach` is especially convenient in combination w
 
 .. code-block:: python
 
-    @dm.action()
+    @dm.action
     def compile_all_files() -> None:
         names = dm.extract('{*name}.c')
         dm.pareach(names, compile_file, '{name}.c', object_path='{name}.o')
@@ -326,12 +326,12 @@ actions. For example, it makes it easy to restrict the number of actions execute
 
 .. code-block:: python
 
-    @dm.action()
+    @dm.action
     def local(...) -> None:
         ...
         return Action(..., run=[...], resources={'threads': 1})
 
-    @dm.action()
+    @dm.action
     def remote(...) -> None:
         ...
         return Action(..., run=['qsub', ...], resources={'jobs': 1})
@@ -351,7 +351,7 @@ Let's allow configuring the compilation flags in the above example:
 
 .. code-block:: python
 
-    @dm.action()
+    @dm.action
     def compile_file(source_path: str, object_path: str) -> dm.Action
         return dm.Action(input=scan_included_files(source_path),
                          output: object_path,
