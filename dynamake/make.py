@@ -756,46 +756,43 @@ def _ns2str(nanoseconds: Optional[int]) -> str:
                               nanoseconds)
 
 
-def plan() -> Callable[[Wrapped], Wrapped]:
+def plan(wrapped: Wrapped) -> Wrapped:
     """
     Decorate a plan step function.
     """
-    return _step(Planner)
+    return _step(Planner, wrapped)
 
 
-def action() -> Callable[[Wrapped], Wrapped]:
+def action(wrapped: Wrapped) -> Wrapped:
     """
     Decorate an action step function.
     """
-    return _step(Agent)
+    return _step(Agent, wrapped)
 
 
-def _step(make: type) -> Callable[[Wrapped], Wrapped]:
-    def _wrap_function(wrapped: Wrapped) -> Wrapped:
-        function = _callable_function(wrapped)
+def _step(step: type, wrapped: Wrapped) -> Wrapped:
+    function = _callable_function(wrapped)
 
-        def _wrapper_function(*args: Any, **kwargs: Any) -> Any:
-            return Step.call_current(make, function, args, kwargs)
+    def _wrapper_function(*args: Any, **kwargs: Any) -> Any:
+        return Step.call_current(step, function, args, kwargs)
 
-        setattr(_wrapper_function, '_dynamake_wrapped_function', function)
-        setattr(function, '_dynamake_positional_argument_names',
-                _positional_argument_names(function))
+    setattr(_wrapper_function, '_dynamake_wrapped_function', function)
+    setattr(function, '_dynamake_positional_argument_names',
+            _positional_argument_names(function))
 
-        conflicting = Make.step_by_name.get(function.__name__)
-        if conflicting is not None:
-            conflicting = getattr(conflicting, '_dynamake_wrapped_function')
-            assert conflicting is not None
-            raise RuntimeError('Conflicting definitions for the step: %s '
-                               'in both: %s.%s '
-                               'and: %s.%s'
-                               % (function.__name__,
-                                  conflicting.__module__, conflicting.__qualname__,
-                                  function.__module__, function.__qualname__))
-        Make.step_by_name[function.__name__] = _wrapper_function
+    conflicting = Make.step_by_name.get(function.__name__)
+    if conflicting is not None:
+        conflicting = getattr(conflicting, '_dynamake_wrapped_function')
+        assert conflicting is not None
+        raise RuntimeError('Conflicting definitions for the step: %s '
+                           'in both: %s.%s '
+                           'and: %s.%s'
+                           % (function.__name__,
+                              conflicting.__module__, conflicting.__qualname__,
+                              function.__module__, function.__qualname__))
+    Make.step_by_name[function.__name__] = _wrapper_function
 
-        return _wrapper_function  # type: ignore
-
-    return _wrap_function
+    return _wrapper_function  # type: ignore
 
 
 def _callable_function(wrapped: Callable) -> Callable:
