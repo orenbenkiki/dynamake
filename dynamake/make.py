@@ -30,6 +30,7 @@ from typing import Optional
 from typing import Set
 from typing import Tuple
 from typing import TypeVar
+from typing import Union
 
 import yaml
 
@@ -209,9 +210,10 @@ class Step:  # pylint: disable=too-many-instance-attributes
         Invoke the specified build step function.
         """
         parent = Step.current()
-        Step.set_current(make(parent, function, args, kwargs))
+        step = make(parent, function, args, kwargs)
+        Step.set_current(step)
         try:
-            return Step.current().call()
+            return step.call()
         finally:
             Step.set_current(parent)
 
@@ -372,23 +374,24 @@ def available_resources(**kwargs: float) -> None:
 
 @contextmanager
 def _request_resources(resources: Dict[str, float]) -> Iterator[None]:
+    stack = Step.current().stack
     for name, amount in resources.items():
         if name not in Make.available_resources:
             raise RuntimeError('Unknown resource: %s '
                                'requested by the step: %s'
-                               % (name, Step.current().stack))
+                               % (name, stack))
         if amount < 0:
             raise RuntimeError('Negative amount: %s '
                                'requested for the resource: %s '
                                'by the step: %s'
-                               % (amount, name, Step.current().stack))
+                               % (amount, name, stack))
 
     with Make.condition:
-        while Make.parallel_actions > 0 and not _has_resources(resources):
+        while Make.parallel_actions > 0 and not _has_resources(stack, resources):
             Make.condition.wait()
         assert Make.parallel_actions >= 0
         Make.parallel_actions += 1
-        _use_resources(resources)
+        _use_resources(stack, resources)
 
     try:
         yield
@@ -400,26 +403,25 @@ def _request_resources(resources: Dict[str, float]) -> Iterator[None]:
             Make.condition.notify_all()
 
 
-def _has_resources(resources: Dict[str, float]) -> bool:
+def _has_resources(stack: str, resources: Dict[str, float]) -> bool:
     for name, amount in resources.items():
         remaining = Make.available_resources[name] - Make.used_resources[name]
         if amount > remaining:
             Make.logger.debug('%s: waiting for resource: %s amount: %s remaining: %s',
-                              Step.current().stack, name, amount, remaining)
+                              stack, name, amount, remaining)
             return False
     return True
 
 
-def _use_resources(resources: Dict[str, float]) -> None:
+def _use_resources(stack: str, resources: Dict[str, float]) -> None:
     for name, amount in resources.items():
         if amount > Make.available_resources[name]:
             Make.logger.warn('%s: requested resource: %s amount: %s is more than available: %s',
-                             Step.current().stack, name, amount, Make.available_resources[name])
+                             stack, name, amount, Make.available_resources[name])
             amount = Make.available_resources[name]
 
         Make.logger.debug('%s: use resource: %s amount: %s remaining: %s',
-                          Step.current().stack, name, amount,
-                          Make.available_resources[name] - amount)
+                          stack, name, amount, Make.available_resources[name] - amount)
         Make.used_resources[name] += amount
         assert 0 <= Make.used_resources[name] <= Make.available_resources[name]
 
@@ -438,7 +440,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
     An atomic executable action invoking external programs.
     """
 
-    def __init__(self, *, input: Strings,  # pylint: disable=redefined-builtin
+    def __init__(self, *, input: Strings,  # pylint: disable=redefined-builtin,too-many-locals
                  output: Strings, run: Strings,
                  shell: bool = False,
                  ignore_exit_status: bool = False,
@@ -562,21 +564,24 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         #: Input patterns that did not match any existing disk files.
         self.missing_input_patterns: List[str]
 
+        step = Step.current()
+        config_path = step.config_path
+
+        #: The call stack creating this action.
+        self.stack = step.stack
+
         self.input_paths, self.missing_input_patterns = Action._collect_glob(self.input)
-        Make.logger.debug('%s: input: %s', Step.current().stack,
-                          ' '.join(self.input) or 'None')
-        Make.logger.debug('%s: input paths: %s',
-                          Step.current().stack, ' '.join(self.input_paths) or 'None')
+        Make.logger.debug('%s: input: %s', self.stack, ' '.join(self.input) or 'None')
+        Make.logger.debug('%s: input paths: %s', self.stack, ' '.join(self.input_paths) or 'None')
         if self.missing_inputs == MissingInputs.forbidden:
-            Action._raise_missing('input', self.missing_input_patterns)
+            self._raise_missing('input', self.missing_input_patterns)
 
         #: The path of the existing output files before the execution, matching the output ``glob``
         #: patterns.
         self.output_paths_before = self._collect_outputs()
-        Make.logger.debug('%s: output: %s',
-                          Step.current().stack, ' '.join(self.output) or 'None')
+        Make.logger.debug('%s: output: %s', self.stack, ' '.join(self.output) or 'None')
         Make.logger.debug('%s: output paths before: %s',
-                          Step.current().stack, ' '.join(self.output_paths_before) or 'None')
+                          self.stack, ' '.join(self.output_paths_before) or 'None')
 
         #: The path of the existing output files after the execution, matching the output ``glob``
         #: patterns.
@@ -586,51 +591,46 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         self.missing_outputs_patterns: List[str] = []
 
         #: Whether the action needs to be executed.
-        self.needs_to_execute = self._needs_to_execute()
+        self.needs_to_execute = self._needs_to_execute(config_path)
 
         if self.needs_to_execute \
                 and self.missing_inputs == MissingInputs.assume_up_to_date:
-            Action._raise_missing('input', self.missing_input_patterns)
+            self._raise_missing('input', self.missing_input_patterns)
 
-    def _needs_to_execute(self) -> bool:
+    def _needs_to_execute(self, config_path: Optional[str]) -> bool:
         if not self.output:
-            Make.logger.debug('%s: needs to execute because has no outputs',
-                              Step.current().stack)
+            Make.logger.debug('%s: needs to execute because has no outputs', self.stack)
             return True
 
         minimal_output_mtime = Action._collect_mtime(self.output_paths_before, min)
         if Make.logger.isEnabledFor(logging.DEBUG):
             Make.logger.debug('%s: minimal output mtime: %s',
-                              Step.current().stack, _ns2str(minimal_output_mtime))
+                              self.stack, _ns2str(minimal_output_mtime))
 
         if minimal_output_mtime is None:
             # TODO: This is wrong if the next step(s) override Action.missing_inputs.
             if Make.missing_inputs == MissingInputs.forbidden:
                 Make.logger.debug('%s: need to execute assuming next step(s) need all inputs',
-                                  Step.current().stack)
+                                  self.stack)
                 return True
             Make.logger.debug('%s: no need to execute assuming next step(s) allow missing inputs',
-                              Step.current().stack)
+                              self.stack)
             return False
 
-        maximal_input_mtime = \
-            Action._collect_mtime(self.input_paths, max, Step.current().config_path)
+        maximal_input_mtime = Action._collect_mtime(self.input_paths, max, config_path)
         if Make.logger.isEnabledFor(logging.DEBUG):
             Make.logger.debug('%s: maximal input mtime: %s',
-                              Step.current().stack, _ns2str(maximal_input_mtime))
+                              self.stack, _ns2str(maximal_input_mtime))
 
         if maximal_input_mtime is None:
-            Make.logger.debug('%s: no need to execute ignoring missing inputs',
-                              Step.current().stack)
+            Make.logger.debug('%s: no need to execute ignoring missing inputs', self.stack)
             return False
 
         if maximal_input_mtime < minimal_output_mtime:
-            Make.logger.debug('%s: no need to execute since outputs are newer',
-                              Step.current().stack)
+            Make.logger.debug('%s: no need to execute since outputs are newer', self.stack)
             return False
 
-        Make.logger.debug('%s: need to execute since inputs are newer',
-                          Step.current().stack)
+        Make.logger.debug('%s: need to execute since inputs are newer', self.stack)
         return True
 
     @staticmethod
@@ -655,14 +655,14 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
             self._delete_outputs('stale', self.output_paths_before)
 
         for command in self.run:
-            Make.logger.info('%s: run: %s', Step.current().stack, ' '.join(command))
+            Make.logger.info('%s: run: %s', self.stack, ' '.join(command))
             if self.shell:
                 completed = subprocess.run(' '.join(command), shell=True)
             else:
                 completed = subprocess.run(command)
             if completed.returncode != 0 and not self.ignore_exit_status:
                 Make.logger.debug('%s: failed with exit status: %s',
-                                  Step.current().stack, completed.returncode)
+                                  self.stack, completed.returncode)
                 self._fail(command)
 
         self._success()
@@ -673,20 +673,20 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         if self.delete_failed_outputs:
             self._delete_outputs('failed', self.output_paths_after)
 
-        raise RuntimeError('%s: failed command: %s' % (Step.current().stack, ' '.join(command)))
+        raise RuntimeError('%s: failed command: %s' % (self.stack, ' '.join(command)))
 
     def _success(self) -> None:
         self.output_paths_after, self.missing_outputs_patterns = Action._collect_glob(self.output)
         Make.logger.debug('%s: output paths after: %s',
-                          Step.current().stack, ' '.join(self.output_paths_after) or 'None')
+                          self.stack, ' '.join(self.output_paths_after) or 'None')
 
         if self.missing_outputs == MissingOutputs.forbidden \
                 or (self.missing_outputs == MissingOutputs.partial and not self.output_paths_after):
-            Action._raise_missing('output', self.missing_outputs_patterns)
+            self._raise_missing('output', self.missing_outputs_patterns)
 
         if self.touch_success_outputs and self.output_paths_after:
             Make.logger.debug('%s: touch outputs: %s',
-                              Step.current().stack, ' '.join(self.output_paths_after))
+                              self.stack, ' '.join(self.output_paths_after))
             for path in self.output_paths_after:
                 os.utime(path)
 
@@ -694,8 +694,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         if not paths:
             return
 
-        Make.logger.debug('%s: delete %s outputs: %s',
-                          Step.current().stack, reason, ' '.join(paths))
+        Make.logger.debug('%s: delete %s outputs: %s', self.stack, reason, ' '.join(paths))
 
         for path in paths:
             path = os.path.abspath(path)
@@ -730,8 +729,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
             output += glob(pattern)
         return output
 
-    @staticmethod
-    def _raise_missing(direction: str, patterns: List[str]) -> None:
+    def _raise_missing(self, direction: str, patterns: List[str]) -> None:
         if not patterns:
             return
 
@@ -741,12 +739,12 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         if expanded == pattern:
             raise RuntimeError('Missing %s(s): %s '
                                'for the action step: %s'
-                               % (direction, pattern, Step.current().stack))
+                               % (direction, pattern, self.stack))
 
         raise RuntimeError('Missing %s(s): %s '
                            'for the pattern: %s '
                            'for the action step: %s'
-                           % (direction, expanded, pattern, Step.current().stack))
+                           % (direction, expanded, pattern, self.stack))
 
 
 def _ns2str(nanoseconds: Optional[int]) -> str:
@@ -860,6 +858,66 @@ def capture(*patterns: Strings) -> Captured:
     return dp.capture_globs(Step.current().wildcards, *patterns)
 
 
+class Wild:
+    """
+    Access the value of a captured parameter (or wildcard inside :py:func:`dynamake.make.foreach`
+    and :py:func:`dynamake.make.pareach`).
+    """
+
+    def __init__(self, name: str,
+                 validate: Union[None, type, Callable[[str, Any], Any]] = None) -> None:
+        """
+        Create an expand object for the current scope.
+
+        If ``validate`` is passed, it should either be the expected class name, or a function that
+        takes the parameter name and value, and validates the value - either returning the valid
+        result or raising an exception if the value is not valid.
+
+        It is more convenient to have the validation capture invalid values early than debugging
+        strange run-time errors resulting from using an unexpected parameter value type deep inside
+        some library code.
+        """
+        #: The name of the parameter or wildcard to expand.
+        self.name = name
+
+        #: How to validate the accessed value.
+        self.validate: Optional[Callable[[str, Any], Any]]
+
+        if not isinstance(validate, type):
+            self.validate = validate
+        else:
+            klass: type = validate
+
+            def _validate(name: str, value: Any) -> Any:
+                if isinstance(value, klass):
+                    return value
+                try:
+                    return klass(value)
+                except BaseException:
+                    raise RuntimeError('Invalid value: %s '
+                                       'type: %s.%s '
+                                       'for the parameter: %s'
+                                       % (value,
+                                          value.__class__.__module__, value.__class__.__qualname__,
+                                          name))
+            self.validate = _validate
+
+    def value(self, wildcards: Dict[str, Any]) -> Any:
+        """
+        Access the value of the expanded parameter or wildcard in the current scope.
+
+        If an expected type was declared, and the value is not of that type, then the
+        code tries to convert the type to that class. If that fails, then an error is
+        raised.
+        """
+        if self.name not in wildcards:
+            raise RuntimeError('Unknown parameter: %s' % self.name)
+        value = wildcards[self.name]
+        if self.validate is not None:
+            value = self.validate(self.name, value)
+        return value
+
+
 def foreach(wildcards: List[Dict[str, Any]], function: Callable, *args: Any, **kwargs: Any) \
         -> List[Any]:
     """
@@ -868,6 +926,9 @@ def foreach(wildcards: List[Dict[str, Any]], function: Callable, *args: Any, **k
     Any arguments (positional or named) whose value is a string will be
     :py:func:`dynamake.make.expand`-ed using the current known parameters as well as the specified
     wildcards.
+
+    Any arguments (positional or named) whose value is :py:class:`dynamake.make.Wild` will be
+    replaced by the current known parameter or wildcard value.
     """
     results = []
 
@@ -878,16 +939,18 @@ def foreach(wildcards: List[Dict[str, Any]], function: Callable, *args: Any, **k
         expanded_args: List[str] = []
         for arg in args:
             if isinstance(arg, str):
-                expanded_args.append(arg.format(**expanded_values))
-            else:
-                expanded_args.append(arg)
+                arg = arg.format(**expanded_values)
+            elif isinstance(arg, Wild):
+                arg = arg.value(expanded_values)
+            expanded_args.append(arg)
 
         expanded_kwargs: Dict[str, Any] = {}
         for name, arg in kwargs.items():
             if isinstance(arg, str):
-                expanded_kwargs[name] = arg.format(**expanded_values)
-            else:
-                expanded_kwargs[name] = arg
+                arg = arg.format(**expanded_values)
+            elif isinstance(arg, Wild):
+                arg = arg.value(expanded_values)
+            expanded_kwargs[name] = arg
 
         results.append(function(*expanded_args, **expanded_kwargs))
 

@@ -24,6 +24,7 @@ from dynamake.make import Make
 from dynamake.make import MissingInputs
 from dynamake.make import MissingOutputs
 from dynamake.make import Step
+from dynamake.make import Wild
 from dynamake.make import action
 from dynamake.make import available_resources
 from dynamake.make import capture
@@ -293,6 +294,78 @@ class TestMake(TestWithReset):
 
         self.assertEqual(expander('a', 0, baz='b', vaz=1),
                          ["('a', 0) {'baz': 'b', 'vaz': 1, 'wild': '2'}"])
+
+    def test_wild_in_foreach(self) -> None:
+        def collect(foo: int, *, bar: int) -> int:
+            return foo + bar
+
+        @plan()
+        def expander(foo: int) -> List[str]:  # pylint: disable=unused-argument
+            return foreach([{'bar': 2}], collect, Wild('foo'), bar=Wild('bar'))
+
+        self.assertEqual(expander(1), [3])
+
+    def test_valid_wild_in_foreach(self) -> None:
+        def collect(foo: int, *, bar: int) -> int:
+            return foo + bar
+
+        @plan()
+        def expander(foo: str) -> List[str]:  # pylint: disable=unused-argument
+            return foreach([{'bar': 2}], collect, Wild('foo', int), bar=Wild('bar', int))
+
+        self.assertEqual(expander('1'), [3])
+
+    def test_valid_wild_function_in_foreach(self) -> None:
+        def allow(name: str, value: Any) -> Any:  # pylint: disable=unused-argument
+            return value
+
+        def collect(foo: int, *, bar: int) -> int:
+            return foo + bar
+
+        @plan()
+        def expander(foo: int) -> List[str]:  # pylint: disable=unused-argument
+            return foreach([{'bar': 2}], collect, Wild('foo', allow), bar=Wild('bar', int))
+
+        self.assertEqual(expander(1), [3])
+
+    def test_unknown_wild_in_foreach(self) -> None:
+        def collect(foo: int, *, bar: int) -> int:
+            return foo + bar
+
+        @plan()
+        def expander(foo: str) -> List[str]:  # pylint: disable=unused-argument
+            return foreach([{'bar': 2}], collect, Wild('foo'), bar=Wild('baz'))
+
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               r'Unknown parameter: baz',
+                               expander, 1)
+
+    def test_invalid_wild_klass_in_foreach(self) -> None:
+        def collect(foo: int, *, bar: int) -> int:
+            return foo + bar
+
+        @plan()
+        def expander(foo: str) -> List[str]:  # pylint: disable=unused-argument
+            return foreach([{'bar': 2}], collect, Wild('foo', int), bar=Wild('bar', int))
+
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               r'Invalid value: x type: builtins.str .* parameter: foo',
+                               expander, 'x')
+
+    def test_invalid_wild_function_in_foreach(self) -> None:
+        def forbid(name: str, value: Any) -> None:
+            raise RuntimeError('Invalid parameter: %s value: %s' % (name, value))
+
+        def collect(foo: int, *, bar: int) -> int:
+            return foo + bar
+
+        @plan()
+        def expander(foo: str) -> List[str]:  # pylint: disable=unused-argument
+            return foreach([{'bar': 2}], collect, Wild('foo', forbid), bar=Wild('bar', int))
+
+        self.assertRaisesRegex(RuntimeError,  # type: ignore
+                               r'Invalid parameter: foo value: 1',
+                               expander, 1)
 
     def test_empty_action(self) -> None:
         @action()
