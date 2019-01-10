@@ -669,7 +669,7 @@ class TestFiles(TestWithFiles):
         @action
         def echo() -> Action:
             return Action(input=['input.txt'], output=['output.txt'],
-                          run=['echo', '>', 'output.txt'], shell=True)
+                          run=['echo', '>', 'output.txt'], runner='shell')
 
         write_file('input.txt')
 
