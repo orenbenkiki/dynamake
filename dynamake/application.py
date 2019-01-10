@@ -25,6 +25,8 @@ from typing import TypeVar
 
 import yaml
 
+from .patterns import first_sentence
+
 #: The type of a wrapped function.
 Wrapped = TypeVar('Wrapped', bound=Callable)
 
@@ -399,52 +401,3 @@ class AppParams:
 
 
 AppParams.reset()
-
-_DOT_SUFFIX = re.compile('[.](com|net|org|io|gov|[0-9])')
-_PREFIX_DOT = re.compile('(Mr|St|Mrs|Ms|Dr|Inc|Ltd|Jr|Sr|Co)[.]')
-_FINAL_ACRONYM = re.compile('([A-Za-z])[.][ ]+'
-                            '(?:Mr|Mrs|Ms|Dr|He |She |It |They |Their '
-                            '|Our |We |But |However |That |This |Wherever).*')
-_THREE_ACRONYM = re.compile('([A-Za-z])[.]([A-Za-z])[.]([A-Za-z])[.]')
-_TWO_ACRONYM = re.compile('([A-Za-z])[.]([A-Za-z])[.]')
-_ONE_ACRONYM = re.compile(' ([A-Za-z])[.] ')
-
-
-def first_sentence(text: Optional[str]) -> Optional[str]:
-    """
-    Return the first sentence in documentation text.
-
-    Very loosely based on `<https://stackoverflow.com/a/31505798/63376>`_.
-    """
-    if text is None:
-        return text
-
-    text = ' ' + text + '  '
-    text = text.replace('\n', ' ')
-
-    for pattern, fixed in [(_DOT_SUFFIX, r'<prd>\1'),
-                           (_FINAL_ACRONYM, r'\1'),
-                           (_PREFIX_DOT, r'\1<prd>'),
-                           (_THREE_ACRONYM, r'\1<prd>\2<prd>\3<prd>'),
-                           (_TWO_ACRONYM, r'\1<prd>\2<prd>'),
-                           (_ONE_ACRONYM, r' \1<prd> ')]:
-        text = re.sub(pattern, fixed, text)
-
-    for raw, fixed in [('wrt.', 'wrt<prd>'),
-                       ('vs.', 'vs<prd>'),
-                       ('M.Sc.', 'M<prd>Sc<prd>'),
-                       ('Ph.D.', 'Ph<prd>D<prd>'),
-                       ('...', '<prd><prd><prd>'),
-                       ('."', '".'),
-                       ('!"', '"!'),
-                       ('?"', '"?')]:
-        text = text.replace(raw, fixed)
-
-    for terminator in '.?!':
-        index = text.find(terminator)
-        if index > 0:
-            text = text[:index + 1]
-
-    text = text.replace('<prd>', '.')
-
-    return text.strip()

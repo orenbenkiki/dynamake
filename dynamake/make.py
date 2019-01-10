@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from enum import Enum
 from enum import unique
+from textwrap import dedent
 from threading import Condition
 from types import SimpleNamespace
 from typing import Any
@@ -768,29 +769,45 @@ def _ns2str(nanoseconds: Optional[int]) -> str:
                               nanoseconds)
 
 
-def plan(wrapped: Wrapped) -> Wrapped:
+def plan(run_help: Optional[Strings] = None) -> Callable[[Wrapped], Wrapped]:
     """
     Decorate a plan step function.
+
+    If ``run_help`` is given, it is a command to execute to print a help message for the step. The
+    pattern ``{step}`` in this command would be replaced by the step name. Use ``{{`` and ``}}`` to
+    escape the ``{`` and ``}`` characters.
     """
-    return _step(Planner, wrapped)
+    def _wrap(wrapped: Wrapped) -> Wrapped:
+        return _step(Planner, run_help, wrapped)
+    return _wrap
 
 
-def action(wrapped: Wrapped) -> Wrapped:
+def action(run_help: Optional[Strings] = None) -> Callable[[Wrapped], Wrapped]:
     """
     Decorate an action step function.
+
+    If ``run_help`` is given, it is a command to execute to print a help message for the step. The
+    pattern ``{step}`` in this command would be replaced by the step name. Use ``{{`` and ``}}`` to
+    escape the ``{`` and ``}`` characters.
     """
-    return _step(Agent, wrapped)
+    def _wrap(wrapped: Wrapped) -> Wrapped:
+        return _step(Agent, run_help, wrapped)
+    return _wrap
 
 
-def _step(step: type, wrapped: Wrapped) -> Wrapped:
+def _step(step: type, run_help: Optional[Strings], wrapped: Wrapped) -> Wrapped:
     function = _callable_function(wrapped)
 
     def _wrapper_function(*args: Any, **kwargs: Any) -> Any:
         return Step.call_current(step, function, args, kwargs)
 
     setattr(_wrapper_function, '_dynamake_wrapped_function', function)
-    setattr(function, '_dynamake_positional_argument_names',
-            _positional_argument_names(function))
+
+    if run_help:
+        run_help = [string.format(step=function.__name__) for string in dp.each_string(run_help)]
+    setattr(_wrapper_function, '_dynamake_run_help', run_help)
+
+    setattr(function, '_dynamake_positional_argument_names', _positional_argument_names(function))
 
     conflicting = Make.step_by_name.get(function.__name__)
     if conflicting is not None:
@@ -1080,11 +1097,17 @@ def main(parser: argparse.ArgumentParser, default_step: Callable) -> None:
 
     _add_arguments(parser, default_step)
     args = parser.parse_args()
-    _configure_by_arguments(args)
-    _call_steps(default_step, args)
+    if not _help_by_arguments(args):
+        _configure_by_arguments(args)
+        _call_steps(default_step, args)
 
 
 def _add_arguments(parser: argparse.ArgumentParser, default_step: Callable) -> None:
+    parser.add_argument('-ls', '--list-steps', help='List all known steps')
+
+    parser.add_argument('-hs', '--help-step', metavar='STEP',
+                        help='Describe a specific step and exit')
+
     parser.add_argument('-c', '--config', metavar='CONFIG.yaml',
                         help='The configuration file to use (default: Config.yaml)')
 
@@ -1147,6 +1170,32 @@ def _mi2enum(string: str) -> MissingInputs:
 
 def _mo2enum(string: str) -> MissingOutputs:
     return _str2enum(MissingOutputs, string)
+
+
+def _help_by_arguments(args: argparse.Namespace) -> bool:
+    if args.list_steps:
+        for step_name, wrapped in sorted(Make.step_by_name.items()):
+            function = getattr(wrapped, '_dynamake_wrapped_function')
+            if function.__doc__:
+                print('- %s: %s' % (step_name, dp.first_sentence(function.__doc__)))
+            else:
+                print('- %s' % step_name)
+        return True
+
+    if args.help_step:
+        step_name = args.help_step
+        if step_name not in Make.step_by_name:
+            raise RuntimeError('Unknown step: %s' % step_name)
+        wrapped = Make.step_by_name[step_name]
+        function = getattr(wrapped, '_dynamake_wrapped_function')
+        if function.__doc__:
+            print(dedent(function.__doc__))
+        run_help = getattr(wrapped, '_dynamake_run_help')
+        if run_help is not None:
+            subprocess.run(run_help)
+        return True
+
+    return False
 
 
 def _configure_by_arguments(args: argparse.Namespace) -> None:

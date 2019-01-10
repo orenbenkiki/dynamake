@@ -53,7 +53,7 @@ class TestMake(TestWithReset):
     def test_call_function(self) -> None:
         called_function = False
 
-        @action
+        @action()
         def function() -> None:
             nonlocal called_function
             called_function = True
@@ -62,12 +62,12 @@ class TestMake(TestWithReset):
         self.assertTrue(called_function)
 
     def test_conflicting_function(self) -> None:
-        @action
+        @action()
         def function() -> None:  # pylint: disable=unused-variable
             pass
 
         def _register() -> None:
-            @action
+            @action()
             def function() -> None:  # pylint: disable=unused-variable
                 pass
 
@@ -81,7 +81,7 @@ class TestMake(TestWithReset):
         class Klass:
             called_static_method = False
 
-            @action
+            @action()
             @staticmethod
             def static_method() -> None:
                 Klass.called_static_method = True
@@ -90,12 +90,12 @@ class TestMake(TestWithReset):
         self.assertTrue(Klass.called_static_method)
 
     def test_action_in_plan(self) -> None:
-        @action
+        @action()
         def tactics() -> None:
             self.assertEqual(Step.current().stack, '/strategy/tactics')
             self.assertEqual(Step.current().name, 'tactics')
 
-        @plan
+        @plan()
         def strategy() -> None:
             self.assertEqual(Step.current().stack, '/strategy')
             self.assertEqual(Step.current().name, 'strategy')
@@ -104,11 +104,11 @@ class TestMake(TestWithReset):
         strategy()
 
     def test_action_in_action(self) -> None:
-        @action
+        @action()
         def tactics() -> None:
             pass
 
-        @action
+        @action()
         def strategy() -> None:
             tactics()
 
@@ -118,18 +118,18 @@ class TestMake(TestWithReset):
                                strategy)
 
     def test_action_in_plan_in_plan(self) -> None:
-        @action
+        @action()
         def tactics() -> None:
             self.assertEqual(Step.current().stack, '/strategy/scheme/tactics')
             self.assertEqual(Step.current().name, 'tactics')
 
-        @plan
+        @plan()
         def scheme() -> None:
             self.assertEqual(Step.current().stack, '/strategy/scheme')
             self.assertEqual(Step.current().name, 'scheme')
             tactics()
 
-        @plan
+        @plan()
         def strategy() -> None:
             self.assertEqual(Step.current().stack, '/strategy')
             self.assertEqual(Step.current().name, 'strategy')
@@ -142,19 +142,19 @@ class TestMake(TestWithReset):
         left_thread = main_thread
         right_thread = main_thread
 
-        @action
+        @action()
         def left() -> None:
             sleep(0.01)
             nonlocal left_thread
             left_thread = threading.current_thread().name
 
-        @action
+        @action()
         def right() -> None:
             sleep(0.01)
             nonlocal right_thread
             right_thread = threading.current_thread().name
 
-        @plan
+        @plan()
         def both() -> None:
             left_future = parallel(left)
             right_future = parallel(right)
@@ -171,19 +171,19 @@ class TestMake(TestWithReset):
         left_thread = main_thread
         right_thread = main_thread
 
-        @action
+        @action()
         def left() -> None:
             sleep(0.01)
             nonlocal left_thread
             left_thread = threading.current_thread().name
 
-        @action
+        @action()
         def right() -> None:
             sleep(0.01)
             nonlocal right_thread
             right_thread = threading.current_thread().name
 
-        @plan
+        @plan()
         def both() -> None:
             parcall((left, [], {}), (right, [], {}))
 
@@ -196,12 +196,12 @@ class TestMake(TestWithReset):
     def test_pareach_plan(self) -> None:
         main_thread = threading.current_thread().name
 
-        @action
+        @action()
         def in_parallel() -> str:
             sleep(0.01)
             return threading.current_thread().name
 
-        @plan
+        @plan()
         def every() -> List[str]:
             return pareach([{}, {}], in_parallel)
 
@@ -215,11 +215,11 @@ class TestMake(TestWithReset):
     def test_resources_plan(self) -> None:
         available_resources(foo=2)
 
-        @action
+        @action()
         def foo(amount: float) -> Action:
             return Action(input=[], output=[], run=['sleep', '1'], resources={'foo': amount})
 
-        @plan
+        @plan()
         def foos() -> None:
             parcall((foo, [1], {}),
                     (foo, [1], {}),
@@ -234,11 +234,11 @@ class TestMake(TestWithReset):
     def test_negative_resources(self) -> None:
         available_resources(foo=2)
 
-        @action
+        @action()
         def foo(amount: float) -> Action:
             return Action(input=[], output=[], run=['true'], resources={'foo': amount})
 
-        @plan
+        @plan()
         def foos() -> None:
             parcall((foo, [1], {}),
                     (foo, [-1], {}))
@@ -248,11 +248,11 @@ class TestMake(TestWithReset):
                                foos)
 
     def test_unknown_resources(self) -> None:
-        @action
+        @action()
         def foo(amount: float) -> Action:
             return Action(input=[], output=[], run=['sleep', '1'], resources={'foo': amount})
 
-        @plan
+        @plan()
         def foos() -> None:
             parcall((foo, [1], {}),
                     (foo, [1], {}),
@@ -263,14 +263,14 @@ class TestMake(TestWithReset):
                                foos)
 
     def test_expand_in_step(self) -> None:
-        @plan
+        @plan()
         def expander(foo: str, *, bar: str) -> List[str]:  # pylint: disable=unused-argument
             return expand('{foo}/{bar}')
 
         self.assertEqual(expander('a', bar='b'), ['a/b'])
 
     def test_extract_in_step(self) -> None:
-        @plan
+        @plan()
         def extractor(foo: str, *, bar: str) -> List[Dict[str, Any]]:  # pylint: disable=unused-argument
             return extract('{foo}/{bar}.{*baz}', 'a/b.c')
 
@@ -280,7 +280,7 @@ class TestMake(TestWithReset):
         def collect(*args: str, **kwargs: Dict[str, Any]) -> str:
             return '%s %s' % (args, kwargs)
 
-        @plan
+        @plan()
         def expander(foo: str, bar: int, *, baz: str, vaz: int) -> List[str]:  # pylint: disable=unused-argument
             return foreach([{'wild': 2}], collect, '{foo}', bar,
                            baz='{baz}', vaz=vaz, wild='{wild}')
@@ -292,7 +292,7 @@ class TestMake(TestWithReset):
         def collect(foo: int, *, bar: int) -> int:
             return foo + bar
 
-        @plan
+        @plan()
         def expander(foo: int) -> List[str]:  # pylint: disable=unused-argument
             return foreach([{'bar': 2}], collect, Wild('foo'), bar=Wild('bar'))
 
@@ -302,7 +302,7 @@ class TestMake(TestWithReset):
         def collect(foo: int, *, bar: int) -> int:
             return foo + bar
 
-        @plan
+        @plan()
         def expander(foo: str) -> List[str]:  # pylint: disable=unused-argument
             return foreach([{'bar': 2}], collect, Wild('foo', int), bar=Wild('bar', int))
 
@@ -315,7 +315,7 @@ class TestMake(TestWithReset):
         def collect(foo: int, *, bar: int) -> int:
             return foo + bar
 
-        @plan
+        @plan()
         def expander(foo: int) -> List[str]:  # pylint: disable=unused-argument
             return foreach([{'bar': 2}], collect, Wild('foo', allow), bar=Wild('bar', int))
 
@@ -325,7 +325,7 @@ class TestMake(TestWithReset):
         def collect(foo: int, *, bar: int) -> int:
             return foo + bar
 
-        @plan
+        @plan()
         def expander(foo: str) -> List[str]:  # pylint: disable=unused-argument
             return foreach([{'bar': 2}], collect, Wild('foo'), bar=Wild('baz'))
 
@@ -337,7 +337,7 @@ class TestMake(TestWithReset):
         def collect(foo: int, *, bar: int) -> int:
             return foo + bar
 
-        @plan
+        @plan()
         def expander(foo: str) -> List[str]:  # pylint: disable=unused-argument
             return foreach([{'bar': 2}], collect, Wild('foo', int), bar=Wild('bar', int))
 
@@ -352,7 +352,7 @@ class TestMake(TestWithReset):
         def collect(foo: int, *, bar: int) -> int:
             return foo + bar
 
-        @plan
+        @plan()
         def expander(foo: str) -> List[str]:  # pylint: disable=unused-argument
             return foreach([{'bar': 2}], collect, Wild('foo', forbid), bar=Wild('bar', int))
 
@@ -361,7 +361,7 @@ class TestMake(TestWithReset):
                                expander, 1)
 
     def test_empty_action(self) -> None:
-        @action
+        @action()
         def empty() -> Action:
             return Action(input=[], output=[], run=[])
 
@@ -378,7 +378,7 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/empty: output paths after: None'))
 
     def test_true_action(self) -> None:
-        @action
+        @action()
         def empty() -> Action:
             return Action(input=[], output=[], run='true')
 
@@ -396,7 +396,7 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/empty: output paths after: None'))
 
     def test_forbidden_missing_input(self) -> None:
-        @action
+        @action()
         def missing() -> Action:
             return Action(input=['missing.txt'], output=[], run=[])
 
@@ -405,7 +405,7 @@ class TestMake(TestWithReset):
                                missing)
 
     def test_assumed_missing_input(self) -> None:
-        @action
+        @action()
         def missing() -> Action:
             return Action(input=['missing.txt'], output=['output.txt'], run=[],
                           missing_inputs=MissingInputs.assume_up_to_date)
@@ -415,7 +415,7 @@ class TestMake(TestWithReset):
                                missing)
 
     def test_optional_missing_input(self) -> None:
-        @action
+        @action()
         def missing() -> Action:
             return Action(input=['missing.txt'], output=[], run=[])
 
@@ -434,7 +434,7 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/missing: output paths after: None'))
 
     def test_forbidden_missing_output(self) -> None:
-        @action
+        @action()
         def missing(prefix: str) -> Action:  # pylint: disable=unused-argument
             return Action(input=[], output=['{prefix}.txt'], run=[])
 
@@ -444,7 +444,7 @@ class TestMake(TestWithReset):
                                missing, 'output')
 
     def test_partial_missing_output(self) -> None:
-        @action
+        @action()
         def missing() -> Action:
             return Action(input=[], output=['output.txt'], run=[],
                           missing_outputs=MissingOutputs.partial)
@@ -454,7 +454,7 @@ class TestMake(TestWithReset):
                                missing)
 
     def test_optional_missing_output(self) -> None:
-        @action
+        @action()
         def missing() -> Action:
             return Action(input=[], output=['output.txt'], run=[],
                           missing_outputs=MissingOutputs.optional)
@@ -474,7 +474,7 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/missing: output paths after: None'))
 
     def test_main_default_step(self) -> None:
-        @action
+        @action()
         def do_nothing() -> Action:
             return Action(input=[], output=[], run=[])
 
@@ -492,11 +492,11 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/do_nothing: output paths after: None'))
 
     def test_main_non_default_step(self) -> None:
-        @action
+        @action()
         def do_nothing() -> Action:
             return Action(input=[], output=[], run=[])
 
-        @action
+        @action()
         def do_something() -> Action:  # pylint: disable=unused-variable
             return Action(input=[], output=[], run=[])
 
@@ -525,7 +525,7 @@ class TestMake(TestWithReset):
                                main, argparse.ArgumentParser(), do_nothing)
 
     def test_missing_step_function(self) -> None:
-        @action
+        @action()
         def do_nothing() -> Action:
             return Action(input=[], output=[], run=[])
 
@@ -536,7 +536,7 @@ class TestMake(TestWithReset):
                                main, argparse.ArgumentParser(), do_nothing)
 
     def test_main_flags(self) -> None:
-        @action
+        @action()
         def do_nothing() -> Action:
             return Action(input=[], output=[], run=[])
 
@@ -557,7 +557,7 @@ class TestMake(TestWithReset):
     def test_main_parameters(self) -> None:
         collected = 'bar'
 
-        @action
+        @action()
         def do_nothing(foo: str) -> Action:
             nonlocal collected
             collected = foo
@@ -570,7 +570,7 @@ class TestMake(TestWithReset):
         self.assertEqual(collected, 'baz')
 
     def test_invalid_main_parameters(self) -> None:
-        @action
+        @action()
         def do_nothing(foo: str) -> Action:  # pylint: disable=unused-argument
             return Action(input=[], output=[], run=[])
 
@@ -581,7 +581,7 @@ class TestMake(TestWithReset):
                                main, argparse.ArgumentParser(), do_nothing)
 
     def test_unused_main_parameters(self) -> None:
-        @action
+        @action()
         def do_nothing(foo: str) -> Action:  # pylint: disable=unused-argument
             return Action(input=[], output=[], run=[])
 
@@ -592,7 +592,7 @@ class TestMake(TestWithReset):
                                main, argparse.ArgumentParser(), do_nothing)
 
     def test_missing_main_parameters(self) -> None:
-        @action
+        @action()
         def do_nothing(foo: str) -> Action:  # pylint: disable=unused-argument
             return Action(input=[], output=[], run=[])
 
@@ -606,7 +606,7 @@ class TestMake(TestWithReset):
 class TestFiles(TestWithFiles):
 
     def test_capture(self) -> None:
-        @plan
+        @plan()
         def captor(foo: str) -> Captured:  # pylint: disable=unused-argument
             return capture('{foo}.{*bar}')
 
@@ -621,7 +621,7 @@ class TestFiles(TestWithFiles):
         self.assertEqual(captured.wildcards, [{'bar': 'a'}])
 
     def test_glob(self) -> None:
-        @plan
+        @plan()
         def globber(foo: str) -> List[str]:  # pylint: disable=unused-argument
             return glob('{foo}.*')
 
@@ -632,7 +632,7 @@ class TestFiles(TestWithFiles):
         self.assertEqual(globber('x'), ['x.a'])
 
     def test_assumed_missing_input(self) -> None:
-        @action
+        @action()
         def missing() -> Action:
             return Action(input=['missing.txt'], output=['output.txt'], run=[],
                           missing_inputs=MissingInputs.assume_up_to_date)
@@ -651,7 +651,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/missing: no need to execute ignoring missing inputs'))
 
     def test_execute_for_missing_output(self) -> None:
-        @action
+        @action()
         def touch() -> Action:
             return Action(input=['input.txt'], output=['output.txt'], run=['touch', 'output.txt'])
 
@@ -673,7 +673,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/touch: output paths after: output.txt'))
 
     def test_shell_for_missing_output(self) -> None:
-        @action
+        @action()
         def echo() -> Action:
             return Action(input=['input.txt'], output=['output.txt'],
                           run=['echo', '>', 'output.txt'], runner='shell')
@@ -696,7 +696,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/echo: output paths after: output.txt'))
 
     def test_skip_for_missing_output(self) -> None:
-        @action
+        @action()
         def touch() -> Action:
             return Action(input=['input.txt'], output=['output.txt'], run=['touch', 'output.txt'])
 
@@ -714,7 +714,7 @@ class TestFiles(TestWithFiles):
                    '/touch: no need to execute assuming next step(s) allow missing inputs'))
 
     def test_skip_for_old_input(self) -> None:
-        @action
+        @action()
         def touch() -> Action:
             return Action(input=['???.txt'], output=['output.txt'], run=['touch', 'output.txt'])
 
@@ -735,7 +735,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/touch: no need to execute since outputs are newer'))
 
     def test_run_for_old_output(self) -> None:
-        @action
+        @action()
         def touch() -> Action:
             return Action(input=['input.txt'], output=['output.txt'], run=['touch', 'output.txt'])
 
@@ -760,7 +760,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/touch: output paths after: output.txt'))
 
     def test_remove_before_run(self) -> None:
-        @action
+        @action()
         def fail() -> Action:
             return Action(input=['input.txt'], output=['output.txt'], run=['false'])
 
@@ -788,7 +788,7 @@ class TestFiles(TestWithFiles):
         self.assertFalse(os.path.exists('output.txt'))
 
     def test_remove_after_fail(self) -> None:
-        @action
+        @action()
         def fail() -> Action:
             return Action(input=['input.txt'], output=['output.txt'],
                           run=[['touch', 'output.txt'], ['false']])
@@ -819,7 +819,7 @@ class TestFiles(TestWithFiles):
         self.assertFalse(os.path.exists('output.txt'))
 
     def test_keep_output(self) -> None:
-        @action
+        @action()
         def fail() -> Action:
             return Action(input=['input.txt'], output=['output.txt'], run=['false'],
                           delete_stale_outputs=False, delete_failed_outputs=False)
@@ -847,7 +847,7 @@ class TestFiles(TestWithFiles):
         self.assertTrue(os.path.exists('output.txt'))
 
     def test_delete_dir(self) -> None:
-        @action
+        @action()
         def mkdir() -> Action:
             return Action(input=['input.txt'], output=['output.dir'], run=['mkdir', 'output.dir'])
 
@@ -874,7 +874,7 @@ class TestFiles(TestWithFiles):
         self.assertFalse(os.path.exists('output.dir/output.txt'))
 
     def test_touch_dir(self) -> None:
-        @action
+        @action()
         def mkdir() -> Action:
             return Action(input=['input.txt'], output=['output.dir'],
                           run=['mkdir', '-p', 'output.dir'],
@@ -905,7 +905,7 @@ class TestFiles(TestWithFiles):
         self.assertTrue(os.stat('output.dir').st_mtime_ns > os.stat('input.txt').st_mtime_ns)
 
     def test_delete_empty_dir(self) -> None:
-        @action
+        @action()
         def fail() -> Action:
             return Action(input=['input.txt'], output=['output.dir/output.txt'], run=['false'],
                           delete_empty_directories=True)
@@ -935,7 +935,7 @@ class TestFiles(TestWithFiles):
         self.assertFalse(os.path.exists('output.dir'))
 
     def test_use_strict_param(self) -> None:
-        @action
+        @action()
         def use_param() -> Action:
             return Action(input=[], output=[], run=[], foo=config_param('foo'))
 
@@ -947,7 +947,7 @@ class TestFiles(TestWithFiles):
         self.assertEqual(result.foo, 1)
 
     def test_use_optional_param(self) -> None:
-        @action
+        @action()
         def use_param() -> Action:
             return Action(input=[], output=[], run=[], foo=config_param('foo'))
 
@@ -959,7 +959,7 @@ class TestFiles(TestWithFiles):
         self.assertEqual(result.foo, 1)
 
     def test_not_use_strict_param(self) -> None:
-        @action
+        @action()
         def not_use_param() -> Action:
             return Action(input=[], output=[], run=[])
 
@@ -971,7 +971,7 @@ class TestFiles(TestWithFiles):
                                not_use_param)
 
     def test_not_use_optional_param(self) -> None:
-        @action
+        @action()
         def not_use_param() -> Action:
             return Action(input=[], output=[], run=[])
 
@@ -992,7 +992,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/not_use_param: output paths after: None'))
 
     def test_use_config_file(self) -> None:
-        @action
+        @action()
         def use_file() -> Action:
             config_file()  # Test multiple invocations.
             return Action(input=[], output=['output.yaml'],
@@ -1063,7 +1063,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/use_file: output paths after: output.yaml'))
 
     def test_main_config(self) -> None:
-        @action
+        @action()
         def do_nothing() -> Action:
             return Action(input=[], output=[], run=[])
 
@@ -1088,7 +1088,7 @@ class TestFiles(TestWithFiles):
         self.assertEqual(Make.missing_outputs, MissingOutputs.partial)
 
     def test_unused_main_config(self) -> None:
-        @action
+        @action()
         def do_nothing() -> Action:
             return Action(input=[], output=[], run=[])
 
