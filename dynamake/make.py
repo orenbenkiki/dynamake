@@ -12,7 +12,6 @@ import shutil
 import subprocess
 import threading
 from abc import abstractmethod
-from concurrent.futures import Executor
 from concurrent.futures import Future
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -90,7 +89,7 @@ class Make:  # pylint: disable=too-many-instance-attributes
     """
 
     #: The executor for parallel steps.
-    executor: Executor
+    executor: ThreadPoolExecutor
 
     #: A condition variable for synchronizing access to the available resources.
     condition: Condition
@@ -153,8 +152,10 @@ class Make:  # pylint: disable=too-many-instance-attributes
         """
         Make.executor = ThreadPoolExecutor(thread_name_prefix='MakeThread')
         Make.condition = Condition()
-        Make.available_resources = {}
-        Make.used_resources = {}
+        Make.available_resources = {
+            'steps': Make.executor._max_workers  # type: ignore # pylint: disable=protected-access
+        }
+        Make.used_resources = {'steps': 0}
         Make.parallel_actions = 0
         Make.step_by_name = {}
         Make.logger = logging.getLogger('dynamake')
@@ -351,10 +352,7 @@ class Agent(Step):
     def _call(self) -> Any:
         result = self.function(*self.args, **self.kwargs)
         if isinstance(result, Action) and result.needs_to_execute:
-            if result.resources:
-                with _request_resources(result.resources):
-                    result.call()
-            else:
+            with _request_resources(result.resources):
                 result.call()
         return result
 
@@ -364,10 +362,10 @@ def available_resources(**kwargs: float) -> None:
     Declare resources for restricting parallel action execution.
 
     This should be done before invoking the top-level step function.
+
+    Later invocations override values specified by earlier invocations.
     """
     for name, amount in kwargs.items():
-        if name in Make.available_resources:
-            raise RuntimeError('Multiple declarations of the resource: %s' % name)
         Make.available_resources[name] = amount
         Make.used_resources[name] = 0
 
@@ -507,6 +505,12 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         resources
             Optional resources to restrict parallel action execution. Specified
             resources must be pre-declared via :py:func:`dynamake.resource`.
+
+            A default value ``1`` is given to the resource ``steps``. The default number of
+            available ``steps`` is the maximal number of workers provided by the
+            :py:attr:`dynamake.make.executor`. This can be overriden using
+            :py:func:dynamake.make.available_resources` to restrict the maximal number of concurrent
+            steps.
         kwargs
             Any additional named parameters are injected into the action object
             (``SimpleNamespace``). This makes it easy to return additional values from an action
@@ -547,7 +551,8 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
             else delete_empty_directories
 
         #: The resources needed by the action, to restrict parallel action execution.
-        self.resources = resources
+        self.resources = {'steps': 1.0}
+        self.resources.update(resources or {})
 
         #: How to run each command.
         self.runner = dp.flatten(runner or config_param('runner', []))

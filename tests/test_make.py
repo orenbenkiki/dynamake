@@ -231,13 +231,6 @@ class TestMake(TestWithReset):
         self.assertTrue(duration > 1.5)  # Did not run all three in parallel.
         self.assertTrue(duration < 2.5)  # Did run first two in parallel.
 
-    def test_conflicting_resources(self) -> None:
-        available_resources(foo=2)
-
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
-                               r'Multiple .* resource: foo',
-                               available_resources, foo=2)
-
     def test_negative_resources(self) -> None:
         available_resources(foo=2)
 
@@ -380,6 +373,8 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/empty: output: None'),
                   ('dynamake', 'DEBUG', '/empty: output paths before: None'),
                   ('dynamake', 'DEBUG', '/empty: needs to execute because has no outputs'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/empty: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/empty: output paths after: None'))
 
     def test_true_action(self) -> None:
@@ -395,6 +390,8 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/empty: output: None'),
                   ('dynamake', 'DEBUG', '/empty: output paths before: None'),
                   ('dynamake', 'DEBUG', '/empty: needs to execute because has no outputs'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/empty: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', "/empty: run: true"),
                   ('dynamake', 'DEBUG', '/empty: output paths after: None'))
 
@@ -432,6 +429,8 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/missing: output: None'),
                   ('dynamake', 'DEBUG', '/missing: output paths before: None'),
                   ('dynamake', 'DEBUG', '/missing: needs to execute because has no outputs'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/missing: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/missing: output paths after: None'))
 
     def test_forbidden_missing_output(self) -> None:
@@ -470,6 +469,8 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/missing: minimal output mtime: None'),
                   ('dynamake', 'DEBUG',
                    '/missing: need to execute assuming next step(s) need all inputs'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/missing: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/missing: output paths after: None'))
 
     def test_main_default_step(self) -> None:
@@ -486,6 +487,8 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/do_nothing: output: None'),
                   ('dynamake', 'DEBUG', '/do_nothing: output paths before: None'),
                   ('dynamake', 'DEBUG', '/do_nothing: needs to execute because has no outputs'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/do_nothing: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/do_nothing: output paths after: None'))
 
     def test_main_non_default_step(self) -> None:
@@ -507,6 +510,8 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/do_something: output: None'),
                   ('dynamake', 'DEBUG', '/do_something: output paths before: None'),
                   ('dynamake', 'DEBUG', '/do_something: needs to execute because has no outputs'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/do_something: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/do_something: output paths after: None'))
 
     def test_non_step_function(self) -> None:
@@ -662,6 +667,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/touch: minimal output mtime: None'),
                   ('dynamake', 'DEBUG',
                    '/touch: need to execute assuming next step(s) need all inputs'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/touch: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/touch: run: touch output.txt'),
                   ('dynamake', 'DEBUG', '/touch: output paths after: output.txt'))
 
@@ -683,6 +690,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/echo: minimal output mtime: None'),
                   ('dynamake', 'DEBUG',
                    '/echo: need to execute assuming next step(s) need all inputs'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/echo: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/echo: run: echo > output.txt'),
                   ('dynamake', 'DEBUG', '/echo: output paths after: output.txt'))
 
@@ -744,6 +753,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', StringComparison('/touch: minimal output mtime: .*')),
                   ('dynamake', 'DEBUG', StringComparison('/touch: maximal input mtime:.*')),
                   ('dynamake', 'DEBUG', '/touch: need to execute since inputs are newer'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/touch: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/touch: delete stale outputs: output.txt'),
                   ('dynamake', 'INFO', '/touch: run: touch output.txt'),
                   ('dynamake', 'DEBUG', '/touch: output paths after: output.txt'))
@@ -768,6 +779,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', StringComparison('/fail: minimal output mtime: .*')),
                   ('dynamake', 'DEBUG', StringComparison('/fail: maximal input mtime:.*')),
                   ('dynamake', 'DEBUG', '/fail: need to execute since inputs are newer'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/fail: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/fail: delete stale outputs: output.txt'),
                   ('dynamake', 'INFO', '/fail: run: false'),
                   ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'))
@@ -795,6 +808,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', StringComparison('/fail: minimal output mtime: .*')),
                   ('dynamake', 'DEBUG', StringComparison('/fail: maximal input mtime:.*')),
                   ('dynamake', 'DEBUG', '/fail: need to execute since inputs are newer'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/fail: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/fail: delete stale outputs: output.txt'),
                   ('dynamake', 'INFO', '/fail: run: touch output.txt'),
                   ('dynamake', 'INFO', '/fail: run: false'),
@@ -824,6 +839,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', StringComparison('/fail: minimal output mtime: .*')),
                   ('dynamake', 'DEBUG', StringComparison('/fail: maximal input mtime:.*')),
                   ('dynamake', 'DEBUG', '/fail: need to execute since inputs are newer'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/fail: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/fail: run: false'),
                   ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'))
 
@@ -848,6 +865,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', StringComparison('/mkdir: minimal output mtime: .*')),
                   ('dynamake', 'DEBUG', StringComparison('/mkdir: maximal input mtime:.*')),
                   ('dynamake', 'DEBUG', '/mkdir: need to execute since inputs are newer'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/mkdir: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/mkdir: delete stale outputs: output.dir'),
                   ('dynamake', 'INFO', '/mkdir: run: mkdir output.dir'),
                   ('dynamake', 'DEBUG', '/mkdir: output paths after: output.dir'))
@@ -876,6 +895,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', StringComparison('/mkdir: minimal output mtime: .*')),
                   ('dynamake', 'DEBUG', StringComparison('/mkdir: maximal input mtime:.*')),
                   ('dynamake', 'DEBUG', '/mkdir: need to execute since inputs are newer'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/mkdir: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/mkdir: run: mkdir -p output.dir'),
                   ('dynamake', 'DEBUG', '/mkdir: output paths after: output.dir'),
                   ('dynamake', 'DEBUG', '/mkdir: touch outputs: output.dir'))
@@ -905,6 +926,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', StringComparison('/fail: minimal output mtime: .*')),
                   ('dynamake', 'DEBUG', StringComparison('/fail: maximal input mtime:.*')),
                   ('dynamake', 'DEBUG', '/fail: need to execute since inputs are newer'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/fail: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/fail: delete stale outputs: output.dir/output.txt'),
                   ('dynamake', 'INFO', '/fail: run: false'),
                   ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'))
@@ -964,6 +987,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/not_use_param: output paths before: None'),
                   ('dynamake', 'DEBUG',
                    '/not_use_param: needs to execute because has no outputs'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/not_use_param: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/not_use_param: output paths after: None'))
 
     def test_use_config_file(self) -> None:
@@ -990,6 +1015,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/use_file: minimal output mtime: None'),
                   ('dynamake', 'DEBUG',
                    '/use_file: need to execute assuming next step(s) need all inputs'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/use_file: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/use_file: run: cp '
                    '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: output paths after: output.yaml'))
@@ -1028,6 +1055,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', StringComparison('/use_file: minimal output mtime: .*')),
                   ('dynamake', 'DEBUG', StringComparison('/use_file: maximal input mtime:.*')),
                   ('dynamake', 'DEBUG', '/use_file: need to execute since inputs are newer'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/use_file: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/use_file: delete stale outputs: output.yaml'),
                   ('dynamake', 'INFO', '/use_file: run: cp '
                    '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
