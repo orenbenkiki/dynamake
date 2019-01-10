@@ -442,7 +442,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
 
     def __init__(self, *, input: Strings,  # pylint: disable=redefined-builtin,too-many-locals
                  output: Strings, run: Strings,
-                 shell: bool = False,
+                 runner: Optional[Strings] = None,
                  ignore_exit_status: bool = False,
                  missing_inputs: Optional[MissingInputs] = None,
                  missing_outputs: Optional[MissingOutputs] = None,
@@ -472,12 +472,19 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
             a list of such commands. All strings pass through :py:func:`dynamake.make.expand`, where
             the available wildcards also include the (expanded) ``input`` list and the unexpanded
             ``output`` list.
-        shell
-            If ``True``, the ``run`` may contain arbitrary shell commands, pipelines, redirections,
-            wildcard expansions, etc. Quoting unsafe values is the responsibility of the caller.
+        runner
+            If not specified, taken from :py:func:`dynamake.make.config_param` with a default value
+            of ``[]``.
 
-            By default each command is expected to be a simple direct program execution, and quoting
-            is handled automatically.
+            If empty, ``run`` commands are just the name of a program followed by the command line
+            arguments. There is no issue of quoting.
+
+            If this ``shell``, then ``run`` commands are arbitrary shell commands, including
+            pipelines, redirections, wildcard expansions, etc. Quoting unsafe values is the
+            responsibility of the caller.
+
+            Otherwise, the ``runner`` is a prefix added before each ``run`` command. This is a
+            convenient way to submit commands to clusters (e.g., ``runner=['qsub', ...]``).
         ignore_exit_status
             If ``True``, the exit status of the command(s) is ignored. Otherwise, if it is not zero,
             the action is considered a failure.
@@ -512,7 +519,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
 
         #: Before the action is executed, the unexpanded patterns of all the outputs.
         #: After the action is executed, the actual matched paths from all these patterns.
-        self.output = dp.flatten(*output)
+        self.output = dp.flatten(output)
 
         #: How to handle missing inputs.
         self.missing_inputs = \
@@ -542,8 +549,8 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         #: The resources needed by the action, to restrict parallel action execution.
         self.resources = resources
 
-        #: Whether to use a shell to execute the commands.
-        self.shell = shell
+        #: How to run each command.
+        self.runner = dp.flatten(runner or config_param('runner', []))
 
         #: Whether to ignore the command(s) exit status.
         self.ignore_exit_status = ignore_exit_status
@@ -656,10 +663,10 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
 
         for command in self.run:
             Make.logger.info('%s: run: %s', self.stack, ' '.join(command))
-            if self.shell:
+            if self.runner == ['shell']:
                 completed = subprocess.run(' '.join(command), shell=True)
             else:
-                completed = subprocess.run(command)
+                completed = subprocess.run(self.runner + command)
             if completed.returncode != 0 and not self.ignore_exit_status:
                 Make.logger.debug('%s: failed with exit status: %s',
                                   self.stack, completed.returncode)
