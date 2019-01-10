@@ -463,10 +463,10 @@ Here is a trivial example configurable program:
 
     def main() -> int:
         parser = argparse.ArgumentParser(description='Example')
-        da.ConfigArgs.current = da.ConfigArgs({'bar': (1, int, 'The number of bars')})
-        da.ConfigArgs.current.add_to_parser(parser)
+        da.AppParams.current = da.AppParams('bar'=(1, int, 'The number of bars'))
+        da.AppParams.current.add_to_parser(parser)
         args = parser.parse_args()
-        da.ConfigArgs.current.parse_args(args)
+        da.AppParams.current.parse_args(args)
         print(add(1))  # Bar will be taken from the configuration.
 
 
@@ -489,18 +489,18 @@ specified instead for the same effect.
 
 The usage pattern of these utilities is as follows:
 
-* First, one must initialize :py:attr:`dynamake.application.ConfigArgs.current` with the list of
+* First, one must initialize :py:attr:`dynamake.application.AppParams.current` with the list of
   known parameters for the program.
 
 * Typically one then adds all the necessary command line arguments to the program by calling
-  :py:func:`dynamake.application.ConfigArgs.add_to_parser`. This registers the ``--config`` flag
+  :py:func:`dynamake.application.AppParams.add_to_parser`. This registers the ``--config`` flag
   for loading a configuration file and a per-parameter (``--bar`` in the above example) flag
   for explicit overrides.
 
 * After the command line arguments have been parsed, the configuration is finalized using
-  :py:func:`dynamake.application.ConfigArgs.parse_args`.
+  :py:func:`dynamake.application.AppParams.parse_args`.
 
-To use the finalized :py:attr:`dynamake.application.ConfigArgs.current` configuration, decorate any
+To use the finalized :py:attr:`dynamake.application.AppParams.current` configuration, decorate any
 function with :py:func:`dynamake.application.config`. This will use the configuration to provide
 default values for each named function argument. Calling the functions with an explicit parameter
 value will ignore the configuration's value.
@@ -515,6 +515,44 @@ value will ignore the configuration's value.
    functionality of the decorator, but is *probably* an acceptable trade-off for being able to
    type-check the code.
 
+Configurable Multi-Applications
+...............................
+
+A realistic system has multiple related functions that need to be invoked. It is a hassle
+to have to name and define a separate script for invoking each one. A way around this
+is to create a single script which takes the function name as a command-line argument:
+
+.. code-block:: python
+
+    import dynamake.application as da
+
+    @config
+    def foo(...): ...
+
+    @config
+    def bar(...): ...
+
+    def main() -> int:
+        parser = argparse.ArgumentParser(description='Example')
+        da.AppParams.current = da.AppParams(...)  # Parameters for *all* functions.
+        da.AppParams.current.add_to_parser(parser, ['foo', 'bar'])
+        args = parser.parse_args()
+        da.AppParams.current.parse_args(args)
+        da.AppParams.call_with_args(args)
+
+This will allow the script to be invoked as ``script.py foo ...`` to invoke the ``foo`` function and
+``script.py bar ...`` to invoke the ``bar`` function. ``script.py -h`` will list all the available
+functions, and ``script.py foo -h`` will list all the parameters used by the ``foo`` function (or
+any function it indirectly invokes).
+
+.. note::
+
+    The automatic detection of invocations of one configurable function from another is simplistic.
+    Basically, if we see inside the function source the name of another function, and this isn't the
+    name of a variable being assigned to, then we assume this is a call. This isn't 100% complete;
+    for example this will not detect cases where ``foo`` calls a non-configured ``bar`` which then
+    calls a configured ``baz``. However it works "well enough" for simple code.
+
 WHAT NOT (YET)
 --------------
 
@@ -525,6 +563,8 @@ worked on yet:
   annotation inside the flow (not all actions deserve being distributed). Possibly add a
   ``distributed`` call, and some configuration to allow interfacing with different cluster/grid
   systems. Ensure distribution resources are distinct from parallelism resources.
+
+* Allow registering additional file formats for the generated configuration files.
 
 * Allow forcing rebuilding (some) targets.
 
@@ -556,9 +596,6 @@ worked on yet:
 
 * Generate several types of help messages: basic, list all steps, detailed help for a step,
   help of shell action of a step (for parameters).
-
-* Application "hub" skeleton for invoking arbitrary (registered) functions with different sets of
-  parameters.
 
 * Cache the results of glob calls, only invalidate when relevant actions are executed (if this
   proves to be a performance bottleneck).
