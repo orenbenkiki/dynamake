@@ -71,7 +71,7 @@ class TestMake(TestWithReset):
             def function() -> None:  # pylint: disable=unused-variable
                 pass
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                'Conflicting .* step: function .* '
                                'both: .*.test_conflicting_function.<locals>.function '
                                'and: .*._register.<locals>.function',
@@ -112,7 +112,7 @@ class TestMake(TestWithReset):
         def strategy() -> None:
             tactics()
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'nested step: .*\.tactics .* '
                                r'invoked from .* action step: .*\.strategy',
                                strategy)
@@ -243,7 +243,7 @@ class TestMake(TestWithReset):
             parcall((foo, [1], {}),
                     (foo, [-1], {}))
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                'Negative amount: -1 .* resource: foo .* step: /foos/foo',
                                foos)
 
@@ -258,7 +258,7 @@ class TestMake(TestWithReset):
                     (foo, [1], {}),
                     (foo, [3], {}))
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                'Unknown resource: foo .* step: /foos/foo',
                                foos)
 
@@ -329,7 +329,7 @@ class TestMake(TestWithReset):
         def expander(foo: str) -> List[str]:  # pylint: disable=unused-argument
             return foreach([{'bar': 2}], collect, Wild('foo'), bar=Wild('baz'))
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'Unknown parameter: baz',
                                expander, 1)
 
@@ -341,7 +341,7 @@ class TestMake(TestWithReset):
         def expander(foo: str) -> List[str]:  # pylint: disable=unused-argument
             return foreach([{'bar': 2}], collect, Wild('foo', int), bar=Wild('bar', int))
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'Invalid value: x type: builtins.str .* parameter: foo',
                                expander, 'x')
 
@@ -356,7 +356,7 @@ class TestMake(TestWithReset):
         def expander(foo: str) -> List[str]:  # pylint: disable=unused-argument
             return foreach([{'bar': 2}], collect, Wild('foo', forbid), bar=Wild('bar', int))
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'Invalid parameter: foo value: 1',
                                expander, 1)
 
@@ -400,7 +400,7 @@ class TestMake(TestWithReset):
         def missing() -> Action:
             return Action(input=['missing.txt'], output=[], run=[])
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'Missing input\(s\): missing.txt .* step: /missing',
                                missing)
 
@@ -410,7 +410,7 @@ class TestMake(TestWithReset):
             return Action(input=['missing.txt'], output=['output.txt'], run=[],
                           missing_inputs=MissingInputs.assume_up_to_date)
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'Missing input\(s\): missing.txt .* step: /missing',
                                missing)
 
@@ -438,7 +438,7 @@ class TestMake(TestWithReset):
         def missing(prefix: str) -> Action:  # pylint: disable=unused-argument
             return Action(input=[], output=['{prefix}.txt'], run=[])
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'Missing output\(s\): output.txt'
                                r' .* pattern: \{prefix\}.txt .* step: /missing',
                                missing, 'output')
@@ -449,7 +449,7 @@ class TestMake(TestWithReset):
             return Action(input=[], output=['output.txt'], run=[],
                           missing_outputs=MissingOutputs.partial)
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'Missing output\(s\): output.txt .* step: /missing',
                                missing)
 
@@ -520,7 +520,7 @@ class TestMake(TestWithReset):
 
         sys.argv = ['main_defaults']
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'function: .*.test_non_step_function.<locals>.do_nothing',
                                main, argparse.ArgumentParser(), do_nothing)
 
@@ -531,7 +531,7 @@ class TestMake(TestWithReset):
 
         sys.argv = ['main_defaults', 'do_something']
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'Unknown step: do_something',
                                main, argparse.ArgumentParser(), do_nothing)
 
@@ -576,7 +576,7 @@ class TestMake(TestWithReset):
 
         sys.argv = ['main_defaults', '-p', 'foo']
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'Invalid parameter flag: foo',
                                main, argparse.ArgumentParser(), do_nothing)
 
@@ -587,7 +587,7 @@ class TestMake(TestWithReset):
 
         sys.argv = ['main_defaults', '-p', 'foo=[', '-p', 'bar=baz']
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'Unused top-level .* parameter: bar',
                                main, argparse.ArgumentParser(), do_nothing)
 
@@ -598,7 +598,7 @@ class TestMake(TestWithReset):
 
         sys.argv = ['main_defaults']
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'Missing top-level parameter: foo .* step: /do_nothing',
                                main, argparse.ArgumentParser(), do_nothing)
 
@@ -768,7 +768,7 @@ class TestFiles(TestWithFiles):
         write_file('input.txt')
 
         with LogCapture() as log:
-            self.assertRaisesRegex(RuntimeError,  # type: ignore
+            self.assertRaisesRegex(RuntimeError,
                                    r'/fail: .* command: false',
                                    fail)
 
@@ -797,7 +797,7 @@ class TestFiles(TestWithFiles):
         write_file('input.txt')
 
         with LogCapture() as log:
-            self.assertRaisesRegex(RuntimeError,  # type: ignore
+            self.assertRaisesRegex(RuntimeError,
                                    r'/fail: .* command: false',
                                    fail)
 
@@ -828,7 +828,7 @@ class TestFiles(TestWithFiles):
         write_file('input.txt')
 
         with LogCapture() as log:
-            self.assertRaisesRegex(RuntimeError,  # type: ignore
+            self.assertRaisesRegex(RuntimeError,
                                    r'/fail: .* command: false',
                                    fail)
 
@@ -915,7 +915,7 @@ class TestFiles(TestWithFiles):
         write_file('input.txt')
 
         with LogCapture() as log:
-            self.assertRaisesRegex(RuntimeError,  # type: ignore
+            self.assertRaisesRegex(RuntimeError,
                                    r'/fail: .* command: false',
                                    fail)
 
@@ -966,7 +966,7 @@ class TestFiles(TestWithFiles):
         write_file('config.yaml', '- { when: {}, then: { foo: 1 } }')
         load_config('config.yaml')
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'Unused .* parameter: foo .* step: /not_use_param',
                                not_use_param)
 
@@ -1100,6 +1100,6 @@ class TestFiles(TestWithFiles):
                 foo: True
         """)
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'Unused top-level .* parameter: foo',
                                main, argparse.ArgumentParser(), do_nothing)

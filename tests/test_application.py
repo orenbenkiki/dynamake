@@ -32,7 +32,7 @@ class TestFunction(TestWithReset):
             def repeated() -> None:  # pylint: disable=unused-variable
                 pass
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                'Conflicting .* function: repeated .* '
                                'both: .*.test_conflicting.<locals>.repeated '
                                'and: .*.conflict.<locals>.repeated',
@@ -47,7 +47,7 @@ class TestFunction(TestWithReset):
             def function() -> None:  # pylint: disable=unused-variable
                 pass
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                'function: .*.post_finalize.<locals>.function '
                                'after ConfigurableFunction.finalize',
                                post_finalize)
@@ -133,20 +133,20 @@ class TestParameters(TestWithReset):
         def use_foo(*, foo: int) -> int:  # pylint: disable=unused-variable
             return foo
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                'Missing .* parameter: foo .* '
                                'function: .*.test_missing_parameter.<locals>.use_foo',
                                AppParams)
 
     def test_used_parameter(self) -> None:
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                'Unused parameter: foo',
                                AppParams, foo=(1, int, 'The number of foos'))
 
     def test_unknown_parameter(self) -> None:
         parameters = AppParams()
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                'Unknown parameter: bar .* function: .*.test_missing_parameter',
                                parameters.get, 'bar', TestParameters.test_missing_parameter)
 
@@ -203,27 +203,27 @@ class TestSimpleMain(TestWithFiles):
     def test_top_non_mapping(self) -> None:
         write_file('config.yaml', '[]')
         sys.argv = ['test', '--config', 'config.yaml']
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                'file: config.yaml .* top-level mapping',
                                define_main_function())
 
     def test_invalid_parameter_value(self) -> None:
         sys.argv = ['test', '--bar', 'x']
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                'value: x .* parameter: bar',
                                define_main_function())
 
     def test_invalid_config_value(self) -> None:
         write_file('config.yaml', '{bar: x}')
         sys.argv = ['test', '--config', 'config.yaml']
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                'value: x .* parameter: bar',
                                define_main_function())
 
     def test_conflicting_parameter(self) -> None:
         write_file('config.yaml', '{bar: 1, "bar?": 1}')
         sys.argv = ['test', '--config', 'config.yaml']
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                '.* both: bar and: bar\\? .* file: config.yaml',
                                define_main_function())
 
@@ -240,7 +240,7 @@ class TestSimpleMain(TestWithFiles):
     def test_forbidden_unknown_parameter(self) -> None:
         write_file('config.yaml', '{baz: x}')
         sys.argv = ['test', '--config', 'config.yaml']
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                'parameter: baz .* file: config.yaml',
                                define_main_function())
 
@@ -284,7 +284,7 @@ class TestCommandsMain(TestWithFiles):
 
     def test_unknown_command(self) -> None:
         sys.argv = ['test', 'bar']
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                'Unknown .* function: bar',
                                define_main_commands(['bar']))
 
@@ -294,7 +294,7 @@ class TestCommandsMain(TestWithFiles):
             return foo + baz
 
         sys.argv = ['test', 'bar']
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                'function: .*.test_positional_command.<locals>.bar .* '
                                'positional arguments',
                                define_main_commands(['bar']))
