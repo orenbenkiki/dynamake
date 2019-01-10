@@ -85,28 +85,28 @@ class TestPatterns(TestWithReset):
                        match=['foo1baz'], not_match=['foo12baz', 'fooQbaz'])
 
     def test_nonterminated_capture(self) -> None:
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                re.escape('pattern:\n'
                                          'foo{*bar\n'
                                          '        ^ missing }'),
                                capture2re, 'foo{*bar')
 
     def test_invalid_capture_name(self) -> None:
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                re.escape('pattern:\n'
                                          'foo{*bar+}baz\n'
                                          '        ^ invalid captured name character'),
                                capture2re, 'foo{*bar+}baz')
 
     def test_empty_capture_name(self) -> None:
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                re.escape('pattern:\n'
                                          'foo{*}bar\n'
                                          '     ^ empty captured name'),
                                capture2re, 'foo{*}bar')
 
     def test_empty_capture_regexp(self) -> None:
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                re.escape('pattern:\n'
                                          'foo{*bar:}baz\n'
                                          '         ^ empty captured regexp'),
@@ -128,7 +128,7 @@ class TestPatterns(TestWithReset):
         self.assertEqual(capture2glob('{{}}'), '{}')
         self.assertEqual(capture2glob('{foo}{*bar:[0-9]}baz'), '{foo}[0-9]baz')
         self.assertEqual(capture2glob('foo/{**bar}/baz'), 'foo/**/baz')
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                re.escape('pattern:\n'
                                          'foo{*bar\n'
                                          '        ^ missing }'),
@@ -138,7 +138,7 @@ class TestPatterns(TestWithReset):
         self.assertEqual(extract_strings({'foo': 'x'}, '{foo}/{*bar}.txt', 'x/@a.txt'),
                          [{'bar': '@a'}])
 
-        self.assertRaisesRegex(RuntimeError,  # type: ignore
+        self.assertRaisesRegex(RuntimeError,
                                r'string: x/y.png .* pattern: {foo}/{\*bar}.txt',
                                extract_strings, {'foo': 'x'}, '{foo}/{*bar}.txt', 'x/y.png')
 
