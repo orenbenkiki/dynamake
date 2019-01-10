@@ -9,7 +9,8 @@ import tempfile
 from textwrap import dedent
 from unittest import TestCase
 
-from dynamake.application import ApplicationParameters
+from dynamake.application import AppParams
+from dynamake.application import ConfigurableFunction
 from dynamake.config import Config
 from dynamake.make import Make
 from dynamake.make import Step
@@ -32,8 +33,9 @@ def write_file(path: str, content: str = '') -> None:
 class TestWithReset(TestCase):
 
     def setUp(self) -> None:
-        ApplicationParameters.reset()
+        AppParams.reset()
         Config.reset()
+        ConfigurableFunction.reset()
         Make.reset()
         Step.reset()
         Make.logger.setLevel('DEBUG')
