@@ -1188,11 +1188,14 @@ def _help_by_arguments(args: argparse.Namespace) -> bool:
             raise RuntimeError('Unknown step: %s' % step_name)
         wrapped = Make.step_by_name[step_name]
         function = getattr(wrapped, '_dynamake_wrapped_function')
-        if function.__doc__:
-            print(dedent(function.__doc__))
         run_help = getattr(wrapped, '_dynamake_run_help')
         if run_help is not None:
             subprocess.run(run_help)
+        elif function.__doc__:
+            print(dedent(function.__doc__))
+        else:
+            print('No help available for the step: %s.%s'
+                  % (function.__module__, function.__qualname__))
         return True
 
     return False
