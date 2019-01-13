@@ -11,6 +11,7 @@ from typing import Optional
 
 from dynamake.application import AppParams
 from dynamake.application import ConfigurableFunction
+from dynamake.application import Param
 from dynamake.application import config
 from tests import TestWithFiles
 from tests import TestWithReset
@@ -141,7 +142,7 @@ class TestParameters(TestWithReset):
     def test_used_parameter(self) -> None:
         self.assertRaisesRegex(RuntimeError,
                                'Unused parameter: foo',
-                               AppParams, foo=(1, int, 'The number of foos'))
+                               AppParams, foo=Param(1, int, 'The number of foos'))
 
     def test_unknown_parameter(self) -> None:
         parameters = AppParams()
@@ -164,7 +165,7 @@ def define_main_function() -> Callable:
 
     def main_function() -> int:
         parser = argparse.ArgumentParser(description='Test')
-        AppParams.current = AppParams(bar=(1, int, 'The number of bars'))
+        AppParams.current = AppParams(bar=Param(1, int, 'The number of bars'))
         AppParams.current.add_to_parser(parser)
         args = parser.parse_args()
         AppParams.current.parse_args(args)
@@ -261,9 +262,9 @@ def define_main_commands(extra: Optional[List[str]] = None) -> Callable:
 
     def main_function() -> int:
         parser = argparse.ArgumentParser(description='Test')
-        AppParams.current = AppParams(foo=(1, int, 'The number of foos'),
-                                      bar=(1, int, 'The number of bars'),
-                                      baz=(1, int, 'The number of bazes'))
+        AppParams.current = AppParams(foo=Param(1, int, 'The number of foos'),
+                                      bar=Param(1, int, 'The number of bars'),
+                                      baz=Param(1, int, 'The number of bazes'))
         AppParams.current.add_to_parser(parser, ['add', 'add_foo'] + (extra or []))
         args = parser.parse_args()
         AppParams.current.parse_args(args)

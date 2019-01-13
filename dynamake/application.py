@@ -6,6 +6,7 @@ import re
 import sys
 from argparse import ArgumentParser
 from argparse import Namespace
+from argparse import RawDescriptionHelpFormatter
 from ast import Load
 from ast import Name
 from ast import NodeVisitor
@@ -228,6 +229,29 @@ def config(wrapped: Wrapped) -> Wrapped:
     return ConfigurableFunction.collect(wrapped).wrapper  # type: ignore
 
 
+class Param:
+    """
+    Describe a configurable parameter used by one or more computation function.
+    """
+
+    def __init__(self, default: Any, parser: Callable[[str], Any], description: str,
+                 *, metavar: Optional[str] = None) -> None:
+        """
+        Create a parameter description.
+        """
+        #: The value to use if the parameter is not explicitly configured.
+        self.default = default
+
+        #: How to parse the parameter value from a string (command line argument).
+        self.parser = parser
+
+        #: A description of the parameter for help messages.
+        self.description = description
+
+        #: Optional name of the command line parameter value (``metavar`` in ``argparse``).
+        self.metavar = metavar
+
+
 class AppParams:
     """
     Hold all the configurable parameters for a (hopefully small) program execution.
@@ -244,7 +268,7 @@ class AppParams:
         """
         AppParams.current = None
 
-    def __init__(self, **parameters: Tuple[Any, Callable[[str], Any], str]) -> None:
+    def __init__(self, **parameters: Param) -> None:
         """
         Create a collection of parameters.
 
@@ -253,10 +277,11 @@ class AppParams:
         """
 
         #: The known parameters.
-        self.parameters = parameters
+        self.parameters: Dict[str, Param] = dict(parameters)
 
         #: The value for each parameter.
-        self.values: Dict[str, Any] = {name: parameter[0] for name, parameter in parameters.items()}
+        self.values: Dict[str, Any] = \
+            {name: parameter.default for name, parameter in parameters.items()}
 
         for parameter_name, function_name in ConfigurableFunction.name_by_parameter.items():
             if parameter_name not in self.parameters:
@@ -308,14 +333,16 @@ class AppParams:
             recognized parameters. Otherwise, if the name is not recognized, it is silently
             ignored.
         """))
-        for name, (default, _, description) in self.parameters.items():
-            configurable.add_argument('--' + name, help=description + ' (default: %s)' % default)
+        for name, parameter in self.parameters.items():
+            text = parameter.description + ' (default: %s)' % parameter.default
+            configurable.add_argument('--' + name, help=text)
 
     def _add_sub_commands_parameters(self, parser: ArgumentParser, functions: List[str]) -> None:
         ConfigurableFunction.finalize()
-        subparsers = parser.add_subparsers(dest='command', help=dedent("""
-            The specific function to compute. Run `%s foo -h` to list the specific
-            parameters for the function `foo`.
+        subparsers = parser.add_subparsers(dest='command', metavar='COMMAND', title='commands',
+                                           help='The specific function to compute, one of:',
+                                           description=dedent("""
+            Run `%s foo -h` to list the specific parameters for the function `foo`.
         """ % sys.argv[0].split('/')[-1]))
         for command_name in functions:
             if command_name not in ConfigurableFunction.by_name:
@@ -329,11 +356,13 @@ class AppParams:
             description = function.__doc__
             sentence = first_sentence(description)
             command_parser = \
-                subparsers.add_parser(configurable.name, help=sentence, description=description)
-            for name, (default, _, description) in self.parameters.items():
+                subparsers.add_parser(configurable.name, help=sentence, description=description,
+                                      formatter_class=RawDescriptionHelpFormatter)
+            for name, parameter in self.parameters.items():
                 if name in configurable.indirect_parameter_names:
-                    command_parser.add_argument('--' + name,
-                                                help=description + ' (default: %s)' % default)
+                    text = parameter.description + ' (default: %s)' % parameter.default
+                    command_parser.add_argument('--' + name, help=text,  # type: ignore
+                                                metavar=parameter.metavar)
 
     def parse_args(self, args: Namespace) -> None:
         """
@@ -342,11 +371,11 @@ class AppParams:
         for path in (args.config or []):
             self.load(path)
 
-        for name, (_, parser, _) in self.parameters.items():
+        for name, parameter in self.parameters.items():
             value = vars(args).get(name)
             if value is not None:
                 try:
-                    self.values[name] = parser(value)
+                    self.values[name] = parameter.parser(value)
                 except BaseException:
                     raise RuntimeError('Invalid value: %s for the parameter: %s'
                                        % (vars(args)[name], name))
@@ -392,7 +421,7 @@ class AppParams:
 
             if isinstance(value, str):
                 try:
-                    value = self.parameters[name][1](value)
+                    value = self.parameters[name].parser(value)
                 except BaseException:
                     raise RuntimeError('Invalid value: %s for the parameter: %s'
                                        % (value, name))
