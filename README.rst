@@ -430,18 +430,24 @@ what can be configured where. DynaMake provides a way to make these steps self-d
 
 .. code-block:: python
 
-    @dm.action(run_help=['foo', '--help'])
-    def run_foo(...) -> dm.Action:
+    @dm.action()
+    def run_bar(...) -> dm.Action:
         """
         Describe this step.
 
         The first sentence will be printed in the list of steps. The rest of this documentation
         will be printed on request for help for a specified step. This is a good place to document
         the parameters for steps that use ``config_param``.
+        """
+        ...
 
-        In addition, if ``run_help`` was specified, it can be executed on request for a specified
-        step. This should print the list of parameters (especially if the triggered application uses
-        the DynaMake application utilities).
+    @dm.action(run_help=['foo', '--help'])
+    def run_foo(...) -> dm.Action:
+        """
+        Describe this step.
+
+        The first sentence will be printed in the list of steps. Since ``run_help`` was specified,
+        it will be executed on request for the help of this step, instead of printing this comment.
         """
         ...
         return { ..., run: ['foo', ...] }
