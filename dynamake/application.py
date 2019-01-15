@@ -2,6 +2,7 @@
 Utilities for configurable applications.
 """
 
+import logging
 import re
 import sys
 from argparse import ArgumentParser
@@ -32,13 +33,13 @@ from .patterns import first_sentence
 Wrapped = TypeVar('Wrapped', bound=Callable)
 
 
-class ConfigurableFunction:
+class Func:
     """
     Data collected for a configurable function.
     """
 
     #: The current known functions.
-    by_name: Dict[str, 'ConfigurableFunction']
+    by_name: Dict[str, 'Func']
 
     #: The name of one function that uses each configurable parameter.
     name_by_parameter: Dict[str, str]
@@ -50,9 +51,9 @@ class ConfigurableFunction:
         """
         Reset all the current state, for tests.
         """
-        ConfigurableFunction.by_name = {}
-        ConfigurableFunction.name_by_parameter = {}
-        ConfigurableFunction._is_finalized = False
+        Func.by_name = {}
+        Func.name_by_parameter = {}
+        Func._is_finalized = False
 
     def __init__(self, wrapped: Wrapped) -> None:
         """
@@ -61,8 +62,8 @@ class ConfigurableFunction:
 
         function = _real_function(wrapped)
 
-        if ConfigurableFunction._is_finalized:
-            raise RuntimeError('Registering the function: %s.%s after ConfigurableFunction.finalize'
+        if Func._is_finalized:
+            raise RuntimeError('Registering the function: %s.%s after Func.finalize'
                                % (function.__module__, function.__qualname__))
 
         #: The real function that will do the work.
@@ -78,7 +79,7 @@ class ConfigurableFunction:
 
         has_positional_arguments, parameter_names = _parameter_names(function)
         for parameter_name in parameter_names:
-            ConfigurableFunction.name_by_parameter[parameter_name] = self.name
+            Func.name_by_parameter[parameter_name] = self.name
 
         #: Whether the function has non-configurable arguments.
         self.has_positional_arguments = has_positional_arguments
@@ -92,25 +93,26 @@ class ConfigurableFunction:
         self.indirect_parameter_names = parameter_names.copy()
 
         def _wrapper_function(*args: Any, **kwargs: Any) -> Any:
-            assert AppParams.current is not None
+            assert Prog.current is not None
             for name in parameter_names:
                 if name not in kwargs:
-                    kwargs[name] = AppParams.current.get(name, function)
+                    kwargs[name] = Prog.current.get(name, function)
+            Prog.logger.log(Prog.TRACE, 'call: %s.%s', function.__module__, function.__qualname__)
             return function(*args, **kwargs)
 
         #: The wrapper we place around the real function.
         self.wrapper = _wrapper_function
 
     @staticmethod
-    def collect(wrapped: Wrapped) -> 'ConfigurableFunction':
+    def collect(wrapped: Wrapped) -> 'Func':
         """
         Collect a configurable function.
         """
-        configurable = ConfigurableFunction(wrapped)
+        configurable = Func(wrapped)
 
-        if configurable.name in ConfigurableFunction.by_name:
+        if configurable.name in Func.by_name:
             function = configurable.function
-            conflicting = ConfigurableFunction.by_name[configurable.name].function
+            conflicting = Func.by_name[configurable.name].function
             raise RuntimeError('Conflicting definitions for the function: %s '
                                'in both: %s.%s '
                                'and: %s.%s'
@@ -118,7 +120,7 @@ class ConfigurableFunction:
                                   conflicting.__module__, conflicting.__qualname__,
                                   function.__module__, function.__qualname__))
 
-        ConfigurableFunction.by_name[configurable.name] = configurable
+        Func.by_name[configurable.name] = configurable
         return configurable
 
     @staticmethod
@@ -131,40 +133,37 @@ class ConfigurableFunction:
         that are assigned to (that is, are probably just local variable names). This isn't 100% safe
         but seems to work well for simple code.
         """
-        if ConfigurableFunction._is_finalized:
+        if Func._is_finalized:
             return
-        ConfigurableFunction._is_finalized = True
-        ConfigurableFunction._finalize_invoked_functions()
-        ConfigurableFunction._finalize_indirect_parameter_names()
+        Func._is_finalized = True
+        Func._finalize_invoked_functions()
+        Func._finalize_indirect_parameter_names()
 
     @staticmethod
     def _finalize_invoked_functions() -> None:
-        for configurable in ConfigurableFunction.by_name.values():
+        for configurable in Func.by_name.values():
             invoked_function_names: Set[str] = set()
             for name in configurable.invoked_function_names:
-                if name in ConfigurableFunction.by_name:
+                if name in Func.by_name:
                     invoked_function_names.add(name)
             configurable.invoked_function_names = invoked_function_names
 
     @staticmethod
     def _finalize_indirect_parameter_names() -> None:
         # TODO: This can be made much more efficient.
-        current_modified_function_names = set(ConfigurableFunction.by_name.keys())
+        current_modified_function_names = set(Func.by_name.keys())
         while current_modified_function_names:
             next_modified_function_names: Set[str] = set()
-            for configurable in ConfigurableFunction.by_name.values():
+            for configurable in Func.by_name.values():
                 for invoked_name \
                         in current_modified_function_names & configurable.invoked_function_names:
                     new_parameter_names = \
-                        ConfigurableFunction.by_name[invoked_name].indirect_parameter_names \
+                        Func.by_name[invoked_name].indirect_parameter_names \
                         - configurable.indirect_parameter_names
                     if new_parameter_names:
                         configurable.indirect_parameter_names.update(new_parameter_names)
                         next_modified_function_names.add(configurable.name)
             current_modified_function_names = next_modified_function_names
-
-
-ConfigurableFunction.reset()
 
 
 def _real_function(wrapped: Wrapped) -> Callable:
@@ -226,7 +225,7 @@ def config(wrapped: Wrapped) -> Wrapped:
     """
     Decorator for configurable functions.
     """
-    return ConfigurableFunction.collect(wrapped).wrapper  # type: ignore
+    return Func.collect(wrapped).wrapper  # type: ignore
 
 
 class Param:
@@ -234,11 +233,14 @@ class Param:
     Describe a configurable parameter used by one or more computation function.
     """
 
-    def __init__(self, default: Any, parser: Callable[[str], Any], description: str,
-                 *, metavar: Optional[str] = None) -> None:
+    def __init__(self, *, name: str, default: Any, parser: Callable[[str], Any], description: str,
+                 metavar: Optional[str] = None) -> None:
         """
-        Create a parameter description.
+        Create and register a parameter description.
         """
+        #: The unique name of the parameter.
+        self.name = name
+
         #: The value to use if the parameter is not explicitly configured.
         self.default = default
 
@@ -251,47 +253,68 @@ class Param:
         #: Optional name of the command line parameter value (``metavar`` in ``argparse``).
         self.metavar = metavar
 
+        Prog.add_parameter(self)
 
-class AppParams:
+
+class Prog:
     """
     Hold all the configurable parameters for a (hopefully small) program execution.
     """
 
     #: The global arguments currently in effect.
-    #: This is typically set in the ``main`` function.
-    current: Optional['AppParams']
+    current: 'Prog'
+
+    #: A configured logger for the progam.
+    logger: logging.Logger
+
+    #: The log level for tracing calls.
+    TRACE = (logging.DEBUG + logging.INFO) // 2
 
     @staticmethod
     def reset() -> None:
         """
         Reset all the current state, for tests.
         """
-        AppParams.current = None
+        Prog.current = Prog()
+        Prog.logger = logging.getLogger('prog')
 
-    def __init__(self, **parameters: Param) -> None:
+    def __init__(self) -> None:
         """
-        Create a collection of parameters.
-
-        Each parameter is a tuple containing its default value, a function for parsing its value
-        from a string, and a description for the help message.
+        Create an empty collection of parameters.
         """
 
         #: The known parameters.
-        self.parameters: Dict[str, Param] = dict(parameters)
+        self.parameters: Dict[str, Param] = {}
 
         #: The value for each parameter.
-        self.values: Dict[str, Any] = \
-            {name: parameter.default for name, parameter in parameters.items()}
+        self.values: Dict[str, Any] = {}
 
-        for parameter_name, function_name in ConfigurableFunction.name_by_parameter.items():
+    def verify(self) -> None:
+        """
+        Verify the collection of parameters.
+        """
+        for parameter_name, function_name in Func.name_by_parameter.items():
             if parameter_name not in self.parameters:
-                function = ConfigurableFunction.by_name[function_name].function
+                function = Func.by_name[function_name].function
                 raise RuntimeError('Missing the parameter: %s of the configurable function: %s.%s'
                                    % (parameter_name, function.__module__, function.__qualname__))
 
         for parameter_name in self.parameters:
-            if parameter_name not in ConfigurableFunction.name_by_parameter:
+            if parameter_name not in Func.name_by_parameter:
                 raise RuntimeError('Unused parameter: %s' % parameter_name)
+
+    @staticmethod
+    def add_parameter(parameter: Param) -> None:
+        """
+        Add a parameter to the program.
+
+        This is invoked automatically when a :py:class:`dynamake.application.Param` object is
+        created.
+        """
+        if parameter.name in Prog.current.parameters:
+            raise RuntimeError('Multiple definitions for the parameter: %s' % parameter.name)
+        Prog.current.parameters[parameter.name] = parameter
+        Prog.current.values[parameter.name] = parameter.default
 
     def get(self, name: str, function: Callable) -> Any:
         """
@@ -302,7 +325,8 @@ class AppParams:
                                % (name, function.__module__, function.__qualname__))
         return self.values[name]
 
-    def add_to_parser(self, parser: ArgumentParser,
+    @staticmethod
+    def add_to_parser(parser: ArgumentParser,
                       functions: Optional[List[str]] = None) -> None:
         """
         Add a command line flag for each parameter to the parser to allow overriding parameter
@@ -312,8 +336,15 @@ class AppParams:
         the name of the function to invoke, and will only accept command line parameters that
         are used by that function.
         """
-        parser.add_argument('--config', metavar='FILE', action='append',
+        Prog.current.verify()
+        Prog.current._add_to_parser(parser, functions)  # pylint: disable=protected-access
+
+    def _add_to_parser(self, parser: ArgumentParser,
+                       functions: Optional[List[str]] = None) -> None:
+        parser.add_argument('-c', '--config', metavar='FILE', action='append',
                             help='Load a parameters configuration YAML file.')
+        parser.add_argument('-ll', '--log_level', metavar='LEVEL', default='INFO',
+                            help='The log level to use (default: INFO)')
 
         if functions:
             self._add_sub_commands_parameters(parser, functions)
@@ -334,20 +365,24 @@ class AppParams:
             ignored.
         """))
         for name, parameter in self.parameters.items():
-            text = parameter.description + ' (default: %s)' % parameter.default
+            if parameter.default is None:
+                text = parameter.description + ' (default: None)'
+            else:
+                text = parameter.description + ' (default: %s)' % parameter.default
             configurable.add_argument('--' + name, help=text)
 
     def _add_sub_commands_parameters(self, parser: ArgumentParser, functions: List[str]) -> None:
-        ConfigurableFunction.finalize()
+        Func.finalize()
         subparsers = parser.add_subparsers(dest='command', metavar='COMMAND', title='commands',
                                            help='The specific function to compute, one of:',
                                            description=dedent("""
             Run `%s foo -h` to list the specific parameters for the function `foo`.
         """ % sys.argv[0].split('/')[-1]))
+        subparsers.required = True
         for command_name in functions:
-            if command_name not in ConfigurableFunction.by_name:
+            if command_name not in Func.by_name:
                 raise RuntimeError('Unknown command function: %s' % command_name)
-            configurable = ConfigurableFunction.by_name[command_name]
+            configurable = Func.by_name[command_name]
             function = configurable.function
             if configurable.has_positional_arguments:
                 raise RuntimeError("Can't directly invoke the function: %s.%s "
@@ -355,19 +390,23 @@ class AppParams:
                                    % (function.__module__, function.__qualname__))
             description = function.__doc__
             sentence = first_sentence(description)
-            command_parser = \
-                subparsers.add_parser(configurable.name, help=sentence, description=description,
-                                      formatter_class=RawDescriptionHelpFormatter)
+            command_parser = subparsers.add_parser(configurable.name, help=sentence,
+                                                   description=description,
+                                                   formatter_class=RawDescriptionHelpFormatter)
             for name, parameter in self.parameters.items():
                 if name in configurable.indirect_parameter_names:
                     text = parameter.description + ' (default: %s)' % parameter.default
                     command_parser.add_argument('--' + name, help=text,  # type: ignore
                                                 metavar=parameter.metavar)
 
-    def parse_args(self, args: Namespace) -> None:
+    @staticmethod
+    def parse_args(args: Namespace) -> None:
         """
         Update the values based on loaded configuration files and/or explicit command line flags.
         """
+        Prog.current._parse_args(args)  # pylint: disable=protected-access
+
+    def _parse_args(self, args: Namespace) -> None:
         for path in (args.config or []):
             self.load(path)
 
@@ -380,13 +419,24 @@ class AppParams:
                     raise RuntimeError('Invalid value: %s for the parameter: %s'
                                        % (vars(args)[name], name))
 
+        name = sys.argv[0].split('/')[-1]
+        if 'command' in vars(args):
+            name += ' ' + args.command
+        handler = logging.StreamHandler(sys.stderr)
+        formatter = \
+            logging.Formatter('%(asctime)s - ' + name
+                              + ' - %(threadName)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        Prog.logger.addHandler(handler)
+        Prog.logger.setLevel(vars(args).get('log_level', 'INFO'))
+
     @staticmethod
     def call_with_args(args: Namespace) -> Any:
         """
         If a command function was specified on the command line, invoke it with the current
         parameters.
         """
-        return ConfigurableFunction.by_name[args.command].wrapper()
+        return Func.by_name[args.command].wrapper()
 
     def load(self, path: str) -> None:
         """
@@ -429,4 +479,13 @@ class AppParams:
             self.values[name] = value
 
 
-AppParams.reset()
+def reset_application() -> None:
+    """
+    Reset all the current state, for tests.
+    """
+    Func.reset()
+    Prog.reset()
+
+
+logging.addLevelName(Prog.TRACE, 'TRACE')
+reset_application()

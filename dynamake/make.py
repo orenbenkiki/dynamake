@@ -10,6 +10,7 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import threading
 from abc import abstractmethod
 from concurrent.futures import Future
@@ -40,6 +41,8 @@ from .config import Config
 from .config import Rule
 from .patterns import Captured
 from .patterns import Strings
+from .patterns import str2bool
+from .patterns import str2enum
 
 #: The type of a wrapped function.
 Wrapped = TypeVar('Wrapped', bound=Callable)
@@ -340,9 +343,6 @@ class Planner(Step):
 
     def _call(self) -> Any:
         return self.function(*self.args, **self.kwargs)
-
-
-Make.reset()
 
 
 class Agent(Step):
@@ -668,10 +668,12 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
             self._delete_outputs('stale', self.output_paths_before)
 
         for command in self.run:
-            Make.logger.info('%s: run: %s', self.stack, ' '.join(command))
             if self.runner == ['shell']:
+                Make.logger.info('%s: run: %s', self.stack, ' '.join(command))
                 completed = subprocess.run(' '.join(command), shell=True)
             else:
+                command = self.runner + command
+                Make.logger.info('%s: run: %s', self.stack, ' '.join(command))
                 completed = subprocess.run(self.runner + command)
             if completed.returncode != 0 and not self.ignore_exit_status:
                 Make.logger.debug('%s: failed with exit status: %s',
@@ -1098,12 +1100,12 @@ def main(parser: argparse.ArgumentParser, default_step: Callable) -> None:
     _add_arguments(parser, default_step)
     args = parser.parse_args()
     if not _help_by_arguments(args):
-        _configure_by_arguments(args)
-        _call_steps(default_step, args)
+        config_values, used_values = _configure_by_arguments(args)
+        _call_steps(default_step, args, config_values, used_values)
 
 
 def _add_arguments(parser: argparse.ArgumentParser, default_step: Callable) -> None:
-    parser.add_argument('-ls', '--list-steps', help='List all known steps')
+    parser.add_argument('-ls', '--list-steps', action='store_true', help='List all known steps')
 
     parser.add_argument('-hs', '--help-step', metavar='STEP',
                         help='Describe a specific step and exit')
@@ -1114,29 +1116,29 @@ def _add_arguments(parser: argparse.ArgumentParser, default_step: Callable) -> N
     parser.add_argument('-ll', '--log_level', metavar='LEVEL', default='INFO',
                         help='The log level to use (default: INFO)')
 
-    parser.add_argument('-mi', '--missing_inputs', metavar='POLICY', type=_mi2enum,
+    parser.add_argument('-mi', '--missing_inputs', metavar='POLICY', type=str2enum(MissingInputs),
                         help='default: forbidden; other options: assume_up_to_date, optional')
 
-    parser.add_argument('-mo', '--missing_outputs', metavar='POLICY', type=_mo2enum,
+    parser.add_argument('-mo', '--missing_outputs', metavar='POLICY', type=str2enum(MissingOutputs),
                         help='default: forbidden; other options: partial, optional')
 
     parser.add_argument('-dso', '--delete_stale_outputs', metavar='BOOL',
-                        type=_str2bool, nargs='?', const=True,
+                        type=str2bool, nargs='?', const=True,
                         help='Whether to delete outputs before executing actions '
                              '(default: %s)' % Make.delete_stale_outputs)
 
     parser.add_argument('-tso', '--touch_success_outputs', metavar='BOOL', nargs='?',
-                        type=_str2bool, const=True,
+                        type=str2bool, const=True,
                         help='Whether to touch output files after successful actions '
                              '(default: %s)' % Make.touch_success_outputs)
 
     parser.add_argument('-dfo', '--delete_failed_outputs', metavar='BOOL', nargs='?',
-                        type=_str2bool, const=True,
+                        type=str2bool, const=True,
                         help='Whether to delete outputs after failed actions '
                              '(default: %s)' % Make.delete_failed_outputs)
 
     parser.add_argument('-ded', '--delete_empty_directories', metavar='BOOL',
-                        type=_str2bool, nargs='?', const=True,
+                        type=str2bool, nargs='?', const=True,
                         help='Whether to delete empty directories containing deleted outputs '
                              '(default: %s)' % Make.delete_empty_directories)
 
@@ -1148,38 +1150,14 @@ def _add_arguments(parser: argparse.ArgumentParser, default_step: Callable) -> N
                         % getattr(default_step, '_dynamake_wrapped_function').__name__)
 
 
-def _str2bool(string: str) -> bool:
-    if string.lower() in ['yes', 'true', 't', 'y', '1']:
-        return True
-    if string.lower() in ['no', 'false', 'f', 'n', '0']:
-        return False
-    raise argparse.ArgumentTypeError('Boolean value expected.')
-
-
-def _str2enum(enum: type, string: str) -> Any:
-    try:
-        return enum[string.lower()]  # type: ignore
-    except BaseException:
-        raise argparse.ArgumentTypeError('Expected one of: %s'
-                                         % ' '.join([value.name for value in enum]))  # type: ignore
-
-
-def _mi2enum(string: str) -> MissingInputs:
-    return _str2enum(MissingInputs, string)
-
-
-def _mo2enum(string: str) -> MissingOutputs:
-    return _str2enum(MissingOutputs, string)
-
-
 def _help_by_arguments(args: argparse.Namespace) -> bool:
     if args.list_steps:
         for step_name, wrapped in sorted(Make.step_by_name.items()):
             function = getattr(wrapped, '_dynamake_wrapped_function')
             if function.__doc__:
-                print('- %s: %s' % (step_name, dp.first_sentence(function.__doc__)))
+                print('%s:\n    %s' % (step_name, dp.first_sentence(function.__doc__)))
             else:
-                print('- %s' % step_name)
+                print('%s' % step_name)
         return True
 
     if args.help_step:
@@ -1201,7 +1179,7 @@ def _help_by_arguments(args: argparse.Namespace) -> bool:
     return False
 
 
-def _configure_by_arguments(args: argparse.Namespace) -> None:
+def _configure_by_arguments(args: argparse.Namespace) -> Tuple[Dict[str, Any], Set[str]]:
     if args.config is None and os.path.exists('Config.yaml'):
         args.config = 'Config.yaml'
     if args.config is not None:
@@ -1221,29 +1199,38 @@ def _configure_by_arguments(args: argparse.Namespace) -> None:
             value = parser(value)
         return value
 
+    name = sys.argv[0].split('/')[-1]
+    if name != '__test':
+        if 'command' in vars(args):
+            name += ' ' + args.command
+        handler = logging.StreamHandler(sys.stderr)
+        formatter = \
+            logging.Formatter('%(asctime)s - ' + name
+                              + ' - %(threadName)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        Make.logger.addHandler(handler)
     Make.logger.setLevel(_get('log_level', str, 'INFO'))
 
-    Make.missing_inputs = _get('missing_inputs', _mi2enum, Make.missing_inputs)
-    Make.missing_outputs = _get('missing_outputs', _mo2enum, Make.missing_outputs)
+    Make.missing_inputs = _get('missing_inputs', str2enum(MissingInputs), Make.missing_inputs)
+    Make.missing_outputs = _get('missing_outputs', str2enum(MissingOutputs), Make.missing_outputs)
 
     Make.delete_stale_outputs = \
-        _get('delete_stale_outputs', _str2bool, Make.delete_stale_outputs)
+        _get('delete_stale_outputs', str2bool, Make.delete_stale_outputs)
 
     Make.touch_success_outputs = \
-        _get('touch_success_outputs', _str2bool, Make.touch_success_outputs)
+        _get('touch_success_outputs', str2bool, Make.touch_success_outputs)
 
     Make.delete_failed_outputs = \
-        _get('delete_failed_outputs', _str2bool, Make.delete_failed_outputs)
+        _get('delete_failed_outputs', str2bool, Make.delete_failed_outputs)
 
     Make.delete_empty_directories = \
-        _get('delete_empty_directories', _str2bool, Make.delete_empty_directories)
+        _get('delete_empty_directories', str2bool, Make.delete_empty_directories)
 
-    for parameter_name in config_values:
-        if parameter_name not in used_values and not parameter_name.endswith('?'):
-            raise RuntimeError('Unused top-level configuration parameter: %s ' % parameter_name)
+    return config_values, used_values
 
 
-def _call_steps(default_step: Callable, args: argparse.Namespace) -> None:
+def _call_steps(default_step: Callable, args: argparse.Namespace,  # pylint: disable=too-many-branches
+                config_values: Dict[str, Any], used_values: Set[str]) -> None:
     step_parameters: Dict[str, Any] = {}
     used_parameters: Set[str] = set()
 
@@ -1262,22 +1249,52 @@ def _call_steps(default_step: Callable, args: argparse.Namespace) -> None:
         function = getattr(step_function, '_dynamake_wrapped_function')
         kwargs: Dict[str, Any] = {}
         for parameter in inspect.signature(function).parameters.values():
-            if parameter.name not in step_parameters:
+            used_values.add(parameter.name)
+            if parameter.name in step_parameters:
+                kwargs[parameter.name] = step_parameters[parameter.name]
+            elif parameter.name in config_values:
+                kwargs[parameter.name] = config_values[parameter.name]
+            else:
                 raise RuntimeError('Missing top-level parameter: %s for the step: /%s'
                                    % (parameter.name, function.__name__))
-            kwargs[parameter.name] = step_parameters[parameter.name]
             used_parameters.add(parameter.name)
         step_function(**kwargs)
 
-    if not args.step:
-        _call_step(default_step)
-    else:
+    if not args.step and 'steps' in config_values:
+        used_values.add('steps')
+        args.step = config_values['steps']
+
+    Make.logger.info('start')
+
+    if args.step:
         for step_name in args.step:
             if step_name not in Make.step_by_name:
-                raise RuntimeError('Unknown step: %s' % step_name)
-        for step_name in args.step:
-            _call_step(Make.step_by_name[step_name])
+                raise RuntimeError('unknown step: %s' % step_name)
+        steps = [Make.step_by_name[step_name] for step_name in args.step]
+    else:
+        steps = [default_step]
+
+    for step in steps:
+        _call_step(step)
+
+    Make.logger.info('done')
 
     for parameter_name in step_parameters:
         if parameter_name not in used_parameters:
             raise RuntimeError('Unused top-level step parameter: %s' % parameter_name)
+
+    for parameter_name in config_values:
+        if parameter_name not in used_values and not parameter_name.endswith('?'):
+            raise RuntimeError('Unused top-level configuration parameter: %s ' % parameter_name)
+
+
+def reset_make() -> None:
+    """
+    Reset all the current state, for tests.
+    """
+    Config.reset()
+    Make.reset()
+    Step.reset()
+
+
+reset_make()

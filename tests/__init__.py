@@ -9,11 +9,10 @@ import tempfile
 from textwrap import dedent
 from unittest import TestCase
 
-from dynamake.application import AppParams
-from dynamake.application import ConfigurableFunction
-from dynamake.config import Config
+from dynamake.application import Prog
+from dynamake.application import reset_application
 from dynamake.make import Make
-from dynamake.make import Step
+from dynamake.make import reset_make
 
 # pylint: disable=missing-docstring
 
@@ -33,12 +32,10 @@ def write_file(path: str, content: str = '') -> None:
 class TestWithReset(TestCase):
 
     def setUp(self) -> None:
-        AppParams.reset()
-        Config.reset()
-        ConfigurableFunction.reset()
-        Make.reset()
-        Step.reset()
+        reset_application()
+        reset_make()
         Make.logger.setLevel('DEBUG')
+        Prog.logger.setLevel('DEBUG')
 
 
 class TestWithFiles(TestWithReset):

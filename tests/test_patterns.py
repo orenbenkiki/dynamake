@@ -3,7 +3,9 @@ Test the pattern matching.
 """
 
 
+import argparse
 import re
+from enum import Enum
 from typing import Callable
 from typing import List
 
@@ -17,6 +19,12 @@ from dynamake.patterns import extract_strings
 from dynamake.patterns import flatten
 from dynamake.patterns import glob2re
 from dynamake.patterns import glob_strings
+from dynamake.patterns import str2bool
+from dynamake.patterns import str2choice
+from dynamake.patterns import str2enum
+from dynamake.patterns import str2float
+from dynamake.patterns import str2int
+from dynamake.patterns import str2list
 from tests import TestWithFiles
 from tests import TestWithReset
 from tests import write_file
@@ -141,6 +149,77 @@ class TestPatterns(TestWithReset):
         self.assertRaisesRegex(RuntimeError,
                                r'string: x/y.png .* pattern: {foo}/{\*bar}.txt',
                                extract_strings, {'foo': 'x'}, '{foo}/{*bar}.txt', 'x/y.png')
+
+    def test_str2bool(self) -> None:
+        self.assertTrue(str2bool('t'))
+        self.assertFalse(str2bool('n'))
+        self.assertRaisesRegex(argparse.ArgumentTypeError,
+                               'Boolean value expected.',
+                               str2bool, 'maybe')
+
+    def test_str2enum(self) -> None:
+        class Foo(Enum):
+            bar = 1  # pylint: disable=blacklisted-name
+        self.assertEqual(str2enum(Foo)('bar'), Foo.bar)
+        self.assertRaisesRegex(argparse.ArgumentTypeError,
+                               'Expected one of: bar',
+                               str2enum(Foo), 'baz')
+
+    def test_str2range(self) -> None:
+        self.assertEqual(str2int()('12'), 12)
+        self.assertEqual(str2float()('12'), 12.0)
+        self.assertEqual(str2float()('1.2'), 1.2)
+
+        self.assertEqual(str2int(min=2)('2'), 2)
+        self.assertEqual(str2int(min=2, including_min=False)('3'), 3)
+
+        self.assertEqual(str2int(max=2)('2'), 2)
+        self.assertEqual(str2int(max=2, including_max=False)('1'), 1)
+
+        self.assertEqual(str2int(step=2)('4'), 4)
+        self.assertEqual(str2int(min=1, step=2)('3'), 3)
+
+        self.assertRaisesRegex(argparse.ArgumentTypeError,
+                               'Expected int value',
+                               str2int(), 'x')
+
+        self.assertRaisesRegex(argparse.ArgumentTypeError,
+                               'Expected int value, where 2 <= value',
+                               str2int(min=2), '1')
+
+        self.assertRaisesRegex(argparse.ArgumentTypeError,
+                               'Expected int value, where 2 < value',
+                               str2int(min=2, including_min=False), '2')
+
+        self.assertRaisesRegex(argparse.ArgumentTypeError,
+                               'Expected int value, where value % 2 == 0',
+                               str2int(step=2), '3')
+
+        self.assertRaisesRegex(argparse.ArgumentTypeError,
+                               'Expected int value, where 3 <= value and value % 2 == 1',
+                               str2int(min=3, step=2), '4')
+
+        self.assertRaisesRegex(argparse.ArgumentTypeError,
+                               'Expected float value, where value <= 2',
+                               str2float(max=2), '3')
+
+        self.assertRaisesRegex(argparse.ArgumentTypeError,
+                               'Expected float value, where value < 2',
+                               str2float(max=2, including_max=False), '2')
+
+    def test_str2choice(self) -> None:
+        self.assertEqual(str2choice(['foo', 'bar'])('foo'), 'foo')
+
+        self.assertRaisesRegex(argparse.ArgumentTypeError,
+                               'Expected one of: foo bar',
+                               str2choice(['foo', 'bar']), 'baz')
+
+    def test_str2list(self) -> None:
+        self.assertEqual(str2list(str2bool)('y n'), [True, False])
+
+        self.assertRaisesRegex(argparse.ArgumentTypeError,
+                               'Boolean value expected.',
+                               str2list(str2bool), 'y x n')
 
 
 class TestGlob(TestWithFiles):

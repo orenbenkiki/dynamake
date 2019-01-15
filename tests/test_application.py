@@ -9,9 +9,9 @@ from typing import Callable
 from typing import List
 from typing import Optional
 
-from dynamake.application import AppParams
-from dynamake.application import ConfigurableFunction
+from dynamake.application import Func
 from dynamake.application import Param
+from dynamake.application import Prog
 from dynamake.application import config
 from tests import TestWithFiles
 from tests import TestWithReset
@@ -40,8 +40,8 @@ class TestFunction(TestWithReset):
                                conflict)
 
     def test_register_after_finalization(self) -> None:
-        ConfigurableFunction.finalize()
-        ConfigurableFunction.finalize()
+        Func.finalize()
+        Func.finalize()
 
         def post_finalize() -> Any:
             @config
@@ -50,7 +50,7 @@ class TestFunction(TestWithReset):
 
         self.assertRaisesRegex(RuntimeError,
                                'function: .*.post_finalize.<locals>.function '
-                               'after ConfigurableFunction.finalize',
+                               'after Func.finalize',
                                post_finalize)
 
     def test_collect_parameters(self) -> None:
@@ -73,24 +73,24 @@ class TestFunction(TestWithReset):
             use_bar = 2
             return baz + use_foo + use_bar
 
-        ConfigurableFunction.finalize()
+        Func.finalize()
 
-        foo = ConfigurableFunction.by_name['use_foo']
+        foo = Func.by_name['use_foo']
         self.assertFalse(foo.has_positional_arguments)
         self.assertEqual(foo.direct_parameter_names, set(['foo']))
         self.assertEqual(foo.indirect_parameter_names, set(['foo']))
 
-        bar = ConfigurableFunction.by_name['use_bar']
+        bar = Func.by_name['use_bar']
         self.assertFalse(bar.has_positional_arguments)
         self.assertEqual(bar.direct_parameter_names, set(['bar']))
         self.assertEqual(bar.indirect_parameter_names, set(['bar']))
 
-        both = ConfigurableFunction.by_name['use_both']
+        both = Func.by_name['use_both']
         self.assertFalse(both.has_positional_arguments)
         self.assertEqual(both.direct_parameter_names, set())
         self.assertEqual(both.indirect_parameter_names, set(['foo', 'bar']))
 
-        none = ConfigurableFunction.by_name['use_none']
+        none = Func.by_name['use_none']
         self.assertTrue(none.has_positional_arguments)
         self.assertEqual(none.direct_parameter_names, set())
         self.assertEqual(none.indirect_parameter_names, set())
@@ -109,19 +109,19 @@ class TestFunction(TestWithReset):
         def use_both(baz: int) -> int:  # pylint: disable=unused-variable
             return baz + use_foo() + use_bar()
 
-        ConfigurableFunction.finalize()
+        Func.finalize()
 
-        foo = ConfigurableFunction.by_name['use_foo']
+        foo = Func.by_name['use_foo']
         self.assertFalse(foo.has_positional_arguments)
         self.assertEqual(foo.direct_parameter_names, set(['foo']))
         self.assertEqual(foo.indirect_parameter_names, set(['foo', 'bar']))
 
-        bar = ConfigurableFunction.by_name['use_bar']
+        bar = Func.by_name['use_bar']
         self.assertFalse(bar.has_positional_arguments)
         self.assertEqual(bar.direct_parameter_names, set(['bar']))
         self.assertEqual(bar.indirect_parameter_names, set(['foo', 'bar']))
 
-        both = ConfigurableFunction.by_name['use_both']
+        both = Func.by_name['use_both']
         self.assertTrue(both.has_positional_arguments)
         self.assertEqual(both.direct_parameter_names, set())
         self.assertEqual(both.indirect_parameter_names, set(['foo', 'bar']))
@@ -137,15 +137,24 @@ class TestParameters(TestWithReset):
         self.assertRaisesRegex(RuntimeError,
                                'Missing .* parameter: foo .* '
                                'function: .*.test_missing_parameter.<locals>.use_foo',
-                               AppParams)
+                               Prog.current.verify)
+
+    def test_conflicting_parameter(self) -> None:
+        Param(name='foo', default=1, parser=int, description='The number of foos')
+
+        self.assertRaisesRegex(RuntimeError,
+                               'Multiple .* parameter: foo',
+                               Param, name='foo', default=2, parser=str,
+                               description='The size of a foo')
 
     def test_used_parameter(self) -> None:
+        Param(name='foo', default=1, parser=int, description='The number of foos')
         self.assertRaisesRegex(RuntimeError,
                                'Unused parameter: foo',
-                               AppParams, foo=Param(1, int, 'The number of foos'))
+                               Prog.current.verify)
 
     def test_unknown_parameter(self) -> None:
-        parameters = AppParams()
+        parameters = Prog()
 
         self.assertRaisesRegex(RuntimeError,
                                'Unknown parameter: bar .* function: .*.test_missing_parameter',
@@ -164,11 +173,11 @@ def define_main_function() -> Callable:
         return foo + bar
 
     def main_function() -> int:
+        Param(name='bar', default=1, parser=int, description='The number of bars')
         parser = argparse.ArgumentParser(description='Test')
-        AppParams.current = AppParams(bar=Param(1, int, 'The number of bars'))
-        AppParams.current.add_to_parser(parser)
+        Prog.add_to_parser(parser)
         args = parser.parse_args()
-        AppParams.current.parse_args(args)
+        Prog.parse_args(args)
         return add(1) + Foo.add_foo(0, bar=0)
 
     return main_function
@@ -262,13 +271,13 @@ def define_main_commands(extra: Optional[List[str]] = None) -> Callable:
 
     def main_function() -> int:
         parser = argparse.ArgumentParser(description='Test')
-        AppParams.current = AppParams(foo=Param(1, int, 'The number of foos'),
-                                      bar=Param(1, int, 'The number of bars'),
-                                      baz=Param(1, int, 'The number of bazes'))
-        AppParams.current.add_to_parser(parser, ['add', 'add_foo'] + (extra or []))
+        Param(name='foo', default=1, parser=int, description='The number of foos')
+        Param(name='bar', default=1, parser=int, description='The number of bars')
+        Param(name='baz', default=1, parser=int, description='The number of bazes')
+        Prog.add_to_parser(parser, ['add', 'add_foo'] + (extra or []))
         args = parser.parse_args()
-        AppParams.current.parse_args(args)
-        return AppParams.call_with_args(args)
+        Prog.parse_args(args)
+        return Prog.call_with_args(args)
 
     return main_function
 
