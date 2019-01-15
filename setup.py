@@ -173,7 +173,8 @@ class ToxCommand(SimpleCommand):
 # TODO: Replicated in tox.ini
 INSTALL_REQUIRES = ['pyyaml']
 TESTS_REQUIRE = ['nose', 'testfixtures', 'coverage']
-DEVELOP_REQUIRES = ['autopep8', 'isort', 'mypy', 'pylint', 'sphinx', 'sphinx_rtd_theme', 'tox']
+DEVELOP_REQUIRES = ['autopep8', 'isort', 'mypy', 'pylint', 'sphinx', 'sphinx_rtd_theme', 'tox',
+                    'numpy', 'pandas', 'feather-format']
 
 
 setup(name='dynamake',
