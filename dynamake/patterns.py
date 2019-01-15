@@ -2,10 +2,12 @@
 Allow simple loading of regular expressions in configuration YAML files.
 """
 
+import argparse
 import re
 from curses.ascii import isalnum
 from glob import glob as glob_files
 from typing import Any
+from typing import Callable
 from typing import Dict
 from typing import Iterator
 from typing import List
@@ -408,6 +410,7 @@ def capture2glob(capture: str) -> str:  # pylint: disable=too-many-statements
     return ''.join(results)
 
 
+_SPACES = re.compile(r'\s+')
 _DOT_SUFFIX = re.compile('[.](com|net|org|io|gov|[0-9])')
 _PREFIX_DOT = re.compile('(Mr|St|Mrs|Ms|Dr|Inc|Ltd|Jr|Sr|Co)[.]')
 _FINAL_ACRONYM = re.compile('([A-Za-z])[.][ ]+'
@@ -429,9 +432,10 @@ def first_sentence(text: Optional[str]) -> Optional[str]:
 
     text = ' ' + text + '  '
     text = text.replace('\n', ' ')
+    text = re.sub(_SPACES, ' ', text)
 
     for pattern, fixed in [(_DOT_SUFFIX, r'<prd>\1'),
-                           (_FINAL_ACRONYM, r'\1'),
+                           (_FINAL_ACRONYM, r'\1<prd>'),
                            (_PREFIX_DOT, r'\1<prd>'),
                            (_THREE_ACRONYM, r'\1<prd>\2<prd>\3<prd>'),
                            (_TWO_ACRONYM, r'\1<prd>\2<prd>'),
@@ -456,3 +460,191 @@ def first_sentence(text: Optional[str]) -> Optional[str]:
     text = text.replace('<prd>', '.')
 
     return text.strip()
+
+
+def str2bool(string: str) -> bool:
+    """
+    Parse a boolean command line argument.
+    """
+    if string.lower() in ['yes', 'true', 't', 'y', '1']:
+        return True
+    if string.lower() in ['no', 'false', 'f', 'n', '0']:
+        return False
+    raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
+def str2enum(enum: type) -> Callable[[str], Any]:
+    """
+    Return a parser for an enum command line argument.
+    """
+    def _parse(string: str) -> Any:
+        try:
+            return enum[string.lower()]  # type: ignore
+        except BaseException:
+            raise argparse.ArgumentTypeError('Expected one of: %s'  #
+                                             % ' '.join([value.name
+                                                         for value
+                                                         in enum]))  # type: ignore
+    return _parse
+
+
+# pylint: disable=redefined-builtin
+
+class Range:
+    """
+    A range for a numeric argument.
+    """
+
+    def __init__(self,  # pylint: disable=too-many-arguments
+                 min: Optional[float] = None,
+                 max: Optional[float] = None,
+                 step: Optional[int] = None,
+                 including_min: bool = True,
+                 including_max: bool = True) -> None:
+        """
+        Create a range for numeric arguments.
+        """
+        #: The optional minimal allowed value.
+        self.min = min
+
+        #: The optional maximal allowed value.
+        self.max = max
+
+        #: The optional step between values.
+        self.step = step
+
+        #: Whether the minimal value is allowed.
+        self.including_min = including_min
+
+        #: Whether the maximal value is allowd.
+        self.including_max = including_max
+
+    def is_valid(self, value: Union[float, int]) -> bool:
+        """
+        Test whether a value is valid.
+        """
+        if self.min is not None:
+            if self.including_min:
+                if value < self.min:
+                    return False
+            else:
+                if value <= self.min:
+                    return False
+
+        if self.max is not None:
+            if self.including_max:
+                if value > self.max:
+                    return False
+            else:
+                if value >= self.max:
+                    return False
+
+        if self.step is None:
+            return True
+
+        if self.min is not None:
+            value -= self.min
+        return (value % self.step) == 0
+
+    def text(self) -> str:
+        """
+        Return text for an error message.
+        """
+        text = []
+
+        if self.min is not None:
+            text.append(str(self.min))
+            if self.including_min:
+                text.append('<=')
+            else:
+                text.append('<')
+
+        if self.min is not None or self.max is not None:
+            text.append('value')
+
+        if self.max is not None:
+            if self.including_max:
+                text.append('<=')
+            else:
+                text.append('<')
+            text.append(str(self.max))
+
+        if self.step is not None:
+            if self.min is not None or self.max is not None:
+                text.append('and')
+            text.extend(['value %', str(self.step), '=='])
+            if self.min is None:
+                text.append('0')
+            else:
+                text.append(str(self.min % self.step))
+
+        return ' '.join(text)
+
+
+def _str2range(string: str, parser: Callable[[str], Union[int, float]], range: Range) \
+        -> Union[int, float]:
+    try:
+        value = parser(string)
+    except BaseException:
+        raise argparse.ArgumentTypeError('Expected %s value' % parser.__name__)
+
+    if not range.is_valid(value):
+        raise argparse.ArgumentTypeError('Expected %s value, where %s'
+                                         % (parser.__name__, range.text()))
+
+    return value
+
+
+def str2float(min: Optional[float] = None,
+              max: Optional[float] = None,
+              step: Optional[int] = None,
+              including_min: bool = True,
+              including_max: bool = True) -> Callable[[str], float]:
+    """
+    Return a parser that accepts a float argument in the specified
+    :py:func:`dynamake.pattern.Range`.
+    """
+    def _parse(string: str) -> float:
+        return _str2range(string, float,
+                          Range(min=min, max=max, step=step,
+                                including_min=including_min,
+                                including_max=including_max))
+    return _parse
+
+
+def str2int(min: Optional[int] = None,
+            max: Optional[int] = None,
+            step: Optional[int] = None,
+            including_min: bool = True,
+            including_max: bool = True) -> Callable[[str], int]:
+    """
+    Return a parser that accepts an int argument in the specified
+    :py:func:`dynamake.pattern.Range`.
+    """
+    def _parse(string: str) -> int:
+        return _str2range(string, int,  # type: ignore
+                          Range(min=min, max=max, step=step,
+                                including_min=including_min,
+                                including_max=including_max))
+    return _parse
+
+
+def str2choice(options: List[str]) -> Callable[[str], str]:
+    """
+    Return a parser that accepts a string argument which is one of the options.
+    """
+    def _parse(string: str) -> str:
+        if string not in options:
+            raise argparse.ArgumentTypeError('Expected one of: %s' % ' '.join(options))
+        return string
+
+    return _parse
+
+
+def str2list(parser: Callable[[str], Any]) -> Callable[[str], List[Any]]:
+    """
+    Parse an argument which is a list of strings, where each must be parsed on its own.
+    """
+    def _parse(string: str) -> List[Any]:
+        return [parser(entry) for entry in string.split()]
+    return _parse

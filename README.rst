@@ -466,13 +466,13 @@ Here is a trivial example configurable program:
 
     import dynamake.application as da
 
+    da.Param(name='bar', default=1, parser=int, description='The number of bars')
 
     def main() -> int:
         parser = argparse.ArgumentParser(description='Example')
-        da.AppParams.current = da.AppParams('bar'=(1, int, 'The number of bars'))
-        da.AppParams.current.add_to_parser(parser)
+        da.Prog.add_to_parser(parser)
         args = parser.parse_args()
-        da.AppParams.current.parse_args(args)
+        da.Prog.parse_args(args)
         print(add(1))  # Bar will be taken from the configuration.
 
 
@@ -495,21 +495,23 @@ specified instead for the same effect.
 
 The usage pattern of these utilities is as follows:
 
-* First, one must initialize :py:attr:`dynamake.application.AppParams.current` with the list of
-  known parameters for the program.
+* First, one must declare all the parameters of all the configured functions by creating
+  :py:attr:`dynamake.application.Param` objects.
 
 * Typically one then adds all the necessary command line arguments to the program by calling
-  :py:func:`dynamake.application.AppParams.add_to_parser`. This registers the ``--config`` flag
+  :py:func:`dynamake.application.Prog.add_to_parser`. This registers the ``--config`` flag
   for loading a configuration file and a per-parameter (``--bar`` in the above example) flag
   for explicit overrides.
 
 * After the command line arguments have been parsed, the configuration is finalized using
-  :py:func:`dynamake.application.AppParams.parse_args`.
+  :py:func:`dynamake.application.Prog.parse_args`.
 
-To use the finalized :py:attr:`dynamake.application.AppParams.current` configuration, decorate any
-function with :py:func:`dynamake.application.config`. This will use the configuration to provide
-default values for each named function argument. Calling the functions with an explicit parameter
-value will ignore the configuration's value.
+To use the finalized :py:attr:`dynamake.application.Prog` parameters, decorate any function with
+:py:func:`dynamake.application.config`. This will use the configuration to provide default values
+for each named function argument. Calling the functions with an explicit parameter value will ignore
+the configuration's value.
+
+One can also use the :py:attr:`dynamake.application.Prog.logger` anywhere in the code.
 
 .. note::
 
@@ -538,13 +540,14 @@ is to create a single script which takes the function name as a command-line arg
     @config
     def bar(...): ...
 
+    da.Param(...)  # Parameters for *all* functions.
+
     def main() -> int:
         parser = argparse.ArgumentParser(description='Example')
-        da.AppParams.current = da.AppParams(...)  # Parameters for *all* functions.
-        da.AppParams.current.add_to_parser(parser, ['foo', 'bar'])
+        da.Prog.add_to_parser(parser, ['foo', 'bar'])
         args = parser.parse_args()
-        da.AppParams.current.parse_args(args)
-        da.AppParams.call_with_args(args)
+        da.Prog.parse_args(args)
+        da.Prog.call_with_args(args)
 
 This will allow the script to be invoked as ``script.py foo ...`` to invoke the ``foo`` function and
 ``script.py bar ...`` to invoke the ``bar`` function. ``script.py -h`` will list all the available
@@ -575,6 +578,8 @@ worked on yet:
 * Allow forcing rebuilding (some) targets.
 
 * Generate a more detailed reason for each executed action.
+
+* Collect merged coverage from invocations of Python sub-scripts for tests.
 
 * Dry run. While it is impossible in general to print the full set of dry run actions, if should
   be easy to just print the 1st action(s) that need to be executed. This should provide most of the

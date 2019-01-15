@@ -478,18 +478,20 @@ class TestMake(TestWithReset):
         def do_nothing() -> Action:
             return Action(input=[], output=[], run=[])
 
-        sys.argv = ['main_defaults', '-ll', 'DEBUG']
+        sys.argv = ['__test', '-ll', 'DEBUG']
         with LogCapture() as log:
             main(argparse.ArgumentParser(), do_nothing)
 
-        log.check(('dynamake', 'DEBUG', '/do_nothing: input: None'),
+        log.check(('dynamake', 'INFO', 'start'),
+                  ('dynamake', 'DEBUG', '/do_nothing: input: None'),
                   ('dynamake', 'DEBUG', '/do_nothing: input paths: None'),
                   ('dynamake', 'DEBUG', '/do_nothing: output: None'),
                   ('dynamake', 'DEBUG', '/do_nothing: output paths before: None'),
                   ('dynamake', 'DEBUG', '/do_nothing: needs to execute because has no outputs'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/do_nothing: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'DEBUG', '/do_nothing: output paths after: None'))
+                  ('dynamake', 'DEBUG', '/do_nothing: output paths after: None'),
+                  ('dynamake', 'INFO', 'done'))
 
     def test_main_non_default_step(self) -> None:
         @action()
@@ -500,25 +502,27 @@ class TestMake(TestWithReset):
         def do_something() -> Action:  # pylint: disable=unused-variable
             return Action(input=[], output=[], run=[])
 
-        sys.argv = ['main_defaults', '-ll', 'DEBUG', 'do_something']
+        sys.argv = ['__test', '-ll', 'DEBUG', 'do_something']
 
         with LogCapture() as log:
             main(argparse.ArgumentParser(), do_nothing)
 
-        log.check(('dynamake', 'DEBUG', '/do_something: input: None'),
+        log.check(('dynamake', 'INFO', 'start'),
+                  ('dynamake', 'DEBUG', '/do_something: input: None'),
                   ('dynamake', 'DEBUG', '/do_something: input paths: None'),
                   ('dynamake', 'DEBUG', '/do_something: output: None'),
                   ('dynamake', 'DEBUG', '/do_something: output paths before: None'),
                   ('dynamake', 'DEBUG', '/do_something: needs to execute because has no outputs'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/do_something: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'DEBUG', '/do_something: output paths after: None'))
+                  ('dynamake', 'DEBUG', '/do_something: output paths after: None'),
+                  ('dynamake', 'INFO', 'done'))
 
     def test_non_step_function(self) -> None:
         def do_nothing() -> Action:
             return Action(input=[], output=[], run=[])
 
-        sys.argv = ['main_defaults']
+        sys.argv = ['__test']
 
         self.assertRaisesRegex(RuntimeError,
                                r'function: .*.test_non_step_function.<locals>.do_nothing',
@@ -529,10 +533,10 @@ class TestMake(TestWithReset):
         def do_nothing() -> Action:
             return Action(input=[], output=[], run=[])
 
-        sys.argv = ['main_defaults', 'do_something']
+        sys.argv = ['__test', 'do_something']
 
         self.assertRaisesRegex(RuntimeError,
-                               r'Unknown step: do_something',
+                               r'unknown step: do_something',
                                main, argparse.ArgumentParser(), do_nothing)
 
     def test_main_flags(self) -> None:
@@ -540,7 +544,7 @@ class TestMake(TestWithReset):
         def do_nothing() -> Action:
             return Action(input=[], output=[], run=[])
 
-        sys.argv = ['main_defaults',
+        sys.argv = ['__test',
                     '-mi', 'optional',
                     '-mo', 'partial',
                     '-tso',
@@ -563,7 +567,7 @@ class TestMake(TestWithReset):
             collected = foo
             return Action(input=[], output=[], run=[])
 
-        sys.argv = ['main_defaults', '-p', 'foo=baz']
+        sys.argv = ['__test', '-p', 'foo=baz']
 
         main(argparse.ArgumentParser(), do_nothing)
 
@@ -574,7 +578,7 @@ class TestMake(TestWithReset):
         def do_nothing(foo: str) -> Action:  # pylint: disable=unused-argument
             return Action(input=[], output=[], run=[])
 
-        sys.argv = ['main_defaults', '-p', 'foo']
+        sys.argv = ['__test', '-p', 'foo']
 
         self.assertRaisesRegex(RuntimeError,
                                r'Invalid parameter flag: foo',
@@ -585,7 +589,7 @@ class TestMake(TestWithReset):
         def do_nothing(foo: str) -> Action:  # pylint: disable=unused-argument
             return Action(input=[], output=[], run=[])
 
-        sys.argv = ['main_defaults', '-p', 'foo=[', '-p', 'bar=baz']
+        sys.argv = ['__test', '-p', 'foo=[', '-p', 'bar=baz']
 
         self.assertRaisesRegex(RuntimeError,
                                r'Unused top-level .* parameter: bar',
@@ -596,7 +600,7 @@ class TestMake(TestWithReset):
         def do_nothing(foo: str) -> Action:  # pylint: disable=unused-argument
             return Action(input=[], output=[], run=[])
 
-        sys.argv = ['main_defaults']
+        sys.argv = ['__test']
 
         self.assertRaisesRegex(RuntimeError,
                                r'Missing top-level parameter: foo .* step: /do_nothing',
@@ -1067,7 +1071,7 @@ class TestFiles(TestWithFiles):
         def do_nothing() -> Action:
             return Action(input=[], output=[], run=[])
 
-        sys.argv = ['main_defaults', '-tso']
+        sys.argv = ['__test', '-tso']
 
         write_file('Config.yaml', """
             - when: {step: /}
@@ -1092,7 +1096,7 @@ class TestFiles(TestWithFiles):
         def do_nothing() -> Action:
             return Action(input=[], output=[], run=[])
 
-        sys.argv = ['main_defaults', '-tso']
+        sys.argv = ['__test', '-tso']
 
         write_file('Config.yaml', """
             - when: {stack: /}
