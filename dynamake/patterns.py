@@ -152,6 +152,132 @@ class Captured:
         self.wildcards: List[Dict[str, Any]] = []
 
 
+class NonOptionalException(Exception):
+    """
+    Exception when an non-optional pattern did not match any disk files.
+    """
+
+    def __init__(self, glob: str, capture: str) -> None:
+        """
+        Create a new exception when no disk files matched the pattern.
+        """
+        if capture == glob:
+            super().__init__('No files matched the non-optional glob pattern: %s' % (glob))
+        else:
+            super().__init__('No files matched the non-optional glob: %s pattern: %s'
+                             % (glob, capture))
+
+        #: The glob pattern that failed to match.
+        self.glob = glob
+
+
+class AnnotatedStr(str):
+    """
+    A wrapper containing optional annotations.
+    """
+
+    #: Whether this was annotated by :py:func:`dynamake.patterns.optional`.
+    optional = False
+
+    #: Whether this was annotated by :py:func:`dynamake.patterns.exists`.
+    exists = False
+
+    #: Whether this was annotated by :py:func:`dynamake.patterns.precious`.
+    precious = False
+
+
+def optional(*patterns: Strings) -> List[str]:
+    """
+    Annotate patterns as optional (for use in action ``input`` and/or ``output``).
+
+    An optional input is allowed not to exist before the action is executed.
+    This is useful if the action responds to the files but can execute without them.
+
+    An optional output is allowed not to exist after the action is executed.
+    This is useful to ensure such outputs are removed following a failed execution,
+    or before a new execution.
+    """
+    strings: List[str] = []
+    for pattern in each_string(*patterns):
+        if not isinstance(pattern, AnnotatedStr):
+            pattern = AnnotatedStr(pattern)
+        pattern.optional = True
+        strings.append(pattern)
+    return strings
+
+
+def exists(*patterns: Strings) -> List[str]:
+    """
+    Annotate patterns as exist-only (for use in action ``input`` and/or ``output``).
+
+    An exist-only input is only required to exist, but its modification date is ignored.
+    Directories are always treated this way because modification date on directories
+    is unreliable.
+
+    An exist-only output is not touched following the execution, that is, the action
+    ensures the file will exist, but may choose to leave it unmodified.
+    """
+    strings: List[str] = []
+    for pattern in each_string(*patterns):
+        if not isinstance(pattern, AnnotatedStr):
+            pattern = AnnotatedStr(pattern)
+        pattern.exists = True
+        strings.append(pattern)
+    return strings
+
+
+def precious(*patterns: Strings) -> List[str]:
+    """
+    Annotate patterns as precious (for use in action ``output``).
+
+    A precious output is never deleted. This covers both deletion of "stale" outputs before an
+    action is run and deletion of "failed" outputs after an action has failed.
+    """
+    strings: List[str] = []
+    for pattern in each_string(*patterns):
+        if not isinstance(pattern, AnnotatedStr):
+            pattern = AnnotatedStr(pattern)
+        pattern.precious = True
+        strings.append(pattern)
+    return strings
+
+
+def is_optional(string: str) -> bool:
+    """
+    Whether a string has been annotated as :py:func:`dynamake.patterns.optional`.
+    """
+    return isinstance(string, AnnotatedStr) and string.optional
+
+
+def is_exists(string: str) -> bool:
+    """
+    Whether a string has been annotated as :py:func:`dynamake.patterns.exists`-only.
+    """
+    return isinstance(string, AnnotatedStr) and string.exists
+
+
+def is_precious(string: str) -> bool:
+    """
+    Whether a string has been annotated as :py:func:`dynamake.patterns.precious`.
+    """
+    return isinstance(string, AnnotatedStr) and string.precious
+
+
+def copy_annotations(source: str, target: str) -> str:
+    """
+    Copy the annotations from one string to another.
+
+    Returns the annotated target string.
+    """
+    if isinstance(source, AnnotatedStr):
+        if not isinstance(target, AnnotatedStr):
+            target = AnnotatedStr(target)
+        target.optional = source.optional
+        target.exists = source.exists
+        target.precious = source.precious
+    return target
+
+
 def capture_globs(wildcards: Dict[str, Any], *patterns: Strings) -> Captured:
     """
     Given a glob pattern containing ``...{name}...{*captured_name}...``,
@@ -174,27 +300,38 @@ def capture_globs(wildcards: Dict[str, Any], *patterns: Strings) -> Captured:
           zero or more characters are entered into the dictionary under the ``captured_name`` key.
 
         * ``...{*captured_name:pattern}...`` is similar but allows you to explicitly specify the
-          glob pattern (e.g., ``...{*foo:*.py}...`` will capture the glob pattern ``*.py`` and
+          glob pattern
           capture it under the key ``foo``.
 
         * ``...{**captured_name}...`` is a shorthand for ``...{*captured_name:**}...``. That is, it
           acts similarly to ``...{*captured_name}...`` except that the glob pattern is ``**``.
 
+        If a pattern is not annotated with :py:func:`dynamake.patterns.optional` and it matches no
+        existing files, an error is raised.
+
     Returns
     -------
     Captured
         The list of existing file paths that match the patterns, and the list of dictionaries with
-        the captured values for each such path.
+        the captured values for each such path. The annotations
+        (:py:func:`dynamake.patterns.optional` and/or :py:func:`dynamake.patterns.exists`) of the
+        pattern are copied to the paths expanded from the pattern.
     """
-
     captured = Captured()
     for capture in each_string(*patterns):
         regexp = capture2re(capture).format(**wildcards)
         glob = capture2glob(capture).format(**wildcards)
+        paths = glob_files(glob)
+
+        if not paths and not is_optional(capture):
+            raise NonOptionalException(glob, capture)
+
         # Sorted to make tests deterministic.
-        for path in sorted(glob_files(glob)):
+        for path in sorted(paths):
+            path = copy_annotations(capture, path)
             captured.paths.append(path)
             captured.wildcards.append(_capture_string(capture, regexp, path))
+
     return captured
 
 
@@ -205,12 +342,19 @@ def glob_strings(wildcards: Dict[str, Any], *patterns: Strings) -> List[str]:
     without doing any capturing of sub-strings. Using ``...{*captured_name}...`` is
     still allowed, but has no effect beyond being interpreted as a glob pattern.
     """
-    paths: List[str] = []
+    results: List[str] = []
     for capture in each_string(*patterns):
         glob = capture2glob(capture).format(**wildcards)
+        paths = glob_files(glob)
+
+        if not paths and not is_optional(capture):
+            raise NonOptionalException(glob, capture)
+
         # Sorted to make tests deterministic.
-        paths += sorted(glob_files(glob))
-    return paths
+        for path in sorted(paths):
+            results.append(copy_annotations(capture, path))
+
+    return results
 
 
 def extract_strings(wildcards: Dict[str, Any], capture: str, *strings: Strings) \
@@ -499,8 +643,8 @@ class Range:
                  min: Optional[float] = None,
                  max: Optional[float] = None,
                  step: Optional[int] = None,
-                 including_min: bool = True,
-                 including_max: bool = True) -> None:
+                 include_min: bool = True,
+                 include_max: bool = True) -> None:
         """
         Create a range for numeric arguments.
         """
@@ -514,17 +658,17 @@ class Range:
         self.step = step
 
         #: Whether the minimal value is allowed.
-        self.including_min = including_min
+        self.include_min = include_min
 
         #: Whether the maximal value is allowd.
-        self.including_max = including_max
+        self.include_max = include_max
 
     def is_valid(self, value: Union[float, int]) -> bool:
         """
         Test whether a value is valid.
         """
         if self.min is not None:
-            if self.including_min:
+            if self.include_min:
                 if value < self.min:
                     return False
             else:
@@ -532,7 +676,7 @@ class Range:
                     return False
 
         if self.max is not None:
-            if self.including_max:
+            if self.include_max:
                 if value > self.max:
                     return False
             else:
@@ -554,7 +698,7 @@ class Range:
 
         if self.min is not None:
             text.append(str(self.min))
-            if self.including_min:
+            if self.include_min:
                 text.append('<=')
             else:
                 text.append('<')
@@ -563,7 +707,7 @@ class Range:
             text.append('value')
 
         if self.max is not None:
-            if self.including_max:
+            if self.include_max:
                 text.append('<=')
             else:
                 text.append('<')
@@ -598,8 +742,8 @@ def _str2range(string: str, parser: Callable[[str], Union[int, float]], range: R
 def str2float(min: Optional[float] = None,
               max: Optional[float] = None,
               step: Optional[int] = None,
-              including_min: bool = True,
-              including_max: bool = True) -> Callable[[str], float]:
+              include_min: bool = True,
+              include_max: bool = True) -> Callable[[str], float]:
     """
     Return a parser that accepts a float argument in the specified
     :py:func:`dynamake.pattern.Range`.
@@ -607,16 +751,16 @@ def str2float(min: Optional[float] = None,
     def _parse(string: str) -> float:
         return _str2range(string, float,
                           Range(min=min, max=max, step=step,
-                                including_min=including_min,
-                                including_max=including_max))
+                                include_min=include_min,
+                                include_max=include_max))
     return _parse
 
 
 def str2int(min: Optional[int] = None,
             max: Optional[int] = None,
             step: Optional[int] = None,
-            including_min: bool = True,
-            including_max: bool = True) -> Callable[[str], int]:
+            include_min: bool = True,
+            include_max: bool = True) -> Callable[[str], int]:
     """
     Return a parser that accepts an int argument in the specified
     :py:func:`dynamake.pattern.Range`.
@@ -624,8 +768,8 @@ def str2int(min: Optional[int] = None,
     def _parse(string: str) -> int:
         return _str2range(string, int,  # type: ignore
                           Range(min=min, max=max, step=step,
-                                including_min=including_min,
-                                including_max=including_max))
+                                include_min=include_min,
+                                include_max=include_max))
     return _parse
 
 
@@ -647,4 +791,15 @@ def str2list(parser: Callable[[str], Any]) -> Callable[[str], List[Any]]:
     """
     def _parse(string: str) -> List[Any]:
         return [parser(entry) for entry in string.split()]
+    return _parse
+
+
+def str2optional(parser: Callable[[str], Any]) -> Callable[[str], Optional[Any]]:
+    """
+    Parse an argument which also takes the special value ``None``.
+    """
+    def _parse(string: str) -> Optional[Any]:
+        if string.lower() == 'none':
+            return None
+        return parser(string)
     return _parse

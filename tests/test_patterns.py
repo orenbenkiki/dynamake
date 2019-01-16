@@ -11,20 +11,26 @@ from typing import List
 
 import yaml
 
+from dynamake.patterns import NonOptionalException
 from dynamake.patterns import capture2glob
 from dynamake.patterns import capture2re
 from dynamake.patterns import capture_globs
+from dynamake.patterns import exists
 from dynamake.patterns import expand_strings
 from dynamake.patterns import extract_strings
 from dynamake.patterns import flatten
 from dynamake.patterns import glob2re
 from dynamake.patterns import glob_strings
+from dynamake.patterns import is_exists
+from dynamake.patterns import is_optional
+from dynamake.patterns import optional
 from dynamake.patterns import str2bool
 from dynamake.patterns import str2choice
 from dynamake.patterns import str2enum
 from dynamake.patterns import str2float
 from dynamake.patterns import str2int
 from dynamake.patterns import str2list
+from dynamake.patterns import str2optional
 from tests import TestWithFiles
 from tests import TestWithReset
 from tests import write_file
@@ -33,6 +39,19 @@ from tests import write_file
 
 
 class TestPatterns(TestWithReset):
+
+    def test_annotations(self) -> None:
+        self.assertFalse(is_optional('x'))
+        self.assertFalse(is_exists('x'))
+
+        self.assertTrue(is_optional(optional('x')[0]))
+        self.assertFalse(is_exists(optional('x')[0]))
+
+        self.assertFalse(is_optional(exists('x')[0]))
+        self.assertTrue(is_exists(exists('x')[0]))
+
+        self.assertTrue(is_optional(exists(optional('x'))[0]))
+        self.assertTrue(is_exists(optional(exists('x'))[0]))
 
     def test_flatten(self) -> None:
         self.assertEqual(flatten('a', ['b', ['c']]), ['a', 'b', 'c'])
@@ -171,10 +190,10 @@ class TestPatterns(TestWithReset):
         self.assertEqual(str2float()('1.2'), 1.2)
 
         self.assertEqual(str2int(min=2)('2'), 2)
-        self.assertEqual(str2int(min=2, including_min=False)('3'), 3)
+        self.assertEqual(str2int(min=2, include_min=False)('3'), 3)
 
         self.assertEqual(str2int(max=2)('2'), 2)
-        self.assertEqual(str2int(max=2, including_max=False)('1'), 1)
+        self.assertEqual(str2int(max=2, include_max=False)('1'), 1)
 
         self.assertEqual(str2int(step=2)('4'), 4)
         self.assertEqual(str2int(min=1, step=2)('3'), 3)
@@ -189,7 +208,7 @@ class TestPatterns(TestWithReset):
 
         self.assertRaisesRegex(argparse.ArgumentTypeError,
                                'Expected int value, where 2 < value',
-                               str2int(min=2, including_min=False), '2')
+                               str2int(min=2, include_min=False), '2')
 
         self.assertRaisesRegex(argparse.ArgumentTypeError,
                                'Expected int value, where value % 2 == 0',
@@ -205,7 +224,7 @@ class TestPatterns(TestWithReset):
 
         self.assertRaisesRegex(argparse.ArgumentTypeError,
                                'Expected float value, where value < 2',
-                               str2float(max=2, including_max=False), '2')
+                               str2float(max=2, include_max=False), '2')
 
     def test_str2choice(self) -> None:
         self.assertEqual(str2choice(['foo', 'bar'])('foo'), 'foo')
@@ -221,14 +240,26 @@ class TestPatterns(TestWithReset):
                                'Boolean value expected.',
                                str2list(str2bool), 'y x n')
 
+    def test_str2optional(self) -> None:
+        self.assertTrue(str2optional(str2bool)('y'))
+        self.assertTrue(str2optional(str2bool)('None') is None)
+
+        self.assertRaisesRegex(argparse.ArgumentTypeError,
+                               'Boolean value expected.',
+                               str2optional(str2bool), 'Maybe')
+
 
 class TestGlob(TestWithFiles):
 
     def test_no_match(self) -> None:
-        captured = capture_globs({'foo': 'x'}, '{foo}.txt')
+        captured = capture_globs({'foo': 'x'}, optional('{foo}.txt'))
         self.assertEqual(captured.paths, [])
         self.assertEqual(captured.wildcards, [])
-        self.assertEqual(glob_strings({'foo': 'x'}, '{foo}.txt'), [])
+        self.assertEqual(glob_strings({'foo': 'x'}, optional('{foo}.txt')), [])
+
+        self.assertRaisesRegex(NonOptionalException,
+                               'No files .* glob: x.txt pattern: [{]foo[}].txt',
+                               capture_globs, {'foo': 'x'}, '{foo}.txt')
 
     def test_no_capture(self) -> None:
         write_file('x.txt', '')
