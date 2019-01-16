@@ -16,11 +16,9 @@ from abc import abstractmethod
 from concurrent.futures import Future
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from datetime import datetime
-from enum import Enum
-from enum import unique
 from textwrap import dedent
 from threading import Condition
+from time import sleep
 from types import SimpleNamespace
 from typing import Any
 from typing import Callable
@@ -41,50 +39,12 @@ from .config import Config
 from .config import Rule
 from .patterns import Captured
 from .patterns import Strings
-from .patterns import str2bool
-from .patterns import str2enum
+from .patterns import exists  # pylint: disable=unused-import
+from .patterns import optional  # pylint: disable=unused-import
+from .patterns import precious  # pylint: disable=unused-import
 
 #: The type of a wrapped function.
 Wrapped = TypeVar('Wrapped', bound=Callable)
-
-
-@unique
-class MissingInputs(Enum):
-    """
-    Policy for handling missing :py:class:`dynamake.make.Action` inputs
-    (that is, input ``glob`` patterns that do not match any existing file path).
-    """
-
-    #: Treat any missing input as an error. This is the default behavior.
-    forbidden = 0
-
-    #: Allow missing inputs as long as the action does not need to be executed. This allows
-    #: intermediate files to be deleted without causing actions to be re-executed.
-    assume_up_to_date = 1
-
-    #: Allow missing inputs even if the action needs to be executed. This allows for the (very rare)
-    #: case of optional action inputs.
-    optional = 2
-
-
-@unique
-class MissingOutputs(Enum):
-    """
-    Policy for handling missing :py:class:`dynamake.make.Action` outputs
-    (that is, output ``glob`` patterns that do not match any existing file path,
-    after the action has executed).
-    """
-
-    #: Treat any missing output as an error. This is the default behavior.
-    forbidden = 0
-
-    #: Allow missing outputs as long as that the action did produce at least one output file. This
-    #: allows for the (uncommon) case of some optional action outputs.
-    partial = 1
-
-    #: Allow the action to produce no outputs whatsoever, for the (rare) case of completely optional
-    #: outputs.
-    optional = 2
 
 
 class Make:  # pylint: disable=too-many-instance-attributes
@@ -112,18 +72,6 @@ class Make:  # pylint: disable=too-many-instance-attributes
 
     #: The logger for tracking the build flow.
     logger: logging.Logger
-
-    #: The default policy for handling missing inputs (by default,
-    #: :py:attr:`dynamake.make.MissingInputs.forbidden`).
-    #:
-    #: It is possible to override this on a per-action basis.
-    missing_inputs: MissingInputs
-
-    #: The default policy for handling missing outputs (by default,
-    #: :py:attr:`dynamake.make.MissingOutputs.forbidden`).
-    #:
-    #: It is possible to override this on a per-action basis.
-    missing_outputs: MissingOutputs
 
     #: Whether to delete old output files before executing an action (by default, ``True``).
     #:
@@ -163,8 +111,6 @@ class Make:  # pylint: disable=too-many-instance-attributes
         Make.parallel_actions = 0
         Make.step_by_name = {}
         Make.logger = logging.getLogger('dynamake')
-        Make.missing_inputs = MissingInputs.forbidden
-        Make.missing_outputs = MissingOutputs.forbidden
         Make.delete_stale_outputs = True
         Make.touch_success_outputs = False
         Make.delete_failed_outputs = True
@@ -304,12 +250,12 @@ class Step:  # pylint: disable=too-many-instance-attributes
                     disk_text = file.read()
 
             if disk_text == config_text:
-                Make.logger.debug('%s: using existing configuration file: %s',
+                Make.logger.debug('%s: use existing config: %s',
                                   self.stack, self.config_path)
             else:
                 if not os.path.exists(Config.DIRECTORY):
                     os.mkdir(Config.DIRECTORY)
-                Make.logger.debug('%s: writing new configuration file: %s',
+                Make.logger.debug('%s: write new config: %s',
                                   self.stack, self.config_path)
                 with open(self.config_path, 'w') as file:
                     file.write(config_text)
@@ -443,8 +389,6 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                  output: Strings, run: Strings,
                  runner: Optional[Strings] = None,
                  ignore_exit_status: bool = False,
-                 missing_inputs: Optional[MissingInputs] = None,
-                 missing_outputs: Optional[MissingOutputs] = None,
                  delete_stale_outputs: Optional[bool] = None,
                  touch_success_outputs: Optional[bool] = None,
                  delete_failed_outputs: Optional[bool] = None,
@@ -487,10 +431,6 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         ignore_exit_status
             If ``True``, the exit status of the command(s) is ignored. Otherwise, if it is not zero,
             the action is considered a failure.
-        missing_inputs
-            Optional override for :py:attr:`dynamake.make.Make.missing_inputs` for this action.
-        missing_outputs
-            Optional override for :py:attr:`dynamake.make.Make.missing_outputs` for this action.
         delete_stale_outputs
             Optional override for :py:attr:`dynamake.make.Make.delete_stale_outputs` for this
             action.
@@ -518,21 +458,6 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
             step, to be used by the caller plan step.
         """
         super().__init__(**kwargs)
-
-        #: The expanded names of all the input files.
-        self.input = dp.flatten(input)
-
-        #: Before the action is executed, the unexpanded patterns of all the outputs.
-        #: After the action is executed, the actual matched paths from all these patterns.
-        self.output = dp.flatten(output)
-
-        #: How to handle missing inputs.
-        self.missing_inputs = \
-            Make.missing_inputs if missing_inputs is None else missing_inputs
-
-        #: How to handle missing outputs.
-        self.missing_outputs = \
-            Make.missing_outputs if missing_outputs is None else missing_outputs
 
         #: Whether to delete out-of-date outputs.
         self.delete_stale_outputs = \
@@ -571,180 +496,184 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         #: The expanded command(s) to execute.
         self.run = [expand(command) for command in run]
 
-        #: The paths of the existing input files matching the input ``glob`` patterns.
-        self.input_paths: List[str]
-
-        #: Input patterns that did not match any existing disk files.
-        self.missing_input_patterns: List[str]
-
         step = Step.current()
-        config_path = step.config_path
 
         #: The call stack creating this action.
         self.stack = step.stack
 
-        self.input_paths, self.missing_input_patterns = Action._collect_glob(self.input)
-        Make.logger.debug('%s: input: %s', self.stack, ' '.join(self.input) or 'None')
-        Make.logger.debug('%s: input paths: %s', self.stack, ' '.join(self.input_paths) or 'None')
-        if self.missing_inputs == MissingInputs.forbidden:
-            self._raise_missing('input', self.missing_input_patterns)
+        #: The expanded names of all the input files.
+        self.input = dp.flatten(input)
+        Make.logger.debug('%s: input(s): %s', self.stack, ' '.join(self.input) or 'None')
 
-        #: The path of the existing output files before the execution, matching the output ``glob``
-        #: patterns.
-        self.output_paths_before = self._collect_outputs()
-        Make.logger.debug('%s: output: %s', self.stack, ' '.join(self.output) or 'None')
-        Make.logger.debug('%s: output paths before: %s',
-                          self.stack, ' '.join(self.output_paths_before) or 'None')
+        #: Before the action is executed, the unexpanded patterns of all the outputs.
+        #: After the action is executed, the actual matched paths from all these patterns.
+        self.output = dp.flatten(output)
+        Make.logger.debug('%s: output(s): %s', self.stack, ' '.join(self.output) or 'None')
 
-        #: The path of the existing output files after the execution, matching the output ``glob``
-        #: patterns.
-        self.output_paths_after: List[str] = []
+        #: The paths of the existing input files matching the input ``glob`` patterns.
+        self.input_paths: List[str] = []
 
-        #: Output patterns that did not match any existing disk files, after the execution.
-        self.missing_outputs_patterns: List[str] = []
+        self._collect_input_paths()
+
+        #: The path of the existing output files matching the output ``glob`` patterns.
+        self.output_paths: List[str] = []
 
         #: Whether the action needs to be executed.
-        self.needs_to_execute = self._needs_to_execute(config_path)
+        self.needs_to_execute = self._needs_to_execute(step.config_path)
 
-        if self.needs_to_execute \
-                and self.missing_inputs == MissingInputs.assume_up_to_date:
-            self._raise_missing('input', self.missing_input_patterns)
+    def _collect_input_paths(self) -> None:
+        missing_input_patterns: List[str] = []
+        for input_pattern in self.input:
+            try:
+                self.input_paths += self._log_glob('input', input_pattern)
+            except dp.NonOptionalException:
+                missing_input_patterns.append(input_pattern)
+        self._raise_if_missing('input', missing_input_patterns)
 
-    def _needs_to_execute(self, config_path: Optional[str]) -> bool:
+    def _needs_to_execute(self,  # pylint: disable=too-many-return-statements,too-many-branches
+                          config_path: Optional[str]) -> bool:
         if not self.output:
             Make.logger.debug('%s: needs to execute because has no outputs', self.stack)
             return True
 
-        minimal_output_mtime = Action._collect_mtime(self.output_paths_before, min)
-        if Make.logger.isEnabledFor(logging.DEBUG):
-            Make.logger.debug('%s: minimal output mtime: %s',
-                              self.stack, _ns2str(minimal_output_mtime))
+        minimal_output_mtime: Optional[int] = None
+        for output_pattern in self.output:
+            try:
+                output_paths = self._log_glob('output', output_pattern)
+                self.output_paths += output_paths
+            except dp.NonOptionalException as exception:
+                if exception.glob == output_pattern:
+                    Make.logger.debug('%s: needs to execute because missing output(s): %s',
+                                      self.stack, output_pattern)
+                else:
+                    Make.logger.debug('%s: needs to execute because missing output(s): %s glob: %s',
+                                      self.stack, output_pattern, exception.glob)
+                return True
+
+            if dp.is_exists(output_pattern):
+                continue
+
+            for output_path in output_paths:
+                output_mtime = os.stat(output_path).st_mtime_ns
+                if minimal_output_mtime is None or minimal_output_mtime > output_mtime:
+                    minimal_output_mtime = output_mtime
 
         if minimal_output_mtime is None:
-            # TODO: This is wrong if the next step(s) override Action.missing_inputs.
-            if Make.missing_inputs == MissingInputs.forbidden:
-                Make.logger.debug('%s: need to execute assuming next step(s) need all inputs',
-                                  self.stack)
+            if not self.output_paths:
+                Make.logger.debug('%s: need to execute because no output(s) exist', self.stack)
                 return True
-            Make.logger.debug('%s: no need to execute assuming next step(s) allow missing inputs',
+            Make.logger.debug('%s: no need to execute because some output file(s) exist',
                               self.stack)
             return False
 
-        maximal_input_mtime = Action._collect_mtime(self.input_paths, max, config_path)
-        if Make.logger.isEnabledFor(logging.DEBUG):
-            Make.logger.debug('%s: maximal input mtime: %s',
-                              self.stack, _ns2str(maximal_input_mtime))
+        has_older = False
+        if config_path is not None:
+            config_mtime = os.stat(config_path).st_mtime_ns
+            if config_mtime >= minimal_output_mtime:
+                Make.logger.debug('%s: need to execute because of newer config: %s',
+                                  self.stack, config_path)
+                return True
+            has_older = True
 
-        if maximal_input_mtime is None:
-            Make.logger.debug('%s: no need to execute ignoring missing inputs', self.stack)
-            return False
+        for input_path in self.input_paths:
+            if dp.is_exists(input_path):
+                continue
+            input_mtime = os.stat(input_path).st_mtime_ns
+            if input_mtime >= minimal_output_mtime:
+                Make.logger.debug('%s: need to execute because of newer input: %s',
+                                  self.stack, input_path)
+                return True
+            has_older = True
 
-        if maximal_input_mtime < minimal_output_mtime:
-            Make.logger.debug('%s: no need to execute since outputs are newer', self.stack)
-            return False
-
-        Make.logger.debug('%s: need to execute since inputs are newer', self.stack)
-        return True
-
-    @staticmethod
-    def _collect_mtime(paths: List[str], combine: Callable,
-                       extra_path: Optional[str] = None) -> Optional[int]:
-        collected_mtime = None
-        if extra_path is not None:
-            collected_mtime = os.stat(extra_path).st_mtime_ns
-        for path in paths:
-            path_mtime = os.stat(path).st_mtime_ns
-            if collected_mtime is None:
-                collected_mtime = path_mtime
-            else:
-                collected_mtime = combine(collected_mtime, path_mtime)
-        return collected_mtime
+        if has_older:
+            Make.logger.debug('%s: no need to execute because output(s) are newer', self.stack)
+        elif self.input_paths:
+            Make.logger.debug('%s: no need to execute because all input(s) exist', self.stack)
+        else:
+            Make.logger.debug('%s: no need to execute because all output(s) exist', self.stack)
+        return False
 
     def call(self) -> None:
         """
         Actually execute the action.
         """
         if self.delete_stale_outputs:
-            self._delete_outputs('stale', self.output_paths_before)
+            self._delete_outputs('stale')
+        self.output_paths = []
 
-        for command in self.run:
-            if self.runner == ['shell']:
-                Make.logger.info('%s: run: %s', self.stack, ' '.join(command))
-                completed = subprocess.run(' '.join(command), shell=True)
-            else:
-                command = self.runner + command
-                Make.logger.info('%s: run: %s', self.stack, ' '.join(command))
-                completed = subprocess.run(self.runner + command)
-            if completed.returncode != 0 and not self.ignore_exit_status:
-                Make.logger.debug('%s: failed with exit status: %s',
-                                  self.stack, completed.returncode)
-                self._fail(command)
+        try:
+            for command in self.run:
+                if self.runner == ['shell']:
+                    Make.logger.info('%s: run: %s', self.stack, ' '.join(command))
+                    completed = subprocess.run(' '.join(command), shell=True)
+
+                else:
+                    command = self.runner + command
+                    Make.logger.info('%s: run: %s', self.stack, ' '.join(command))
+                    completed = subprocess.run(self.runner + command)
+
+                if completed.returncode != 0 and not self.ignore_exit_status:
+                    Make.logger.debug('%s: failed with exit status: %s',
+                                      self.stack, completed.returncode)
+                    raise RuntimeError('%s: failed command: %s' % (self.stack, ' '.join(command)))
+
+        except BaseException:
+            self._fail()
+            raise
 
         self._success()
 
-    def _fail(self, command: List[str]) -> None:
-        self.output_paths_after = self._collect_outputs()
-
+    def _fail(self) -> None:
         if self.delete_failed_outputs:
-            self._delete_outputs('failed', self.output_paths_after)
-
-        raise RuntimeError('%s: failed command: %s' % (self.stack, ' '.join(command)))
+            for pattern in self.output:
+                self.output_paths += glob(optional(pattern))
+            self._delete_outputs('failed')
 
     def _success(self) -> None:
-        self.output_paths_after, self.missing_outputs_patterns = Action._collect_glob(self.output)
-        Make.logger.debug('%s: output paths after: %s',
-                          self.stack, ' '.join(self.output_paths_after) or 'None')
+        missing_outputs_patterns: List[str] = []
+        did_sleep = False
+        for output_pattern in self.output:
+            try:
+                self.output_paths += self._log_glob('output', output_pattern)
+                output_paths = glob(optional(output_pattern))
+            except dp.NonOptionalException:
+                missing_outputs_patterns.append(output_pattern)
+                continue
 
-        if self.missing_outputs == MissingOutputs.forbidden \
-                or (self.missing_outputs == MissingOutputs.partial and not self.output_paths_after):
-            self._raise_missing('output', self.missing_outputs_patterns)
+            if not self.touch_success_outputs:
+                continue
 
-        if self.touch_success_outputs and self.output_paths_after:
-            Make.logger.debug('%s: touch outputs: %s',
-                              self.stack, ' '.join(self.output_paths_after))
-            for path in self.output_paths_after:
-                os.utime(path)
+            for output_path in output_paths:
+                if dp.is_exists(output_path) or os.path.isdir(output_path):
+                    continue
+                Make.logger.debug('%s: touch output: %s', self.stack, output_path)
+                if not did_sleep:
+                    did_sleep = True
+                    sleep(0.01)
+                os.utime(output_path)
 
-    def _delete_outputs(self, reason: str, paths: List[str]) -> None:
-        if not paths:
-            return
+        self._raise_if_missing('output', missing_outputs_patterns)
 
-        Make.logger.debug('%s: delete %s outputs: %s', self.stack, reason, ' '.join(paths))
-
-        for path in paths:
+    def _delete_outputs(self, reason: str) -> None:
+        for path in self.output_paths:
+            if dp.is_precious(path):
+                continue
+            Make.logger.debug('%s: delete %s output: %s', self.stack, reason, path)
             path = os.path.abspath(path)
             if os.path.isfile(path):
                 os.remove(path)
-            else:
+            elif os.path.exists(path):
                 shutil.rmtree(path)
 
             while self.delete_empty_directories:
                 path = os.path.dirname(path)
                 try:
                     os.rmdir(path)
+                    Make.logger.debug('%s: delete empty directory: %s', self.stack, path)
                 except BaseException:
                     return
 
-    @staticmethod
-    def _collect_glob(patterns: List[str]) -> Tuple[List[str], List[str]]:
-        existing: List[str] = []
-        missing: List[str] = []
-        for pattern in patterns:
-            paths = glob(pattern)
-            if paths:
-                existing += paths
-            else:
-                missing.append(pattern)
-
-        return existing, missing
-
-    def _collect_outputs(self) -> List[str]:
-        output: List[str] = []
-        for pattern in self.output:
-            output += glob(pattern)
-        return output
-
-    def _raise_missing(self, direction: str, patterns: List[str]) -> None:
+    def _raise_if_missing(self, direction: str, patterns: List[str]) -> None:
         if not patterns:
             return
 
@@ -761,14 +690,16 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                            'for the action step: %s'
                            % (direction, expanded, pattern, self.stack))
 
-
-def _ns2str(nanoseconds: Optional[int]) -> str:
-    if nanoseconds is None:
-        return 'None'
-    seconds = nanoseconds // 1e9
-    nanoseconds = int(nanoseconds % 1e9)
-    return '{}.{:09d}'.format(datetime.fromtimestamp(seconds).strftime('%Y-%m-%d %H:%M:%S'),
-                              nanoseconds)
+    def _log_glob(self, direction: str, pattern: str) -> List[str]:
+        paths = glob(pattern)
+        if paths == [pattern]:
+            Make.logger.debug('%s: exists %s: %s', self.stack, direction, pattern)
+        elif paths:
+            Make.logger.debug('%s: glob %s: %s path(s): %s',
+                              self.stack, direction, pattern, ' '.join(paths))
+        else:
+            Make.logger.debug('%s: no %s: %s', self.stack, direction, pattern)
+        return paths
 
 
 def plan(run_help: Optional[Strings] = None) -> Callable[[Wrapped], Wrapped]:
@@ -855,6 +786,11 @@ def glob(*patterns: Strings) -> List[str]:
     Return the path of each existing file matching any of the ``glob`` pattern, using the value of
     the current known parameters for each ``...{name}...`` in the pattern.
 
+    The expanded paths will inherit the annotations of the pattern
+    (:py:func:`dynamake.make.optional` and/or :py:func:`dynamake.make.exists`). This will complain
+    about any patterns that match nothing unless they are annotated with
+    :py:func:`dynamake.make.optional`.
+
     See :py:func:`dynamake.patterns.glob_strings`.
     """
     return dp.glob_strings(Step.current().wildcards, *patterns)
@@ -880,6 +816,11 @@ def capture(*patterns: Strings) -> Captured:
 
     It is the caller's responsibility to ensure that all the patterns capture the same set of names.
     If they don't, the resulting wildcards dictionaries will have different sets of keys.
+
+    The expanded paths will inherit the annotations of the pattern
+    (:py:func:`dynamake.make.optional` and/or :py:func:`dynamake.make.exists`). This will complain
+    about any patterns that match nothing unless they are annotated with
+    :py:func:`dynamake.make.optional`.
 
     See :py:func:`dynamake.patterns.capture_globs`.
     """
@@ -1116,29 +1057,23 @@ def _add_arguments(parser: argparse.ArgumentParser, default_step: Callable) -> N
     parser.add_argument('-ll', '--log_level', metavar='LEVEL', default='INFO',
                         help='The log level to use (default: INFO)')
 
-    parser.add_argument('-mi', '--missing_inputs', metavar='POLICY', type=str2enum(MissingInputs),
-                        help='default: forbidden; other options: assume_up_to_date, optional')
-
-    parser.add_argument('-mo', '--missing_outputs', metavar='POLICY', type=str2enum(MissingOutputs),
-                        help='default: forbidden; other options: partial, optional')
-
     parser.add_argument('-dso', '--delete_stale_outputs', metavar='BOOL',
-                        type=str2bool, nargs='?', const=True,
+                        type=dp.str2bool, nargs='?', const=True,
                         help='Whether to delete outputs before executing actions '
                              '(default: %s)' % Make.delete_stale_outputs)
 
     parser.add_argument('-tso', '--touch_success_outputs', metavar='BOOL', nargs='?',
-                        type=str2bool, const=True,
+                        type=dp.str2bool, const=True,
                         help='Whether to touch output files after successful actions '
                              '(default: %s)' % Make.touch_success_outputs)
 
     parser.add_argument('-dfo', '--delete_failed_outputs', metavar='BOOL', nargs='?',
-                        type=str2bool, const=True,
+                        type=dp.str2bool, const=True,
                         help='Whether to delete outputs after failed actions '
                              '(default: %s)' % Make.delete_failed_outputs)
 
     parser.add_argument('-ded', '--delete_empty_directories', metavar='BOOL',
-                        type=str2bool, nargs='?', const=True,
+                        type=dp.str2bool, nargs='?', const=True,
                         help='Whether to delete empty directories containing deleted outputs '
                              '(default: %s)' % Make.delete_empty_directories)
 
@@ -1211,20 +1146,17 @@ def _configure_by_arguments(args: argparse.Namespace) -> Tuple[Dict[str, Any], S
         Make.logger.addHandler(handler)
     Make.logger.setLevel(_get('log_level', str, 'INFO'))
 
-    Make.missing_inputs = _get('missing_inputs', str2enum(MissingInputs), Make.missing_inputs)
-    Make.missing_outputs = _get('missing_outputs', str2enum(MissingOutputs), Make.missing_outputs)
-
     Make.delete_stale_outputs = \
-        _get('delete_stale_outputs', str2bool, Make.delete_stale_outputs)
+        _get('delete_stale_outputs', dp.str2bool, Make.delete_stale_outputs)
 
     Make.touch_success_outputs = \
-        _get('touch_success_outputs', str2bool, Make.touch_success_outputs)
+        _get('touch_success_outputs', dp.str2bool, Make.touch_success_outputs)
 
     Make.delete_failed_outputs = \
-        _get('delete_failed_outputs', str2bool, Make.delete_failed_outputs)
+        _get('delete_failed_outputs', dp.str2bool, Make.delete_failed_outputs)
 
     Make.delete_empty_directories = \
-        _get('delete_empty_directories', str2bool, Make.delete_empty_directories)
+        _get('delete_empty_directories', dp.str2bool, Make.delete_empty_directories)
 
     return config_values, used_values
 

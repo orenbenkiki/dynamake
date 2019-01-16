@@ -2,6 +2,7 @@
 Utilities for configurable applications.
 """
 
+import ctypes
 import logging
 import re
 import sys
@@ -15,7 +16,10 @@ from ast import parse
 from inspect import Parameter
 from inspect import getsource
 from inspect import signature
+from multiprocessing import Pool
+from multiprocessing import Value
 from textwrap import dedent
+from threading import current_thread
 from typing import Any
 from typing import Callable
 from typing import Dict
@@ -479,12 +483,114 @@ class Prog:
             self.values[name] = value
 
 
+class Parallel:
+    """
+    Invoke a function in parallel, efficiently.
+
+    ``Pool.map``  insists on pickling and sending all the invocation arguments. This is bad for two
+    reasons:
+
+    * It is inefficient. The forked process(es) already have these objects, since the fork happened
+      after the list of arguments was created.
+
+    * It is restrictive. You can't simply work around it by giving ``Pool.map`` a ``lambda`` that
+      just takes an index and uses it to access whatever-you-want, because pickling this ``lambda``
+      fails (mercifully; otherwise it would need to pickle all the data captured by the lambda,
+      which would defeat the purpose).
+
+    This class is a workaround. It stashes all the arguments in a global array (yikes), which is
+    created before the processes are forked, and then just lets each parallel invocation access this
+    array to obtain its arguments.
+
+    Sigh.
+    """
+
+    _process_index: Value
+    _function: Optional[Callable]
+    _fixed_args: Tuple
+    _fixed_kwargs: Dict[str, Any]
+    _indexed_kwargs: List[Dict[str, Any]]
+
+    @staticmethod
+    def reset() -> None:
+        """
+        Reset all the current state, for tests.
+        """
+        Parallel._process_index = Value(ctypes.c_int32, lock=True)  # type: ignore
+        Parallel._process_index.value = 0
+        Parallel._function = None
+        Parallel._fixed_args = ()
+        Parallel._fixed_kwargs = {}
+        Parallel._indexed_kwargs = []
+
+    @staticmethod
+    def call(processes: int, invocations: int, function: Callable, *fixed_args: Any,
+             kwargs: Optional[Callable[[int], Dict[str, Any]]] = None,
+             **fixed_kwarg: Any) -> List[Any]:
+        """
+        Invoke a function in parallel.
+
+        Parameters
+        ----------
+        processeses
+            The number of processes to fork.
+        invocations
+            The number of function invocations needed.
+        fixed_args
+            Positional arguments for the function, that do not depend on the invocation index.
+        kwargs
+            An optional ``lambda`` taking the invocation index and returning a dictionary of keyword
+            arguments which do depend on the index.
+        fixed_kwarg
+            Other named arguments for the function, that do not depend on the invocation index.
+
+        Returns
+        -------
+        List[Any]
+            The list of results from all the function invocations, in order.
+        """
+        previous_function = Parallel._function
+        previous_fixed_args = Parallel._fixed_args
+        previous_fixed_kwargs = Parallel._fixed_kwargs
+        previous_indexed_kwargs = Parallel._indexed_kwargs
+
+        Parallel._function = function
+        Parallel._fixed_args = fixed_args
+        Parallel._fixed_kwargs = fixed_kwarg
+        Parallel._indexed_kwargs = \
+            [{} if kwargs is None else kwargs(index) for index in range(invocations)]
+
+        try:
+            with Pool(processes, Parallel._initialize_process) as pool:
+                return pool.map(Parallel._call, range(invocations))
+        finally:
+            Parallel._function = previous_function
+            Parallel._fixed_args = previous_fixed_args
+            Parallel._fixed_kwargs = previous_fixed_kwargs
+            Parallel._indexed_kwargs = previous_indexed_kwargs
+
+    @staticmethod
+    def _call(index: int) -> Any:  # TODO: Appears uncovered since runs in a separate thread.
+        assert Parallel._function is not None
+        return Parallel._function(*Parallel._fixed_args,
+                                  **Parallel._fixed_kwargs,
+                                  **Parallel._indexed_kwargs[index])
+
+    @staticmethod
+    def _initialize_process() -> None:  # TODO: Appears uncovered since runs in a separate thread.
+        with Parallel._process_index:  # type: ignore
+            Parallel._process_index.value += 1
+            process_index = Parallel._process_index.value
+        current_thread().name = 'ForkThread-%s' % process_index
+
+
 def reset_application() -> None:
     """
     Reset all the current state, for tests.
     """
     Func.reset()
     Prog.reset()
+    Parallel.reset()
 
 
 logging.addLevelName(Prog.TRACE, 'TRACE')

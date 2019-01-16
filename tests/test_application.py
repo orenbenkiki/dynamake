@@ -4,12 +4,15 @@ Test the application utilities.
 
 import argparse
 import sys
+from threading import current_thread
 from typing import Any
 from typing import Callable
 from typing import List
 from typing import Optional
+from typing import Tuple
 
 from dynamake.application import Func
+from dynamake.application import Parallel
 from dynamake.application import Param
 from dynamake.application import Prog
 from dynamake.application import config
@@ -159,6 +162,14 @@ class TestParameters(TestWithReset):
         self.assertRaisesRegex(RuntimeError,
                                'Unknown parameter: bar .* function: .*.test_missing_parameter',
                                parameters.get, 'bar', TestParameters.test_missing_parameter)
+
+    def test_parallel(self) -> None:
+        results = Parallel.call(1, 2, _call_in_parallel, kwargs=lambda index: {'index': index})
+        self.assertEqual(results, [('ForkThread-1', 0), ('ForkThread-1', 1)])
+
+
+def _call_in_parallel(index: int) -> Tuple[str, int]:
+    return (current_thread().name, index)
 
 
 def define_main_function() -> Callable:

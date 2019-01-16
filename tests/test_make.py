@@ -21,8 +21,6 @@ from testfixtures import StringComparison
 from dynamake.make import Action
 from dynamake.make import Captured
 from dynamake.make import Make
-from dynamake.make import MissingInputs
-from dynamake.make import MissingOutputs
 from dynamake.make import Step
 from dynamake.make import Wild
 from dynamake.make import action
@@ -30,16 +28,19 @@ from dynamake.make import available_resources
 from dynamake.make import capture
 from dynamake.make import config_file
 from dynamake.make import config_param
+from dynamake.make import exists
 from dynamake.make import expand
 from dynamake.make import extract
 from dynamake.make import foreach
 from dynamake.make import glob
 from dynamake.make import load_config
 from dynamake.make import main
+from dynamake.make import optional
 from dynamake.make import parallel
 from dynamake.make import parcall
 from dynamake.make import pareach
 from dynamake.make import plan
+from dynamake.make import precious
 from tests import TestWithFiles
 from tests import TestWithReset
 from tests import write_file
@@ -368,14 +369,11 @@ class TestMake(TestWithReset):
         with LogCapture() as log:
             empty()
 
-        log.check(('dynamake', 'DEBUG', '/empty: input: None'),
-                  ('dynamake', 'DEBUG', '/empty: input paths: None'),
-                  ('dynamake', 'DEBUG', '/empty: output: None'),
-                  ('dynamake', 'DEBUG', '/empty: output paths before: None'),
+        log.check(('dynamake', 'DEBUG', '/empty: input(s): None'),
+                  ('dynamake', 'DEBUG', '/empty: output(s): None'),
                   ('dynamake', 'DEBUG', '/empty: needs to execute because has no outputs'),
                   ('dynamake', 'DEBUG',
-                   StringComparison('/empty: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'DEBUG', '/empty: output paths after: None'))
+                   StringComparison('/empty: use resource: steps amount: 1.0 .*')))
 
     def test_true_action(self) -> None:
         @action()
@@ -385,15 +383,12 @@ class TestMake(TestWithReset):
         with LogCapture() as log:
             empty()
 
-        log.check(('dynamake', 'DEBUG', '/empty: input: None'),
-                  ('dynamake', 'DEBUG', '/empty: input paths: None'),
-                  ('dynamake', 'DEBUG', '/empty: output: None'),
-                  ('dynamake', 'DEBUG', '/empty: output paths before: None'),
+        log.check(('dynamake', 'DEBUG', '/empty: input(s): None'),
+                  ('dynamake', 'DEBUG', '/empty: output(s): None'),
                   ('dynamake', 'DEBUG', '/empty: needs to execute because has no outputs'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/empty: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'INFO', "/empty: run: true"),
-                  ('dynamake', 'DEBUG', '/empty: output paths after: None'))
+                  ('dynamake', 'INFO', '/empty: run: true'))
 
     def test_forbidden_missing_input(self) -> None:
         @action()
@@ -404,11 +399,10 @@ class TestMake(TestWithReset):
                                r'Missing input\(s\): missing.txt .* step: /missing',
                                missing)
 
-    def test_assumed_missing_input(self) -> None:
+    def test_needed_missing_input(self) -> None:
         @action()
         def missing() -> Action:
-            return Action(input=['missing.txt'], output=['output.txt'], run=[],
-                          missing_inputs=MissingInputs.assume_up_to_date)
+            return Action(input=['missing.txt'], output=['output.txt'], run=[])
 
         self.assertRaisesRegex(RuntimeError,
                                r'Missing input\(s\): missing.txt .* step: /missing',
@@ -417,21 +411,17 @@ class TestMake(TestWithReset):
     def test_optional_missing_input(self) -> None:
         @action()
         def missing() -> Action:
-            return Action(input=['missing.txt'], output=[], run=[])
-
-        Make.missing_inputs = MissingInputs.optional
+            return Action(input=[optional('missing.txt')], output=[], run=[])
 
         with LogCapture() as log:
             missing()
 
-        log.check(('dynamake', 'DEBUG', '/missing: input: missing.txt'),
-                  ('dynamake', 'DEBUG', '/missing: input paths: None'),
-                  ('dynamake', 'DEBUG', '/missing: output: None'),
-                  ('dynamake', 'DEBUG', '/missing: output paths before: None'),
+        log.check(('dynamake', 'DEBUG', '/missing: input(s): missing.txt'),
+                  ('dynamake', 'DEBUG', '/missing: output(s): None'),
+                  ('dynamake', 'DEBUG', '/missing: no input: missing.txt'),
                   ('dynamake', 'DEBUG', '/missing: needs to execute because has no outputs'),
                   ('dynamake', 'DEBUG',
-                   StringComparison('/missing: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'DEBUG', '/missing: output paths after: None'))
+                   StringComparison('/missing: use resource: steps amount: 1.0 .*')))
 
     def test_forbidden_missing_output(self) -> None:
         @action()
@@ -443,35 +433,21 @@ class TestMake(TestWithReset):
                                r' .* pattern: \{prefix\}.txt .* step: /missing',
                                missing, 'output')
 
-    def test_partial_missing_output(self) -> None:
-        @action()
-        def missing() -> Action:
-            return Action(input=[], output=['output.txt'], run=[],
-                          missing_outputs=MissingOutputs.partial)
-
-        self.assertRaisesRegex(RuntimeError,
-                               r'Missing output\(s\): output.txt .* step: /missing',
-                               missing)
-
     def test_optional_missing_output(self) -> None:
         @action()
         def missing() -> Action:
-            return Action(input=[], output=['output.txt'], run=[],
-                          missing_outputs=MissingOutputs.optional)
+            return Action(input=[], output=[optional('output.txt')], run=[])
 
         with LogCapture() as log:
             missing()
 
-        log.check(('dynamake', 'DEBUG', '/missing: input: None'),
-                  ('dynamake', 'DEBUG', '/missing: input paths: None'),
-                  ('dynamake', 'DEBUG', '/missing: output: output.txt'),
-                  ('dynamake', 'DEBUG', '/missing: output paths before: None'),
-                  ('dynamake', 'DEBUG', '/missing: minimal output mtime: None'),
-                  ('dynamake', 'DEBUG',
-                   '/missing: need to execute assuming next step(s) need all inputs'),
+        log.check(('dynamake', 'DEBUG', '/missing: input(s): None'),
+                  ('dynamake', 'DEBUG', '/missing: output(s): output.txt'),
+                  ('dynamake', 'DEBUG', '/missing: no output: output.txt'),
+                  ('dynamake', 'DEBUG', '/missing: need to execute because no output(s) exist'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/missing: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'DEBUG', '/missing: output paths after: None'))
+                  ('dynamake', 'DEBUG', '/missing: no output: output.txt'))
 
     def test_main_default_step(self) -> None:
         @action()
@@ -483,14 +459,11 @@ class TestMake(TestWithReset):
             main(argparse.ArgumentParser(), do_nothing)
 
         log.check(('dynamake', 'INFO', 'start'),
-                  ('dynamake', 'DEBUG', '/do_nothing: input: None'),
-                  ('dynamake', 'DEBUG', '/do_nothing: input paths: None'),
-                  ('dynamake', 'DEBUG', '/do_nothing: output: None'),
-                  ('dynamake', 'DEBUG', '/do_nothing: output paths before: None'),
+                  ('dynamake', 'DEBUG', '/do_nothing: input(s): None'),
+                  ('dynamake', 'DEBUG', '/do_nothing: output(s): None'),
                   ('dynamake', 'DEBUG', '/do_nothing: needs to execute because has no outputs'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/do_nothing: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'DEBUG', '/do_nothing: output paths after: None'),
                   ('dynamake', 'INFO', 'done'))
 
     def test_main_non_default_step(self) -> None:
@@ -508,14 +481,11 @@ class TestMake(TestWithReset):
             main(argparse.ArgumentParser(), do_nothing)
 
         log.check(('dynamake', 'INFO', 'start'),
-                  ('dynamake', 'DEBUG', '/do_something: input: None'),
-                  ('dynamake', 'DEBUG', '/do_something: input paths: None'),
-                  ('dynamake', 'DEBUG', '/do_something: output: None'),
-                  ('dynamake', 'DEBUG', '/do_something: output paths before: None'),
+                  ('dynamake', 'DEBUG', '/do_something: input(s): None'),
+                  ('dynamake', 'DEBUG', '/do_something: output(s): None'),
                   ('dynamake', 'DEBUG', '/do_something: needs to execute because has no outputs'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/do_something: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'DEBUG', '/do_something: output paths after: None'),
                   ('dynamake', 'INFO', 'done'))
 
     def test_non_step_function(self) -> None:
@@ -545,8 +515,6 @@ class TestMake(TestWithReset):
             return Action(input=[], output=[], run=[])
 
         sys.argv = ['__test',
-                    '-mi', 'optional',
-                    '-mo', 'partial',
                     '-tso',
                     '-dso', 'f',
                     '-ded', 't']
@@ -555,8 +523,6 @@ class TestMake(TestWithReset):
         self.assertTrue(Make.touch_success_outputs)
         self.assertFalse(Make.delete_stale_outputs)
         self.assertTrue(Make.delete_empty_directories)
-        self.assertEqual(Make.missing_inputs, MissingInputs.optional)
-        self.assertEqual(Make.missing_outputs, MissingOutputs.partial)
 
     def test_main_parameters(self) -> None:
         collected = 'bar'
@@ -612,7 +578,7 @@ class TestFiles(TestWithFiles):
     def test_capture(self) -> None:
         @plan()
         def captor(foo: str) -> Captured:  # pylint: disable=unused-argument
-            return capture('{foo}.{*bar}')
+            return capture(optional('{foo}.{*bar}'))
 
         captured = captor('x')
         self.assertEqual(captured.paths, [])
@@ -627,7 +593,7 @@ class TestFiles(TestWithFiles):
     def test_glob(self) -> None:
         @plan()
         def globber(foo: str) -> List[str]:  # pylint: disable=unused-argument
-            return glob('{foo}.*')
+            return glob(optional('{foo}.*'))
 
         self.assertEqual(globber('x'), [])
 
@@ -635,24 +601,57 @@ class TestFiles(TestWithFiles):
 
         self.assertEqual(globber('x'), ['x.a'])
 
-    def test_assumed_missing_input(self) -> None:
+    def test_allow_no_inputs(self) -> None:
         @action()
         def missing() -> Action:
-            return Action(input=['missing.txt'], output=['output.txt'], run=[],
-                          missing_inputs=MissingInputs.assume_up_to_date)
+            return Action(input=[], output=['output.txt'], run=[])
 
         write_file('output.txt')
 
         with LogCapture() as log:
             missing()
 
-        log.check(('dynamake', 'DEBUG', '/missing: input: missing.txt'),
-                  ('dynamake', 'DEBUG', '/missing: input paths: None'),
-                  ('dynamake', 'DEBUG', '/missing: output: output.txt'),
-                  ('dynamake', 'DEBUG', '/missing: output paths before: output.txt'),
-                  ('dynamake', 'DEBUG', StringComparison(r'/missing: minimal output mtime: .*')),
-                  ('dynamake', 'DEBUG', '/missing: maximal input mtime: None'),
-                  ('dynamake', 'DEBUG', '/missing: no need to execute ignoring missing inputs'))
+        log.check(('dynamake', 'DEBUG', '/missing: input(s): None'),
+                  ('dynamake', 'DEBUG', '/missing: output(s): output.txt'),
+                  ('dynamake', 'DEBUG', '/missing: exists output: output.txt'),
+                  ('dynamake', 'DEBUG', '/missing: no need to execute because all output(s) exist'))
+
+    def test_ignore_exists_input_time(self) -> None:
+        @action()
+        def existing() -> Action:
+            return Action(input=[exists('exists.txt')], output=['output.txt'], run=[])
+
+        write_file('output.txt')
+        sleep(0.01)
+        write_file('exists.txt')
+
+        with LogCapture() as log:
+            existing()
+
+        log.check(('dynamake', 'DEBUG', '/existing: input(s): exists.txt'),
+                  ('dynamake', 'DEBUG', '/existing: output(s): output.txt'),
+                  ('dynamake', 'DEBUG', '/existing: exists input: exists.txt'),
+                  ('dynamake', 'DEBUG', '/existing: exists output: output.txt'),
+                  ('dynamake', 'DEBUG', '/existing: no need to execute because all input(s) exist'))
+
+    def test_ignore_exists_output_time(self) -> None:
+        @action()
+        def existing() -> Action:
+            return Action(input=['input.txt'], output=[exists('exists.txt')], run=[])
+
+        write_file('input.txt')
+        sleep(0.01)
+        write_file('exists.txt')
+
+        with LogCapture() as log:
+            existing()
+
+        log.check(('dynamake', 'DEBUG', '/existing: input(s): input.txt'),
+                  ('dynamake', 'DEBUG', '/existing: output(s): exists.txt'),
+                  ('dynamake', 'DEBUG', '/existing: exists input: input.txt'),
+                  ('dynamake', 'DEBUG', '/existing: exists output: exists.txt'),
+                  ('dynamake', 'DEBUG',
+                   '/existing: no need to execute because some output file(s) exist'))
 
     def test_execute_for_missing_output(self) -> None:
         @action()
@@ -664,17 +663,15 @@ class TestFiles(TestWithFiles):
         with LogCapture() as log:
             touch()
 
-        log.check(('dynamake', 'DEBUG', '/touch: input: input.txt'),
-                  ('dynamake', 'DEBUG', '/touch: input paths: input.txt'),
-                  ('dynamake', 'DEBUG', '/touch: output: output.txt'),
-                  ('dynamake', 'DEBUG', '/touch: output paths before: None'),
-                  ('dynamake', 'DEBUG', '/touch: minimal output mtime: None'),
+        log.check(('dynamake', 'DEBUG', '/touch: input(s): input.txt'),
+                  ('dynamake', 'DEBUG', '/touch: output(s): output.txt'),
+                  ('dynamake', 'DEBUG', '/touch: exists input: input.txt'),
                   ('dynamake', 'DEBUG',
-                   '/touch: need to execute assuming next step(s) need all inputs'),
+                   '/touch: needs to execute because missing output(s): output.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/touch: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/touch: run: touch output.txt'),
-                  ('dynamake', 'DEBUG', '/touch: output paths after: output.txt'))
+                  ('dynamake', 'DEBUG', '/touch: exists output: output.txt'))
 
     def test_shell_for_missing_output(self) -> None:
         @action()
@@ -687,35 +684,15 @@ class TestFiles(TestWithFiles):
         with LogCapture() as log:
             echo()
 
-        log.check(('dynamake', 'DEBUG', '/echo: input: input.txt'),
-                  ('dynamake', 'DEBUG', '/echo: input paths: input.txt'),
-                  ('dynamake', 'DEBUG', '/echo: output: output.txt'),
-                  ('dynamake', 'DEBUG', '/echo: output paths before: None'),
-                  ('dynamake', 'DEBUG', '/echo: minimal output mtime: None'),
+        log.check(('dynamake', 'DEBUG', '/echo: input(s): input.txt'),
+                  ('dynamake', 'DEBUG', '/echo: output(s): output.txt'),
+                  ('dynamake', 'DEBUG', '/echo: exists input: input.txt'),
                   ('dynamake', 'DEBUG',
-                   '/echo: need to execute assuming next step(s) need all inputs'),
+                   '/echo: needs to execute because missing output(s): output.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/echo: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/echo: run: echo > output.txt'),
-                  ('dynamake', 'DEBUG', '/echo: output paths after: output.txt'))
-
-    def test_skip_for_missing_output(self) -> None:
-        @action()
-        def touch() -> Action:
-            return Action(input=['input.txt'], output=['output.txt'], run=['touch', 'output.txt'])
-
-        Make.missing_inputs = MissingInputs.assume_up_to_date
-
-        with LogCapture() as log:
-            touch()
-
-        log.check(('dynamake', 'DEBUG', '/touch: input: input.txt'),
-                  ('dynamake', 'DEBUG', '/touch: input paths: None'),
-                  ('dynamake', 'DEBUG', '/touch: output: output.txt'),
-                  ('dynamake', 'DEBUG', '/touch: output paths before: None'),
-                  ('dynamake', 'DEBUG', '/touch: minimal output mtime: None'),
-                  ('dynamake', 'DEBUG',
-                   '/touch: no need to execute assuming next step(s) allow missing inputs'))
+                  ('dynamake', 'DEBUG', '/echo: exists output: output.txt'))
 
     def test_skip_for_old_input(self) -> None:
         @action()
@@ -730,13 +707,11 @@ class TestFiles(TestWithFiles):
         with LogCapture() as log:
             touch()
 
-        log.check(('dynamake', 'DEBUG', '/touch: input: ???.txt'),
-                  ('dynamake', 'DEBUG', '/touch: input paths: bar.txt foo.txt'),
-                  ('dynamake', 'DEBUG', '/touch: output: output.txt'),
-                  ('dynamake', 'DEBUG', '/touch: output paths before: output.txt'),
-                  ('dynamake', 'DEBUG', StringComparison('/touch: minimal output mtime: .*')),
-                  ('dynamake', 'DEBUG', StringComparison('/touch: maximal input mtime:.*')),
-                  ('dynamake', 'DEBUG', '/touch: no need to execute since outputs are newer'))
+        log.check(('dynamake', 'DEBUG', '/touch: input(s): ???.txt'),
+                  ('dynamake', 'DEBUG', '/touch: output(s): output.txt'),
+                  ('dynamake', 'DEBUG', '/touch: glob input: ???.txt path(s): bar.txt foo.txt'),
+                  ('dynamake', 'DEBUG', '/touch: exists output: output.txt'),
+                  ('dynamake', 'DEBUG', '/touch: no need to execute because output(s) are newer'))
 
     def test_run_for_old_output(self) -> None:
         @action()
@@ -750,18 +725,17 @@ class TestFiles(TestWithFiles):
         with LogCapture() as log:
             touch()
 
-        log.check(('dynamake', 'DEBUG', '/touch: input: input.txt'),
-                  ('dynamake', 'DEBUG', '/touch: input paths: input.txt'),
-                  ('dynamake', 'DEBUG', '/touch: output: output.txt'),
-                  ('dynamake', 'DEBUG', '/touch: output paths before: output.txt'),
-                  ('dynamake', 'DEBUG', StringComparison('/touch: minimal output mtime: .*')),
-                  ('dynamake', 'DEBUG', StringComparison('/touch: maximal input mtime:.*')),
-                  ('dynamake', 'DEBUG', '/touch: need to execute since inputs are newer'),
+        log.check(('dynamake', 'DEBUG', '/touch: input(s): input.txt'),
+                  ('dynamake', 'DEBUG', '/touch: output(s): output.txt'),
+                  ('dynamake', 'DEBUG', '/touch: exists input: input.txt'),
+                  ('dynamake', 'DEBUG', '/touch: exists output: output.txt'),
+                  ('dynamake', 'DEBUG',
+                   '/touch: need to execute because of newer input: input.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/touch: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'DEBUG', '/touch: delete stale outputs: output.txt'),
+                  ('dynamake', 'DEBUG', '/touch: delete stale output: output.txt'),
                   ('dynamake', 'INFO', '/touch: run: touch output.txt'),
-                  ('dynamake', 'DEBUG', '/touch: output paths after: output.txt'))
+                  ('dynamake', 'DEBUG', '/touch: exists output: output.txt'))
 
     def test_remove_before_run(self) -> None:
         @action()
@@ -769,6 +743,7 @@ class TestFiles(TestWithFiles):
             return Action(input=['input.txt'], output=['output.txt'], run=['false'])
 
         write_file('output.txt')
+        sleep(0.01)
         write_file('input.txt')
 
         with LogCapture() as log:
@@ -776,16 +751,14 @@ class TestFiles(TestWithFiles):
                                    r'/fail: .* command: false',
                                    fail)
 
-        log.check(('dynamake', 'DEBUG', '/fail: input: input.txt'),
-                  ('dynamake', 'DEBUG', '/fail: input paths: input.txt'),
-                  ('dynamake', 'DEBUG', '/fail: output: output.txt'),
-                  ('dynamake', 'DEBUG', '/fail: output paths before: output.txt'),
-                  ('dynamake', 'DEBUG', StringComparison('/fail: minimal output mtime: .*')),
-                  ('dynamake', 'DEBUG', StringComparison('/fail: maximal input mtime:.*')),
-                  ('dynamake', 'DEBUG', '/fail: need to execute since inputs are newer'),
+        log.check(('dynamake', 'DEBUG', '/fail: input(s): input.txt'),
+                  ('dynamake', 'DEBUG', '/fail: output(s): output.txt'),
+                  ('dynamake', 'DEBUG', '/fail: exists input: input.txt'),
+                  ('dynamake', 'DEBUG', '/fail: exists output: output.txt'),
+                  ('dynamake', 'DEBUG', '/fail: need to execute because of newer input: input.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/fail: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'DEBUG', '/fail: delete stale outputs: output.txt'),
+                  ('dynamake', 'DEBUG', '/fail: delete stale output: output.txt'),
                   ('dynamake', 'INFO', '/fail: run: false'),
                   ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'))
 
@@ -798,6 +771,7 @@ class TestFiles(TestWithFiles):
                           run=[['touch', 'output.txt'], ['false']])
 
         write_file('output.txt')
+        sleep(0.01)
         write_file('input.txt')
 
         with LogCapture() as log:
@@ -805,20 +779,18 @@ class TestFiles(TestWithFiles):
                                    r'/fail: .* command: false',
                                    fail)
 
-        log.check(('dynamake', 'DEBUG', '/fail: input: input.txt'),
-                  ('dynamake', 'DEBUG', '/fail: input paths: input.txt'),
-                  ('dynamake', 'DEBUG', '/fail: output: output.txt'),
-                  ('dynamake', 'DEBUG', '/fail: output paths before: output.txt'),
-                  ('dynamake', 'DEBUG', StringComparison('/fail: minimal output mtime: .*')),
-                  ('dynamake', 'DEBUG', StringComparison('/fail: maximal input mtime:.*')),
-                  ('dynamake', 'DEBUG', '/fail: need to execute since inputs are newer'),
+        log.check(('dynamake', 'DEBUG', '/fail: input(s): input.txt'),
+                  ('dynamake', 'DEBUG', '/fail: output(s): output.txt'),
+                  ('dynamake', 'DEBUG', '/fail: exists input: input.txt'),
+                  ('dynamake', 'DEBUG', '/fail: exists output: output.txt'),
+                  ('dynamake', 'DEBUG', '/fail: need to execute because of newer input: input.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/fail: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'DEBUG', '/fail: delete stale outputs: output.txt'),
+                  ('dynamake', 'DEBUG', '/fail: delete stale output: output.txt'),
                   ('dynamake', 'INFO', '/fail: run: touch output.txt'),
                   ('dynamake', 'INFO', '/fail: run: false'),
                   ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'),
-                  ('dynamake', 'DEBUG', '/fail: delete failed outputs: output.txt'))
+                  ('dynamake', 'DEBUG', '/fail: delete failed output: output.txt'))
 
         self.assertFalse(os.path.exists('output.txt'))
 
@@ -829,6 +801,7 @@ class TestFiles(TestWithFiles):
                           delete_stale_outputs=False, delete_failed_outputs=False)
 
         write_file('output.txt')
+        sleep(0.01)
         write_file('input.txt')
 
         with LogCapture() as log:
@@ -836,13 +809,11 @@ class TestFiles(TestWithFiles):
                                    r'/fail: .* command: false',
                                    fail)
 
-        log.check(('dynamake', 'DEBUG', '/fail: input: input.txt'),
-                  ('dynamake', 'DEBUG', '/fail: input paths: input.txt'),
-                  ('dynamake', 'DEBUG', '/fail: output: output.txt'),
-                  ('dynamake', 'DEBUG', '/fail: output paths before: output.txt'),
-                  ('dynamake', 'DEBUG', StringComparison('/fail: minimal output mtime: .*')),
-                  ('dynamake', 'DEBUG', StringComparison('/fail: maximal input mtime:.*')),
-                  ('dynamake', 'DEBUG', '/fail: need to execute since inputs are newer'),
+        log.check(('dynamake', 'DEBUG', '/fail: input(s): input.txt'),
+                  ('dynamake', 'DEBUG', '/fail: output(s): output.txt'),
+                  ('dynamake', 'DEBUG', '/fail: exists input: input.txt'),
+                  ('dynamake', 'DEBUG', '/fail: exists output: output.txt'),
+                  ('dynamake', 'DEBUG', '/fail: need to execute because of newer input: input.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/fail: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/fail: run: false'),
@@ -850,34 +821,118 @@ class TestFiles(TestWithFiles):
 
         self.assertTrue(os.path.exists('output.txt'))
 
+    def test_keep_success_precious(self) -> None:
+        @action()
+        def keeper() -> Action:
+            return Action(input=['input.txt'], output=[precious('output.txt')], run=['true'])
+
+        write_file('output.txt', 'a\n')
+        sleep(0.01)
+        write_file('input.txt')
+
+        with LogCapture() as log:
+            keeper()
+
+        log.check(('dynamake', 'DEBUG', '/keeper: input(s): input.txt'),
+                  ('dynamake', 'DEBUG', '/keeper: output(s): output.txt'),
+                  ('dynamake', 'DEBUG', '/keeper: exists input: input.txt'),
+                  ('dynamake', 'DEBUG', '/keeper: exists output: output.txt'),
+                  ('dynamake', 'DEBUG',
+                   '/keeper: need to execute because of newer input: input.txt'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/keeper: use resource: steps amount: 1.0 .*')),
+                  ('dynamake', 'INFO', '/keeper: run: true'),
+                  ('dynamake', 'DEBUG', '/keeper: exists output: output.txt'))
+
+        self.expect_file('output.txt', 'a\n')
+
+    def test_keep_fail_precious(self) -> None:
+        @action()
+        def keeper() -> Action:
+            return Action(input=['input.txt'], output=[precious('output.txt')], run=['false'])
+
+        write_file('output.txt', 'a\n')
+        sleep(0.01)
+        write_file('input.txt')
+
+        with LogCapture() as log:
+            self.assertRaisesRegex(RuntimeError,
+                                   r'/keeper: .* command: false',
+                                   keeper)
+
+        log.check(('dynamake', 'DEBUG', '/keeper: input(s): input.txt'),
+                  ('dynamake', 'DEBUG', '/keeper: output(s): output.txt'),
+                  ('dynamake', 'DEBUG', '/keeper: exists input: input.txt'),
+                  ('dynamake', 'DEBUG', '/keeper: exists output: output.txt'),
+                  ('dynamake', 'DEBUG',
+                   '/keeper: need to execute because of newer input: input.txt'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/keeper: use resource: steps amount: 1.0 .*')),
+                  ('dynamake', 'INFO', '/keeper: run: false'),
+                  ('dynamake', 'DEBUG', '/keeper: failed with exit status: 1'))
+
+        self.expect_file('output.txt', 'a\n')
+
     def test_delete_dir(self) -> None:
         @action()
         def mkdir() -> Action:
-            return Action(input=['input.txt'], output=['output.dir'], run=['mkdir', 'output.dir'])
+            return Action(input=['input.txt'],
+                          output=['output.dir', 'output.txt'],
+                          run=[['mkdir', 'output.dir'], ['touch', 'output.txt']])
 
         os.mkdir('output.dir')
         write_file('output.dir/output.txt')
+        sleep(0.01)
         write_file('input.txt')
 
         with LogCapture() as log:
             mkdir()
 
-        log.check(('dynamake', 'DEBUG', '/mkdir: input: input.txt'),
-                  ('dynamake', 'DEBUG', '/mkdir: input paths: input.txt'),
-                  ('dynamake', 'DEBUG', '/mkdir: output: output.dir'),
-                  ('dynamake', 'DEBUG', '/mkdir: output paths before: output.dir'),
-                  ('dynamake', 'DEBUG', StringComparison('/mkdir: minimal output mtime: .*')),
-                  ('dynamake', 'DEBUG', StringComparison('/mkdir: maximal input mtime:.*')),
-                  ('dynamake', 'DEBUG', '/mkdir: need to execute since inputs are newer'),
+        log.check(('dynamake', 'DEBUG', '/mkdir: input(s): input.txt'),
+                  ('dynamake', 'DEBUG', '/mkdir: output(s): output.dir output.txt'),
+                  ('dynamake', 'DEBUG', '/mkdir: exists input: input.txt'),
+                  ('dynamake', 'DEBUG', '/mkdir: exists output: output.dir'),
+                  ('dynamake', 'DEBUG',
+                   '/mkdir: needs to execute because missing output(s): output.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/mkdir: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'DEBUG', '/mkdir: delete stale outputs: output.dir'),
+                  ('dynamake', 'DEBUG', '/mkdir: delete stale output: output.dir'),
                   ('dynamake', 'INFO', '/mkdir: run: mkdir output.dir'),
-                  ('dynamake', 'DEBUG', '/mkdir: output paths after: output.dir'))
+                  ('dynamake', 'INFO', '/mkdir: run: touch output.txt'),
+                  ('dynamake', 'DEBUG', '/mkdir: exists output: output.dir'),
+                  ('dynamake', 'DEBUG', '/mkdir: exists output: output.txt'))
 
         self.assertFalse(os.path.exists('output.dir/output.txt'))
 
-    def test_touch_dir(self) -> None:
+    def test_touch_file(self) -> None:
+        @action()
+        def toucher() -> Action:
+            return Action(input=['input.txt'], output=['output.txt'],
+                          run=[],
+                          delete_stale_outputs=False,
+                          touch_success_outputs=True)
+
+        write_file('output.txt')
+        sleep(0.01)
+        write_file('input.txt')
+
+        with LogCapture() as log:
+            toucher()
+
+        log.check(('dynamake', 'DEBUG', '/toucher: input(s): input.txt'),
+                  ('dynamake', 'DEBUG', '/toucher: output(s): output.txt'),
+                  ('dynamake', 'DEBUG', '/toucher: exists input: input.txt'),
+                  ('dynamake', 'DEBUG', '/toucher: exists output: output.txt'),
+                  ('dynamake', 'DEBUG',
+                   '/toucher: need to execute because of newer input: input.txt'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/toucher: use resource: steps amount: 1.0 .*')),
+                  ('dynamake', 'DEBUG', '/toucher: exists output: output.txt'),
+                  ('dynamake', 'DEBUG', '/toucher: touch output: output.txt'))
+
+        self.assertTrue(os.stat('input.txt').st_mtime_ns < os.stat('output.txt').st_mtime_ns)
+
+    def test_no_touch_dir(self) -> None:
         @action()
         def mkdir() -> Action:
             return Action(input=['input.txt'], output=['output.dir'],
@@ -887,26 +942,24 @@ class TestFiles(TestWithFiles):
 
         os.mkdir('output.dir')
         write_file('output.dir/output.txt')
+        sleep(0.01)
         write_file('input.txt')
 
         with LogCapture() as log:
             mkdir()
 
-        log.check(('dynamake', 'DEBUG', '/mkdir: input: input.txt'),
-                  ('dynamake', 'DEBUG', '/mkdir: input paths: input.txt'),
-                  ('dynamake', 'DEBUG', '/mkdir: output: output.dir'),
-                  ('dynamake', 'DEBUG', '/mkdir: output paths before: output.dir'),
-                  ('dynamake', 'DEBUG', StringComparison('/mkdir: minimal output mtime: .*')),
-                  ('dynamake', 'DEBUG', StringComparison('/mkdir: maximal input mtime:.*')),
-                  ('dynamake', 'DEBUG', '/mkdir: need to execute since inputs are newer'),
+        log.check(('dynamake', 'DEBUG', '/mkdir: input(s): input.txt'),
+                  ('dynamake', 'DEBUG', '/mkdir: output(s): output.dir'),
+                  ('dynamake', 'DEBUG', '/mkdir: exists input: input.txt'),
+                  ('dynamake', 'DEBUG', '/mkdir: exists output: output.dir'),
+                  ('dynamake', 'DEBUG',
+                   '/mkdir: need to execute because of newer input: input.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/mkdir: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/mkdir: run: mkdir -p output.dir'),
-                  ('dynamake', 'DEBUG', '/mkdir: output paths after: output.dir'),
-                  ('dynamake', 'DEBUG', '/mkdir: touch outputs: output.dir'))
+                  ('dynamake', 'DEBUG', '/mkdir: exists output: output.dir'))
 
         self.assertTrue(os.path.exists('output.dir/output.txt'))
-        self.assertTrue(os.stat('output.dir').st_mtime_ns > os.stat('input.txt').st_mtime_ns)
 
     def test_delete_empty_dir(self) -> None:
         @action()
@@ -916,6 +969,7 @@ class TestFiles(TestWithFiles):
 
         os.mkdir('output.dir')
         write_file('output.dir/output.txt')
+        sleep(0.01)
         write_file('input.txt')
 
         with LogCapture() as log:
@@ -923,16 +977,16 @@ class TestFiles(TestWithFiles):
                                    r'/fail: .* command: false',
                                    fail)
 
-        log.check(('dynamake', 'DEBUG', '/fail: input: input.txt'),
-                  ('dynamake', 'DEBUG', '/fail: input paths: input.txt'),
-                  ('dynamake', 'DEBUG', '/fail: output: output.dir/output.txt'),
-                  ('dynamake', 'DEBUG', '/fail: output paths before: output.dir/output.txt'),
-                  ('dynamake', 'DEBUG', StringComparison('/fail: minimal output mtime: .*')),
-                  ('dynamake', 'DEBUG', StringComparison('/fail: maximal input mtime:.*')),
-                  ('dynamake', 'DEBUG', '/fail: need to execute since inputs are newer'),
+        log.check(('dynamake', 'DEBUG', '/fail: input(s): input.txt'),
+                  ('dynamake', 'DEBUG', '/fail: output(s): output.dir/output.txt'),
+                  ('dynamake', 'DEBUG', '/fail: exists input: input.txt'),
+                  ('dynamake', 'DEBUG', '/fail: exists output: output.dir/output.txt'),
+                  ('dynamake', 'DEBUG', '/fail: need to execute because of newer input: input.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/fail: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'DEBUG', '/fail: delete stale outputs: output.dir/output.txt'),
+                  ('dynamake', 'DEBUG', '/fail: delete stale output: output.dir/output.txt'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/fail: delete empty directory: .*/output.dir')),
                   ('dynamake', 'INFO', '/fail: run: false'),
                   ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'))
 
@@ -985,15 +1039,11 @@ class TestFiles(TestWithFiles):
         with LogCapture() as log:
             not_use_param()
 
-        log.check(('dynamake', 'DEBUG', '/not_use_param: input: None'),
-                  ('dynamake', 'DEBUG', '/not_use_param: input paths: None'),
-                  ('dynamake', 'DEBUG', '/not_use_param: output: None'),
-                  ('dynamake', 'DEBUG', '/not_use_param: output paths before: None'),
+        log.check(('dynamake', 'DEBUG', '/not_use_param: input(s): None'),
+                  ('dynamake', 'DEBUG', '/not_use_param: output(s): None'),
+                  ('dynamake', 'DEBUG', '/not_use_param: needs to execute because has no outputs'),
                   ('dynamake', 'DEBUG',
-                   '/not_use_param: needs to execute because has no outputs'),
-                  ('dynamake', 'DEBUG',
-                   StringComparison('/not_use_param: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'DEBUG', '/not_use_param: output paths after: None'))
+                   StringComparison('/not_use_param: use resource: steps amount: 1.0 .*')))
 
     def test_use_config_file(self) -> None:
         @action()
@@ -1010,20 +1060,17 @@ class TestFiles(TestWithFiles):
         self.expect_file('output.yaml', '{foo: 1}\n')
 
         log.check(('dynamake', 'DEBUG',
-                   '/use_file: writing new configuration file: '
+                   '/use_file: write new config: '
                    '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml'),
-                  ('dynamake', 'DEBUG', '/use_file: input: None'),
-                  ('dynamake', 'DEBUG', '/use_file: input paths: None'),
-                  ('dynamake', 'DEBUG', '/use_file: output: output.yaml'),
-                  ('dynamake', 'DEBUG', '/use_file: output paths before: None'),
-                  ('dynamake', 'DEBUG', '/use_file: minimal output mtime: None'),
+                  ('dynamake', 'DEBUG', '/use_file: input(s): None'),
+                  ('dynamake', 'DEBUG', '/use_file: output(s): output.yaml'),
                   ('dynamake', 'DEBUG',
-                   '/use_file: need to execute assuming next step(s) need all inputs'),
+                   '/use_file: needs to execute because missing output(s): output.yaml'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/use_file: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'INFO', '/use_file: run: cp '
-                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
-                  ('dynamake', 'DEBUG', '/use_file: output paths after: output.yaml'))
+                  ('dynamake', 'INFO', '/use_file: run: '
+                   'cp .dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
+                  ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'))
 
         write_file('config.yaml', '- { when: { step: use_file }, then: { foo: 1 } }')
         load_config('config.yaml')
@@ -1031,16 +1078,13 @@ class TestFiles(TestWithFiles):
         with LogCapture() as log:
             use_file()
 
-        log.check(('dynamake', 'DEBUG',
-                   '/use_file: using existing configuration file: '
+        log.check(('dynamake', 'DEBUG', '/use_file: use existing config: '
                    '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml'),
-                  ('dynamake', 'DEBUG', '/use_file: input: None'),
-                  ('dynamake', 'DEBUG', '/use_file: input paths: None'),
-                  ('dynamake', 'DEBUG', '/use_file: output: output.yaml'),
-                  ('dynamake', 'DEBUG', '/use_file: output paths before: output.yaml'),
-                  ('dynamake', 'DEBUG', StringComparison('/use_file: minimal output mtime: .*')),
-                  ('dynamake', 'DEBUG', StringComparison('/use_file: maximal input mtime:.*')),
-                  ('dynamake', 'DEBUG', '/use_file: no need to execute since outputs are newer'))
+                  ('dynamake', 'DEBUG', '/use_file: input(s): None'),
+                  ('dynamake', 'DEBUG', '/use_file: output(s): output.yaml'),
+                  ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'),
+                  ('dynamake', 'DEBUG',
+                   '/use_file: no need to execute because output(s) are newer'))
 
         write_file('config.yaml', '- { when: {}, then: { foo: 2 } }')
         load_config('config.yaml')
@@ -1049,22 +1093,19 @@ class TestFiles(TestWithFiles):
             use_file()
         self.expect_file('output.yaml', '{foo: 2}\n')
 
-        log.check(('dynamake', 'DEBUG',
-                   '/use_file: writing new configuration file: '
+        log.check(('dynamake', 'DEBUG', '/use_file: write new config: '
                    '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml'),
-                  ('dynamake', 'DEBUG', '/use_file: input: None'),
-                  ('dynamake', 'DEBUG', '/use_file: input paths: None'),
-                  ('dynamake', 'DEBUG', '/use_file: output: output.yaml'),
-                  ('dynamake', 'DEBUG', '/use_file: output paths before: output.yaml'),
-                  ('dynamake', 'DEBUG', StringComparison('/use_file: minimal output mtime: .*')),
-                  ('dynamake', 'DEBUG', StringComparison('/use_file: maximal input mtime:.*')),
-                  ('dynamake', 'DEBUG', '/use_file: need to execute since inputs are newer'),
+                  ('dynamake', 'DEBUG', '/use_file: input(s): None'),
+                  ('dynamake', 'DEBUG', '/use_file: output(s): output.yaml'),
+                  ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'),
+                  ('dynamake', 'DEBUG', '/use_file: need to execute because of newer config: '
+                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/use_file: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'DEBUG', '/use_file: delete stale outputs: output.yaml'),
+                  ('dynamake', 'DEBUG', '/use_file: delete stale output: output.yaml'),
                   ('dynamake', 'INFO', '/use_file: run: cp '
                    '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
-                  ('dynamake', 'DEBUG', '/use_file: output paths after: output.yaml'))
+                  ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'))
 
     def test_main_config(self) -> None:
         @action()
@@ -1076,8 +1117,6 @@ class TestFiles(TestWithFiles):
         write_file('Config.yaml', """
             - when: {step: /}
               then:
-                missing_inputs: optional
-                missing_outputs: partial
                 touch_success_outputs: False
                 delete_stale_outputs: False
                 delete_empty_directories: True
@@ -1088,8 +1127,6 @@ class TestFiles(TestWithFiles):
         self.assertTrue(Make.touch_success_outputs)
         self.assertFalse(Make.delete_stale_outputs)
         self.assertTrue(Make.delete_empty_directories)
-        self.assertEqual(Make.missing_inputs, MissingInputs.optional)
-        self.assertEqual(Make.missing_outputs, MissingOutputs.partial)
 
     def test_unused_main_config(self) -> None:
         @action()

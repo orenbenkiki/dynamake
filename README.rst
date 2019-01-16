@@ -253,6 +253,39 @@ This demonstrates some additional concepts:
   existing files that match the output glob pattern. Either way, the actual list of outputs is
   available in the returned action object, available to be used by additional steps.
 
+Annotations
+...........
+
+You can annotate the input and/or outputs of an action to modify how they are processed:
+
+* :py:func:`dynamake.patterns.optional` allows the input to not exist before an action is executed,
+  or an output to not exist after the action is executed.
+
+* :py:func:`dynamake.patterns.exists` ignores the modification time of an input or an output,
+  instead just considering whether it exists.
+
+* :py:func:`dynamake.patterns.precious` ensures that the action output will not be deleted,
+  either before it is executed ("stale" outputs) or if the action has failed.
+
+These functions can be imported directly from the :py:mod:`dynamake.make` module.
+
+The :py:class:`dynamake.make.Make` class also contains some static flags that modify
+how inputs and outputs are treated:
+
+* :py:attr:`dynamake.make.Make.delete_stale_outputs` controls whether (non-``precious``) action
+  outputs are deleted before the action is executed (by default, they are).
+
+* :py:attr:`dynamake.make.Make.delete_failed_outputs` controls whether (non-``precious``) action
+  outputs are deleted if the action failed (by default, they are).
+
+* :py:attr:`dynamake.make.Make.delete_empty_directories` controls whether to delete any directory
+  which becomes empty as a result of deleting output files in it (by default, they are not).
+
+* :py:attr:`dynamake.make.Make.touch_success_outputs` controls whether (non-``exists``) action
+  outputs are touched after the action is executed (by default, they are not).
+
+You can also override these flags on a per-:py:class:`dynamake.make.Action` basis.
+
 Parallel Actions
 ................
 
@@ -568,22 +601,22 @@ WHAT NOT (YET)
 Since DynaMake is very new, there are many features that should be implemented, but haven't been
 worked on yet:
 
-* Sumbit actions to a cluster/grid/etc. when possible and sensible. This may require some
-  annotation inside the flow (not all actions deserve being distributed). Possibly add a
-  ``distributed`` call, and some configuration to allow interfacing with different cluster/grid
-  systems. Ensure distribution resources are distinct from parallelism resources.
-
 * Allow registering additional file formats for the generated configuration files.
 
 * Allow forcing rebuilding (some) targets.
-
-* Generate a more detailed reason for each executed action.
 
 * Collect merged coverage from invocations of Python sub-scripts for tests.
 
 * Dry run. While it is impossible in general to print the full set of dry run actions, if should
   be easy to just print the 1st action(s) that need to be executed. This should provide most of the
   value.
+
+* Allow automated clean actions based on the collected output files of actions. If there's nothing
+  to be done when running some plan, the collected output of all actions invoked by that plan are
+  fair game to being removed as part of a clean action. However, due to the dry-run problem, we
+  can't automatically clean outputs of actions that depend on actions that need to be executed.
+
+* Allow skipping generating intermediate files if otherwise no actions need to be done.
 
 * Generate a tree (actually a DAG) of step invocations. This would require the steps to be
   sufficiently simple to allow for scanning the Python source code for identifiers containing the
