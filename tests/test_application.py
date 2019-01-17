@@ -166,7 +166,7 @@ class TestParameters(TestWithReset):
 
     def test_parallel(self) -> None:
         results = parallel(1, 2, _call_in_parallel, kwargs=lambda index: {'index': index})
-        self.assertEqual(results, [('ForkThread-1', 0), ('ForkThread-1', 1)])
+        self.assertEqual(results, [('Fork-1.Thread-1', 0), ('Fork-1.Thread-1', 1)])
 
     def test_overrides(self) -> None:
         Prog.logger.setLevel('WARN')
@@ -343,6 +343,15 @@ class TestCommandsMain(TestWithFiles):
         self.assertRaisesRegex(RuntimeError,
                                'Unknown .* function: bar',
                                define_main_commands(['bar']))
+
+    def test_unknown_function(self) -> None:
+        @config
+        def unreachable() -> None:  # pylint: disable=unused-variable
+            pass
+        self.assertRaisesRegex(RuntimeError,
+                               'function: .*.test_unknown_function.<locals>.unreachable '
+                               '.* not reachable',
+                               define_main_commands())
 
     def test_positional_command(self) -> None:
         @config

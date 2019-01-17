@@ -39,7 +39,7 @@ from .patterns import first_sentence
 Wrapped = TypeVar('Wrapped', bound=Callable)
 
 
-class Func:
+class Func:  # pylint: disable=too-many-instance-attributes
     """
     Data collected for a configurable function.
     """
@@ -82,6 +82,10 @@ class Func:
         #: potential invoked names, and is later filtered to only include configurable function
         #: names.
         self.invoked_function_names = _invoked_names(function)
+
+        #: The set of other configurable functions that invoke it. This starts empty and is
+        #: later filled.
+        self.invoker_function_names: Set[str] = set()
 
         has_positional_arguments, parameter_names = _parameter_names(function)
         for parameter_name in parameter_names:
@@ -147,12 +151,14 @@ class Func:
 
     @staticmethod
     def _finalize_invoked_functions() -> None:
-        for configurable in Func.by_name.values():
+        for caller_name, caller in Func.by_name.items():
             invoked_function_names: Set[str] = set()
-            for name in configurable.invoked_function_names:
-                if name in Func.by_name:
-                    invoked_function_names.add(name)
-            configurable.invoked_function_names = invoked_function_names
+            for called_name in caller.invoked_function_names:
+                called = Func.by_name.get(called_name)
+                if called is not None:
+                    called.invoker_function_names.add(caller_name)
+                    invoked_function_names.add(called_name)
+            caller.invoked_function_names = invoked_function_names
 
     @staticmethod
     def _finalize_indirect_parameter_names() -> None:
@@ -405,6 +411,15 @@ class Prog:
                     command_parser.add_argument('--' + name, help=text,  # type: ignore
                                                 metavar=parameter.metavar)
 
+        for function_name, configurable in Func.by_name.items():
+            if function_name in functions:
+                continue
+            if not configurable.invoker_function_names:
+                raise RuntimeError('The configurable function: %s.%s '
+                                   'is not reachable from the command line'
+                                   % (configurable.function.__module__,
+                                      configurable.function.__qualname__))
+
     @staticmethod
     def parse_args(args: Namespace) -> None:
         """
@@ -507,6 +522,7 @@ class Parallel:
     Sigh.
     """
 
+    _fork_index: Value
     _process_index: Value
     _function: Optional[Callable]
     _fixed_args: Tuple
@@ -519,6 +535,8 @@ class Parallel:
         """
         Reset all the current state, for tests.
         """
+        Parallel._fork_index = Value(ctypes.c_int32, lock=True)  # type: ignore
+        Parallel._fork_index.value = 0
         Parallel._process_index = Value(ctypes.c_int32, lock=True)  # type: ignore
         Parallel._process_index.value = 0
         Parallel._function = None
@@ -532,12 +550,18 @@ class Parallel:
                kwargs: Optional[Callable[[int], Dict[str, Any]]] = None,
                overrides: Optional[Callable[[int], Dict[str, Any]]] = None,
                **fixed_kwargs: Any) -> List[Any]:
+        previous_process_index = Parallel._process_index
         previous_function = Parallel._function
         previous_fixed_args = Parallel._fixed_args
         previous_fixed_kwargs = Parallel._fixed_kwargs
         previous_indexed_kwargs = Parallel._indexed_kwargs
         previous_indexed_overrides = Parallel._indexed_overrides
 
+        with Parallel._fork_index:  # type: ignore
+            Parallel._fork_index.value += 1
+
+        Parallel._process_index = Value(ctypes.c_int32, lock=True)  # type: ignore
+        Parallel._process_index.value = 0
         Parallel._function = function
         Parallel._fixed_args = fixed_args
         Parallel._fixed_kwargs = fixed_kwargs
@@ -547,9 +571,10 @@ class Parallel:
             [{} if overrides is None else overrides(index) for index in range(invocations)]
 
         try:
-            with Pool(processes, Parallel._initialize_process) as pool:
+            with Pool(min(processes, invocations), Parallel._initialize_process) as pool:
                 return pool.map(Parallel._call, range(invocations))
         finally:
+            Parallel._process_index = previous_process_index
             Parallel._function = previous_function
             Parallel._fixed_args = previous_fixed_args
             Parallel._fixed_kwargs = previous_fixed_kwargs
@@ -569,7 +594,8 @@ class Parallel:
         with Parallel._process_index:  # type: ignore
             Parallel._process_index.value += 1
             process_index = Parallel._process_index.value
-        current_thread().name = 'ForkThread-%s' % process_index
+        fork_index = Parallel._fork_index.value
+        current_thread().name = 'Fork-%s.Thread-%s' % (fork_index, process_index)
 
 
 def parallel(processes: int, invocations: int, function: Callable, *fixed_args: Any,
