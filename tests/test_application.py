@@ -168,7 +168,7 @@ class TestParameters(TestWithReset):
         results = parallel(1, 2, _call_in_parallel, kwargs=lambda index: {'index': index})
         self.assertEqual(results, [('ForkThread-1', 0), ('ForkThread-1', 1)])
 
-    def test_override(self) -> None:
+    def test_overrides(self) -> None:
         Prog.logger.setLevel('WARN')
         Param(name='bar', default=1, parser=int, description='The number of bars')
 
@@ -190,6 +190,17 @@ class TestParameters(TestWithReset):
         self.assertRaisesRegex(RuntimeError,
                                'Unknown override parameter: baz',
                                nested)
+
+    def test_parallel_overrides(self) -> None:
+        Prog.logger.setLevel('WARN')
+        Param(name='bar', default=1, parser=int, description='The number of bars')
+
+        @config
+        def foo(*, bar: int = 0) -> int:
+            return bar
+
+        results = parallel(1, 2, foo, overrides=lambda index: {'bar': index})
+        self.assertEqual(results, [0, 1])
 
 
 def _call_in_parallel(index: int) -> Tuple[str, int]:
