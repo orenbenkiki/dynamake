@@ -13,6 +13,7 @@ from ast import Load
 from ast import Name
 from ast import NodeVisitor
 from ast import parse
+from contextlib import contextmanager
 from inspect import Parameter
 from inspect import getsource
 from inspect import signature
@@ -23,6 +24,7 @@ from threading import current_thread
 from typing import Any
 from typing import Callable
 from typing import Dict
+from typing import Iterator
 from typing import List
 from typing import Optional
 from typing import Set
@@ -524,31 +526,9 @@ class Parallel:
         Parallel._indexed_kwargs = []
 
     @staticmethod
-    def call(processes: int, invocations: int, function: Callable, *fixed_args: Any,
-             kwargs: Optional[Callable[[int], Dict[str, Any]]] = None,
-             **fixed_kwarg: Any) -> List[Any]:
-        """
-        Invoke a function in parallel.
-
-        Parameters
-        ----------
-        processeses
-            The number of processes to fork.
-        invocations
-            The number of function invocations needed.
-        fixed_args
-            Positional arguments for the function, that do not depend on the invocation index.
-        kwargs
-            An optional ``lambda`` taking the invocation index and returning a dictionary of keyword
-            arguments which do depend on the index.
-        fixed_kwarg
-            Other named arguments for the function, that do not depend on the invocation index.
-
-        Returns
-        -------
-        List[Any]
-            The list of results from all the function invocations, in order.
-        """
+    def _calls(processes: int, invocations: int, function: Callable, *fixed_args: Any,
+               kwargs: Optional[Callable[[int], Dict[str, Any]]] = None,
+               **fixed_kwargs: Any) -> List[Any]:
         previous_function = Parallel._function
         previous_fixed_args = Parallel._fixed_args
         previous_fixed_kwargs = Parallel._fixed_kwargs
@@ -556,7 +536,7 @@ class Parallel:
 
         Parallel._function = function
         Parallel._fixed_args = fixed_args
-        Parallel._fixed_kwargs = fixed_kwarg
+        Parallel._fixed_kwargs = fixed_kwargs
         Parallel._indexed_kwargs = \
             [{} if kwargs is None else kwargs(index) for index in range(invocations)]
 
@@ -582,6 +562,62 @@ class Parallel:
             Parallel._process_index.value += 1
             process_index = Parallel._process_index.value
         current_thread().name = 'ForkThread-%s' % process_index
+
+
+def parallel(processes: int, invocations: int, function: Callable, *fixed_args: Any,
+             kwargs: Optional[Callable[[int], Dict[str, Any]]] = None,
+             **fixed_kwargs: Any) -> List[Any]:
+    """
+    Invoke a function in parallel.
+
+    Parameters
+    ----------
+    processeses
+        The number of processes to fork.
+    invocations
+        The number of function invocations needed.
+    fixed_args
+        Positional arguments for the function, that do not depend on the invocation index.
+    kwargs
+        An optional ``lambda`` taking the invocation index and returning a dictionary of keyword
+        arguments which do depend on the index.
+    fixed_kwargs
+        Other named arguments for the function, that do not depend on the invocation index.
+
+    Returns
+    -------
+    List[Any]
+        The list of results from all the function invocations, in order.
+    """
+    return Parallel._calls(processes, invocations, function,  # pylint: disable=protected-access
+                           *fixed_args, kwargs=kwargs, **fixed_kwargs)
+
+
+@contextmanager
+def override(**values: Any) -> Iterator[None]:
+    """
+    Override configuration parameters for some nested calls.
+
+    Writing:
+
+    .. code-block:: python
+
+        with override(foo=value):
+            x = some_wrapped_function(...)
+
+    Will execute all the configurable computations in ``some_wrapped_function``
+    as if the parameter ``foo`` was configured to have the specified ``value``.
+    """
+    for name in values:
+        if name not in Prog.current.values:
+            raise RuntimeError('Unknown override parameter: %s' % name)
+    old_values = Prog.current.values
+    Prog.current.values = Prog.current.values.copy()
+    Prog.current.values.update(values)
+    try:
+        yield None
+    finally:
+        Prog.current.values = old_values
 
 
 def reset_application() -> None:
