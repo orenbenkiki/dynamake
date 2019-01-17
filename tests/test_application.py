@@ -12,10 +12,11 @@ from typing import Optional
 from typing import Tuple
 
 from dynamake.application import Func
-from dynamake.application import Parallel
 from dynamake.application import Param
 from dynamake.application import Prog
 from dynamake.application import config
+from dynamake.application import override
+from dynamake.application import parallel
 from tests import TestWithFiles
 from tests import TestWithReset
 from tests import write_file
@@ -164,8 +165,31 @@ class TestParameters(TestWithReset):
                                parameters.get, 'bar', TestParameters.test_missing_parameter)
 
     def test_parallel(self) -> None:
-        results = Parallel.call(1, 2, _call_in_parallel, kwargs=lambda index: {'index': index})
+        results = parallel(1, 2, _call_in_parallel, kwargs=lambda index: {'index': index})
         self.assertEqual(results, [('ForkThread-1', 0), ('ForkThread-1', 1)])
+
+    def test_override(self) -> None:
+        Prog.logger.setLevel('WARN')
+        Param(name='bar', default=1, parser=int, description='The number of bars')
+
+        @config
+        def foo(*, bar: int = 0) -> int:
+            return bar
+
+        self.assertEqual(foo(), 1)
+
+        with override(bar=2):
+            self.assertEqual(foo(), 2)
+
+        self.assertEqual(foo(), 1)
+
+        def nested() -> None:
+            with override(baz=2):
+                self.assertEqual(foo(), 2)
+
+        self.assertRaisesRegex(RuntimeError,
+                               'Unknown override parameter: baz',
+                               nested)
 
 
 def _call_in_parallel(index: int) -> Tuple[str, int]:
