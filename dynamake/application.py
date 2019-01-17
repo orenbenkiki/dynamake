@@ -512,6 +512,7 @@ class Parallel:
     _fixed_args: Tuple
     _fixed_kwargs: Dict[str, Any]
     _indexed_kwargs: List[Dict[str, Any]]
+    _indexed_overrides: List[Dict[str, Any]]
 
     @staticmethod
     def reset() -> None:
@@ -524,21 +525,26 @@ class Parallel:
         Parallel._fixed_args = ()
         Parallel._fixed_kwargs = {}
         Parallel._indexed_kwargs = []
+        Parallel._indexed_overrides = []
 
     @staticmethod
     def _calls(processes: int, invocations: int, function: Callable, *fixed_args: Any,
                kwargs: Optional[Callable[[int], Dict[str, Any]]] = None,
+               overrides: Optional[Callable[[int], Dict[str, Any]]] = None,
                **fixed_kwargs: Any) -> List[Any]:
         previous_function = Parallel._function
         previous_fixed_args = Parallel._fixed_args
         previous_fixed_kwargs = Parallel._fixed_kwargs
         previous_indexed_kwargs = Parallel._indexed_kwargs
+        previous_indexed_overrides = Parallel._indexed_overrides
 
         Parallel._function = function
         Parallel._fixed_args = fixed_args
         Parallel._fixed_kwargs = fixed_kwargs
         Parallel._indexed_kwargs = \
             [{} if kwargs is None else kwargs(index) for index in range(invocations)]
+        Parallel._indexed_overrides = \
+            [{} if overrides is None else overrides(index) for index in range(invocations)]
 
         try:
             with Pool(processes, Parallel._initialize_process) as pool:
@@ -548,13 +554,15 @@ class Parallel:
             Parallel._fixed_args = previous_fixed_args
             Parallel._fixed_kwargs = previous_fixed_kwargs
             Parallel._indexed_kwargs = previous_indexed_kwargs
+            Parallel._indexed_overrides = previous_indexed_overrides
 
     @staticmethod
     def _call(index: int) -> Any:  # TODO: Appears uncovered since runs in a separate thread.
         assert Parallel._function is not None
-        return Parallel._function(*Parallel._fixed_args,
-                                  **Parallel._fixed_kwargs,
-                                  **Parallel._indexed_kwargs[index])
+        with override(**Parallel._indexed_overrides[index]):
+            return Parallel._function(*Parallel._fixed_args,
+                                      **Parallel._fixed_kwargs,
+                                      **Parallel._indexed_kwargs[index])
 
     @staticmethod
     def _initialize_process() -> None:  # TODO: Appears uncovered since runs in a separate thread.
@@ -566,6 +574,7 @@ class Parallel:
 
 def parallel(processes: int, invocations: int, function: Callable, *fixed_args: Any,
              kwargs: Optional[Callable[[int], Dict[str, Any]]] = None,
+             overrides: Optional[Callable[[int], Dict[str, Any]]] = None,
              **fixed_kwargs: Any) -> List[Any]:
     """
     Invoke a function in parallel.
@@ -581,6 +590,10 @@ def parallel(processes: int, invocations: int, function: Callable, *fixed_args: 
     kwargs
         An optional ``lambda`` taking the invocation index and returning a dictionary of keyword
         arguments which do depend on the index.
+    overrides
+        An optional ``lambda`` taking the invocation index and returning a dictionary of parameter
+        values. Each invocation will be executed under an :py:func:`dynamake.application.override`
+        using these values.
     fixed_kwargs
         Other named arguments for the function, that do not depend on the invocation index.
 
@@ -590,7 +603,7 @@ def parallel(processes: int, invocations: int, function: Callable, *fixed_args: 
         The list of results from all the function invocations, in order.
     """
     return Parallel._calls(processes, invocations, function,  # pylint: disable=protected-access
-                           *fixed_args, kwargs=kwargs, **fixed_kwargs)
+                           *fixed_args, kwargs=kwargs, overrides=overrides, **fixed_kwargs)
 
 
 @contextmanager
