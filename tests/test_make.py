@@ -10,14 +10,17 @@ import sys
 import threading
 from concurrent.futures import wait
 from datetime import datetime
+from textwrap import dedent
 from time import sleep
 from typing import Any
 from typing import Dict
 from typing import List
 
 from testfixtures import LogCapture
+from testfixtures import OutputCapture
 from testfixtures import StringComparison
 
+import dynamake.bin.dynamake as dm
 from dynamake.make import Action
 from dynamake.make import Captured
 from dynamake.make import Make
@@ -506,7 +509,7 @@ class TestMake(TestWithReset):
         sys.argv = ['__test', 'do_something']
 
         self.assertRaisesRegex(RuntimeError,
-                               r'unknown step: do_something',
+                               r'Unknown step: do_something',
                                main, argparse.ArgumentParser(), do_nothing)
 
     def test_main_flags(self) -> None:
@@ -1144,3 +1147,134 @@ class TestFiles(TestWithFiles):
         self.assertRaisesRegex(RuntimeError,
                                r'Unused top-level .* parameter: foo',
                                main, argparse.ArgumentParser(), do_nothing)
+
+    def test_no_step(self) -> None:
+        self.assertRaisesRegex(RuntimeError,
+                               'No step.* specified',
+                               dm.main)
+
+    def test_help(self) -> None:
+        sys.argv = ['__test', '-h']
+        with OutputCapture() as output:
+            self.assertRaisesRegex(RuntimeError,
+                                   'System exit status: 0',
+                                   dm.main)
+        output.compare(StringComparison('usage: __test'))
+
+    def test_help_step(self) -> None:
+        @action()
+        def documented() -> Action:  # pylint: disable=unused-variable
+            """
+            Documented. More stuff.
+            """
+            return Action(input=[], output=[], run=[])
+
+        @action(run_help=['echo', 'Run help.'])
+        def run_help() -> Action:  # pylint: disable=unused-variable
+            """
+            Documented. More stuff.
+            """
+            return Action(input=[], output=[], run=[])
+
+        @action()
+        def undocumented() -> Action:  # pylint: disable=unused-variable
+            return Action(input=[], output=[], run=[])
+
+        sys.argv = ['__test', '-hs', 'documented']
+        with OutputCapture() as output:
+            dm.main()
+        output.compare('Documented. More stuff.')
+
+        sys.argv = ['__test', '-hs', 'undocumented']
+        with OutputCapture() as output:
+            dm.main()
+        output.compare(StringComparison('No help .* step: .*.test_help_step.<locals>.undocumented'))
+
+        sys.argv = ['__test', '-hs', 'unknown']
+        self.assertRaisesRegex(RuntimeError,
+                               'Unknown step: unknown',
+                               dm.main)
+
+    def test_list_steps(self) -> None:
+        @action()
+        def documented() -> Action:  # pylint: disable=unused-variable
+            """
+            Documented. More stuff.
+            """
+            return Action(input=[], output=[], run=[])
+
+        @action()
+        def undocumented() -> Action:  # pylint: disable=unused-variable
+            return Action(input=[], output=[], run=[])
+
+        sys.argv = ['__test', '-ls']
+        with OutputCapture() as output:
+            dm.main()
+        output.compare(dedent("""
+            documented:
+                Documented.
+            undocumented
+        """))
+
+    def test_load_command_line_module(self) -> None:
+        write_file('command_line_module.py', """
+            import dynamake.make as dm
+
+            @dm.plan()
+            def step() -> None:
+                '''
+                Loaded.
+                '''
+                pass
+        """)
+
+        sys.argv = ['__test', '-m', 'command_line_module', '-hs', 'step']
+        with OutputCapture() as output:
+            dm.main()
+
+        output.compare('Loaded.')
+
+    def test_load_config_modules(self) -> None:
+        write_file('config_module.py', """
+            import dynamake.make as dm
+
+            @dm.plan()
+            def step() -> None:
+                '''
+                Loaded.
+                '''
+                pass
+        """)
+
+        write_file('Config.yaml', """
+            - when: { step: / }
+              then: { modules: config_module }
+        """)
+
+        sys.argv = ['__test', '-hs', 'step']
+        with OutputCapture() as output:
+            dm.main()
+
+        output.compare('Loaded.')
+
+    def test_config_steps(self) -> None:
+        @action()
+        def do_nothing() -> Action:  # pylint: disable=unused-variable
+            return Action(input=[], output=[], run=[])
+
+        write_file('Config.yaml', """
+            - when: { step: / }
+              then: { steps: do_nothing }
+        """)
+
+        sys.argv = ['__test', '-ll', 'DEBUG']
+        with LogCapture() as log:
+            dm.main()
+
+        log.check(('dynamake', 'INFO', 'start'),
+                  ('dynamake', 'DEBUG', '/do_nothing: input(s): None'),
+                  ('dynamake', 'DEBUG', '/do_nothing: output(s): None'),
+                  ('dynamake', 'DEBUG', '/do_nothing: needs to execute because has no outputs'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/do_nothing: use resource: steps amount: 1.0 .*')),
+                  ('dynamake', 'INFO', 'done'))

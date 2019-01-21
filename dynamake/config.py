@@ -200,7 +200,7 @@ class Config:
         Reset all the current state, for tests.
         """
         Config.rules = []
-        Config.DIRECTORY = '.dynamake'
+        Config.DIRECTORY = os.getenv('DYNAMAKE_CONFIG_DIR', '.dynamake')
 
     @staticmethod
     def path_for_context(context: Dict[str, Any]) -> str:

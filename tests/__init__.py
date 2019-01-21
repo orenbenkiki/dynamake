@@ -9,12 +9,17 @@ import tempfile
 from textwrap import dedent
 from unittest import TestCase
 
+from testfixtures import StringComparison
+
 from dynamake.application import Prog
 from dynamake.application import reset_application
 from dynamake.make import Make
 from dynamake.make import reset_make
 
 # pylint: disable=missing-docstring
+
+
+StringComparison.strip = lambda self: self
 
 
 def undent(content: str) -> str:
@@ -27,6 +32,10 @@ def undent(content: str) -> str:
 def write_file(path: str, content: str = '') -> None:
     with open(path, 'w') as file:
         file.write(undent(content))
+
+
+def _exit(status: int) -> None:
+    raise RuntimeError('System exit status: %s' % status)
 
 
 class TestWithReset(TestCase):
@@ -48,10 +57,14 @@ class TestWithFiles(TestWithReset):
         self.previous_directory = os.getcwd()
         self.temporary_directory = tempfile.mkdtemp()
         os.chdir(os.path.expanduser(self.temporary_directory))
+        sys.path.insert(0, os.getcwd())
+        self.exit = sys.exit
+        sys.exit = _exit  # type: ignore
 
     def tearDown(self) -> None:
         os.chdir(self.previous_directory)
         shutil.rmtree(self.temporary_directory)
+        sys.exit = self.exit
 
     def expect_file(self, path: str, expected: str) -> None:
         with open(path, 'r') as file:

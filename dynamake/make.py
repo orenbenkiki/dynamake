@@ -16,6 +16,7 @@ from abc import abstractmethod
 from concurrent.futures import Future
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from importlib import import_module
 from textwrap import dedent
 from threading import Condition
 from time import sleep
@@ -51,6 +52,9 @@ class Make:  # pylint: disable=too-many-instance-attributes
     """
     Global build state.
     """
+
+    #: The default configuration file path.
+    FILE: str
 
     #: The executor for parallel steps.
     executor: ThreadPoolExecutor
@@ -102,6 +106,7 @@ class Make:  # pylint: disable=too-many-instance-attributes
         """
         Reset all the current state, for tests.
         """
+        Make.FILE = os.getenv('DYNAMAKE_CONFIG_FILE', 'Config.yaml')
         Make.executor = ThreadPoolExecutor(thread_name_prefix='MakeThread')
         Make.condition = Condition()
         Make.available_resources = {
@@ -1030,29 +1035,32 @@ def parallel(step: Callable, *args: Any, **kwargs: Any) -> Future:
     return Make.executor.submit(Step.call_in_parallel, Step.current(), step, *args, **kwargs)
 
 
-def main(parser: argparse.ArgumentParser, default_step: Callable) -> None:
+def main(parser: argparse.ArgumentParser, default_step: Optional[Callable] = None) -> None:
     """
     A generic ``main`` function for build scripts.
     """
-    if not hasattr(default_step, '_dynamake_wrapped_function'):
+    if default_step is not None and not hasattr(default_step, '_dynamake_wrapped_function'):
         raise RuntimeError('The function: %s.%s is not a DynaMake step'
                            % (default_step.__module__, default_step.__qualname__))
 
     _add_arguments(parser, default_step)
     args = parser.parse_args()
+    config_values, used_values = _configure_by_arguments(args)
     if not _help_by_arguments(args):
-        config_values, used_values = _configure_by_arguments(args)
         _call_steps(default_step, args, config_values, used_values)
 
 
-def _add_arguments(parser: argparse.ArgumentParser, default_step: Callable) -> None:
+def _add_arguments(parser: argparse.ArgumentParser, default_step: Optional[Callable]) -> None:
     parser.add_argument('-ls', '--list-steps', action='store_true', help='List all known steps')
 
     parser.add_argument('-hs', '--help-step', metavar='STEP',
                         help='Describe a specific step and exit')
 
     parser.add_argument('-c', '--config', metavar='CONFIG.yaml',
-                        help='The configuration file to use (default: Config.yaml)')
+                        help='The configuration file to use (default: %s)' % Make.FILE)
+
+    parser.add_argument('-m', '--module', metavar='MODULE', action='append',
+                        help='A Python module to load (containing step definitions)')
 
     parser.add_argument('-ll', '--log_level', metavar='LEVEL', default='INFO',
                         help='The log level to use (default: INFO)')
@@ -1080,9 +1088,64 @@ def _add_arguments(parser: argparse.ArgumentParser, default_step: Callable) -> N
     parser.add_argument('-p', '--parameter', metavar='NAME=VALUE', action='append',
                         help='Specify a value for a top-level step parameter')
 
+    default_name = ''
+    if default_step is not None:
+        default_name = \
+            ' (default: %s)' % getattr(default_step, '_dynamake_wrapped_function').__name__
     parser.add_argument('step', metavar='FUNCTION', nargs='*',
-                        help='The top-level step function(s) to execute (default: %s)'
-                        % getattr(default_step, '_dynamake_wrapped_function').__name__)
+                        help='The top-level step function(s) to execute%s' % default_name)
+
+
+def _configure_by_arguments(args: argparse.Namespace) -> Tuple[Dict[str, Any], Set[str]]:
+    if args.config is None and os.path.exists(Make.FILE):
+        args.config = Make.FILE
+    if args.config is not None:
+        load_config(args.config)
+
+    config_values = Config.values_for_context({'stack': '/', 'step': '/'})
+    used_values: Set[str] = set()
+
+    def _get(name: str, parser: Callable, default: Any) -> Any:
+        used_values.add(name)
+        if name in vars(args):
+            value = vars(args)[name]
+            if value is not None:
+                return vars(args)[name]
+        value = config_values.get(name, config_values.get(name + '?', default))
+        if isinstance(value, str):
+            value = parser(value)
+        return value
+
+    for module in args.module or []:
+        import_module(module)
+    for module in _get('modules', (lambda module: [module]), []):
+        import_module(module)
+
+    name = sys.argv[0].split('/')[-1]
+    if name != '__test':
+        if 'command' in vars(args):
+            name += ' ' + args.command
+        handler = logging.StreamHandler(sys.stderr)
+        formatter = \
+            logging.Formatter('%(asctime)s - ' + name
+                              + ' - %(threadName)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        Make.logger.addHandler(handler)
+    Make.logger.setLevel(_get('log_level', str, 'INFO'))
+
+    Make.delete_stale_outputs = \
+        _get('delete_stale_outputs', dp.str2bool, Make.delete_stale_outputs)
+
+    Make.touch_success_outputs = \
+        _get('touch_success_outputs', dp.str2bool, Make.touch_success_outputs)
+
+    Make.delete_failed_outputs = \
+        _get('delete_failed_outputs', dp.str2bool, Make.delete_failed_outputs)
+
+    Make.delete_empty_directories = \
+        _get('delete_empty_directories', dp.str2bool, Make.delete_empty_directories)
+
+    return config_values, used_values
 
 
 def _help_by_arguments(args: argparse.Namespace) -> bool:
@@ -1114,55 +1177,10 @@ def _help_by_arguments(args: argparse.Namespace) -> bool:
     return False
 
 
-def _configure_by_arguments(args: argparse.Namespace) -> Tuple[Dict[str, Any], Set[str]]:
-    if args.config is None and os.path.exists('Config.yaml'):
-        args.config = 'Config.yaml'
-    if args.config is not None:
-        load_config(args.config)
-
-    config_values = Config.values_for_context({'stack': '/', 'step': '/'})
-    used_values: Set[str] = set()
-
-    def _get(name: str, parser: Callable, default: Any) -> Any:
-        used_values.add(name)
-        if name in vars(args):
-            value = vars(args)[name]
-            if value is not None:
-                return vars(args)[name]
-        value = config_values.get(name, config_values.get(name + '?', default))
-        if isinstance(value, str):
-            value = parser(value)
-        return value
-
-    name = sys.argv[0].split('/')[-1]
-    if name != '__test':
-        if 'command' in vars(args):
-            name += ' ' + args.command
-        handler = logging.StreamHandler(sys.stderr)
-        formatter = \
-            logging.Formatter('%(asctime)s - ' + name
-                              + ' - %(threadName)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        Make.logger.addHandler(handler)
-    Make.logger.setLevel(_get('log_level', str, 'INFO'))
-
-    Make.delete_stale_outputs = \
-        _get('delete_stale_outputs', dp.str2bool, Make.delete_stale_outputs)
-
-    Make.touch_success_outputs = \
-        _get('touch_success_outputs', dp.str2bool, Make.touch_success_outputs)
-
-    Make.delete_failed_outputs = \
-        _get('delete_failed_outputs', dp.str2bool, Make.delete_failed_outputs)
-
-    Make.delete_empty_directories = \
-        _get('delete_empty_directories', dp.str2bool, Make.delete_empty_directories)
-
-    return config_values, used_values
-
-
-def _call_steps(default_step: Callable, args: argparse.Namespace,  # pylint: disable=too-many-branches
-                config_values: Dict[str, Any], used_values: Set[str]) -> None:
+def _call_steps(default_step: Optional[Callable],  # pylint: disable=too-many-branches
+                args: argparse.Namespace,
+                config_values: Dict[str, Any],
+                used_values: Set[str]) -> None:
     step_parameters: Dict[str, Any] = {}
     used_parameters: Set[str] = set()
 
@@ -1194,17 +1212,22 @@ def _call_steps(default_step: Callable, args: argparse.Namespace,  # pylint: dis
 
     if not args.step and 'steps' in config_values:
         used_values.add('steps')
-        args.step = config_values['steps']
+        steps = config_values['steps']
+        if isinstance(steps, str):
+            steps = [steps]
+        args.step = steps
 
     Make.logger.info('start')
 
     if args.step:
         for step_name in args.step:
             if step_name not in Make.step_by_name:
-                raise RuntimeError('unknown step: %s' % step_name)
+                raise RuntimeError('Unknown step: %s' % step_name)
         steps = [Make.step_by_name[step_name] for step_name in args.step]
-    else:
+    elif default_step is not None:
         steps = [default_step]
+    else:
+        raise RuntimeError('No step(s) specified')
 
     for step in steps:
         _call_step(step)
