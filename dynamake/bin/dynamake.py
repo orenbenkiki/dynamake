@@ -9,6 +9,9 @@ import dynamake.make as dm
 
 
 def main() -> None:
+    """
+    Universal main function for invoking DynaMake steps.
+    """
     dm.main(argparse.ArgumentParser(description=dedent("""
         Execute some DynaMake step(s).
 

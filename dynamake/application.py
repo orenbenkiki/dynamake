@@ -61,7 +61,7 @@ class Func:  # pylint: disable=too-many-instance-attributes
         Func.name_by_parameter = {}
         Func._is_finalized = False
 
-    def __init__(self, wrapped: Wrapped) -> None:
+    def __init__(self, wrapped: Wrapped, is_top: bool) -> None:
         """
         Register a configurable function.
         """
@@ -74,6 +74,9 @@ class Func:  # pylint: disable=too-many-instance-attributes
 
         #: The real function that will do the work.
         self.function = function
+
+        #: Whether this is a top-level function.
+        self.is_top = is_top
 
         #: The name used to locate the function.
         self.name = function.__name__
@@ -114,11 +117,11 @@ class Func:  # pylint: disable=too-many-instance-attributes
         self.wrapper = _wrapper_function
 
     @staticmethod
-    def collect(wrapped: Wrapped) -> 'Func':
+    def collect(wrapped: Wrapped, is_top: bool) -> 'Func':
         """
         Collect a configurable function.
         """
-        configurable = Func(wrapped)
+        configurable = Func(wrapped, is_top)
 
         if configurable.name in Func.by_name:
             function = configurable.function
@@ -177,6 +180,16 @@ class Func:  # pylint: disable=too-many-instance-attributes
                         next_modified_function_names.add(configurable.name)
             current_modified_function_names = next_modified_function_names
 
+    @staticmethod
+    def top_functions() -> List[str]:
+        """
+        Return the list of top-level configurable functions.
+        """
+        return sorted([configurable.name
+                       for configurable
+                       in Func.by_name.values()
+                       if configurable.is_top])
+
 
 def _real_function(wrapped: Wrapped) -> Callable:
     if isinstance(wrapped, staticmethod):
@@ -233,11 +246,16 @@ def _invoked_names(function: Callable) -> Set[str]:
     return collector.names()
 
 
-def config(wrapped: Wrapped) -> Wrapped:
+def config(top: bool = False) -> Callable[[Wrapped], Wrapped]:
     """
     Decorator for configurable functions.
+
+    If ``top`` is ``True``, this is a top-level function that can be directly invoked from the main
+    function.
     """
-    return Func.collect(wrapped).wrapper  # type: ignore
+    def _wrap(wrapped: Wrapped) -> Wrapped:
+        return Func.collect(wrapped, top).wrapper  # type: ignore
+    return _wrap
 
 
 class Param:
@@ -338,33 +356,25 @@ class Prog:
         return self.values[name]
 
     @staticmethod
-    def add_to_parser(parser: ArgumentParser,
-                      functions: Optional[List[str]] = None) -> None:
+    def add_parameters_to_parser(parser: ArgumentParser,
+                                 functions: Optional[List[str]] = None) -> None:
         """
         Add a command line flag for each parameter to the parser to allow overriding parameter
         values directly from the command line.
 
-        If a list of functions is provided, the program is assumed to take as its 1st parameter
-        the name of the function to invoke, and will only accept command line parameters that
-        are used by that function.
+        If a list of functions is provided, it is used instead of the automatic list of top-level
+        functions (annotated with ``@config(top=True)``).
         """
-        Prog.current.verify()
-        Prog.current._add_to_parser(parser, functions)  # pylint: disable=protected-access
+        Prog.current._add_parameters_to_parser(parser,  # pylint: disable=protected-access
+                                               functions)
 
-    def _add_to_parser(self, parser: ArgumentParser,
-                       functions: Optional[List[str]] = None) -> None:
-        parser.add_argument('-c', '--config', metavar='FILE', action='append',
-                            help='Load a parameters configuration YAML file.')
-        parser.add_argument('-ll', '--log_level', metavar='LEVEL', default='INFO',
-                            help='The log level to use (default: INFO)')
+    def _add_parameters_to_parser(self, parser: ArgumentParser,
+                                  functions: Optional[List[str]] = None) -> None:
+        Prog._add_standard_parameters(parser)
+        if functions is None:
+            functions = Func.top_functions()
 
-        if functions:
-            self._add_sub_commands_parameters(parser, functions)
-        else:
-            self._add_simple_parameters(parser)
-
-    def _add_simple_parameters(self, parser: ArgumentParser) -> None:
-        configurable = parser.add_argument_group('configuration parameters', dedent("""
+        group = parser.add_argument_group('configuration parameters', dedent("""
             The optional configuration parameters are used by internal functions. The
             defaults are overriden by any configuration files given to ``--config`` and
             by the following optional explicit command-line parameters. If the same
@@ -376,31 +386,48 @@ class Prog:
             recognized parameters. Otherwise, if the name is not recognized, it is silently
             ignored.
         """))
-        for name, parameter in self.parameters.items():
-            if parameter.default is None:
-                text = parameter.description + ' (default: None)'
-            else:
-                text = parameter.description + ' (default: %s)' % parameter.default
-            configurable.add_argument('--' + name, help=text)
 
-    def _add_sub_commands_parameters(self, parser: ArgumentParser, functions: List[str]) -> None:
-        Func.finalize()
+        used_parameters: Set[str] = set()
+        for function_name in functions:
+            configurable = Prog._verify_function(function_name, False)
+            used_parameters.update(configurable.indirect_parameter_names)
+
+        for name, parameter in self.parameters.items():
+            if name in used_parameters:
+                text = parameter.description + ' (default: %s)' % parameter.default
+                group.add_argument('--' + name, help=text,  # type: ignore
+                                   metavar=parameter.metavar)
+
+    @staticmethod
+    def add_commands_to_parser(parser: ArgumentParser,
+                               functions: Optional[List[str]] = None) -> None:
+        """
+        Add a command argument each top-level function.
+
+        If a list of functions is provided, it is used instead of the automatic list of top-level
+        functions (annotated with ``@config(top=True)``). For each such command argument, add a
+        sub-parser with the parameters relevant for the specific function.
+        """
+        Prog.current._add_commands_to_parser(parser, functions)  # pylint: disable=protected-access
+
+    def _add_commands_to_parser(self, parser: ArgumentParser,
+                                functions: Optional[List[str]] = None) -> None:
+        verify_reachability = functions is None
+
+        Prog._add_standard_parameters(parser)
+        if functions is None:
+            functions = Func.top_functions()
+
         subparsers = parser.add_subparsers(dest='command', metavar='COMMAND', title='commands',
                                            help='The specific function to compute, one of:',
                                            description=dedent("""
             Run `%s foo -h` to list the specific parameters for the function `foo`.
         """ % sys.argv[0].split('/')[-1]))
         subparsers.required = True
+
         for command_name in functions:
-            if command_name not in Func.by_name:
-                raise RuntimeError('Unknown command function: %s' % command_name)
-            configurable = Func.by_name[command_name]
-            function = configurable.function
-            if configurable.has_positional_arguments:
-                raise RuntimeError("Can't directly invoke the function: %s.%s "
-                                   'since it has positional arguments'
-                                   % (function.__module__, function.__qualname__))
-            description = function.__doc__
+            configurable = Prog._verify_function(command_name, True)
+            description = configurable.function.__doc__
             sentence = first_sentence(description)
             command_parser = subparsers.add_parser(configurable.name, help=sentence,
                                                    description=description,
@@ -411,6 +438,9 @@ class Prog:
                     command_parser.add_argument('--' + name, help=text,  # type: ignore
                                                 metavar=parameter.metavar)
 
+        if not verify_reachability:
+            return
+
         for function_name, configurable in Func.by_name.items():
             if function_name in functions:
                 continue
@@ -419,6 +449,32 @@ class Prog:
                                    'is not reachable from the command line'
                                    % (configurable.function.__module__,
                                       configurable.function.__qualname__))
+
+    @staticmethod
+    def _add_standard_parameters(parser: ArgumentParser) -> None:
+        Func.finalize()
+        Prog.current.verify()
+
+        parser.add_argument('-c', '--config', metavar='FILE', action='append',
+                            help='Load a parameters configuration YAML file.')
+
+        parser.add_argument('-m', '--module', metavar='MODULE', action='append',
+                            help='A Python module to load (containing function definitions)')
+
+        parser.add_argument('-ll', '--log_level', metavar='LEVEL', default='INFO',
+                            help='The log level to use (default: INFO)')
+
+    @staticmethod
+    def _verify_function(function_name: str, is_command: bool) -> Func:
+        if function_name not in Func.by_name:
+            raise RuntimeError('Unknown top function: %s' % function_name)
+        configurable = Func.by_name[function_name]
+        function = configurable.function
+        if is_command and configurable.has_positional_arguments:
+            raise RuntimeError("Can't directly invoke the function: %s.%s "
+                               'since it has positional arguments'
+                               % (function.__module__, function.__qualname__))
+        return configurable
 
     @staticmethod
     def parse_args(args: Namespace) -> None:
@@ -666,6 +722,16 @@ def reset_application() -> None:
     Func.reset()
     Prog.reset()
     Parallel.reset()
+
+
+def main(parser: ArgumentParser, functions: Optional[List[str]] = None) -> None:
+    """
+    A generic ``main`` function for configurable functions.
+    """
+    Prog.add_commands_to_parser(parser, functions)
+    args = parser.parse_args()
+    Prog.parse_args(args)
+    Prog.call_with_args(args)
 
 
 logging.addLevelName(Prog.TRACE, 'TRACE')

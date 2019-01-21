@@ -521,7 +521,7 @@ Here is a trivial example configurable program:
 
     def main() -> int:
         parser = argparse.ArgumentParser(description='Example')
-        da.Prog.add_to_parser(parser)
+        da.Prog.add_parameters_to_parser(parser)
         args = parser.parse_args()
         da.Prog.parse_args(args)
         print(add(1))  # Bar will be taken from the configuration.
@@ -550,7 +550,7 @@ The usage pattern of these utilities is as follows:
   :py:attr:`dynamake.application.Param` objects.
 
 * Typically one then adds all the necessary command line arguments to the program by calling
-  :py:func:`dynamake.application.Prog.add_to_parser`. This registers the ``--config`` flag
+  :py:func:`dynamake.application.Prog.add_parameters_to_parser`. This registers the ``--config`` flag
   for loading a configuration file and a per-parameter (``--bar`` in the above example) flag
   for explicit overrides.
 
@@ -577,25 +577,28 @@ One can also use the :py:attr:`dynamake.application.Prog.logger` anywhere in the
 Configurable Multi-Applications
 ...............................
 
-A realistic system has multiple related functions that need to be invoked. It is a hassle
-to have to name and define a separate script for invoking each one. A way around this
-is to create a single script which takes the function name as a command-line argument:
+A realistic system has multiple related functions that need to be invoked. It is a hassle to have to
+name and define a separate script for invoking each one. A way around this is to create a single
+script which takes the function name as a command-line argument. The top-level functions that should
+be invokable from the command line must have no positional arguments and be annotated with
+``@config(top=True)``:
 
 .. code-block:: python
 
+    import argparse
     import dynamake.application as da
 
-    @config
+    @da.config(top=True)
     def foo(...): ...
 
-    @config
+    @da.config(top=True)
     def bar(...): ...
 
     da.Param(...)  # Parameters for *all* functions.
 
     def main() -> int:
         parser = argparse.ArgumentParser(description='Example')
-        da.Prog.add_to_parser(parser, ['foo', 'bar'])
+        da.Prog.add_commands_to_parser(parser)
         args = parser.parse_args()
         da.Prog.parse_args(args)
         da.Prog.call_with_args(args)
@@ -612,6 +615,25 @@ any function it indirectly invokes).
     name of a variable being assigned to, then we assume this is a call. This isn't 100% complete;
     for example this will not detect cases where ``foo`` calls a non-configured ``bar`` which then
     calls a configured ``baz``. However it works "well enough" for simple code.
+
+The above still requires some boilerplate which you can avoid by using the provided
+:py:func:`dynamake.application.main` function. A typical main script invoking configurable functions
+looks like this:
+
+.. code-block:: python
+
+    import argparse
+    import dynamake.application as da
+    import ...  # Modules defining configurable functions
+
+    def main():
+        da.main(argparse.ArgumentParser(description="""
+            ... Describe this program ...
+        """))
+
+    if __name__ == '__main__':
+        main()
+
 
 WHAT NOT (YET)
 --------------
