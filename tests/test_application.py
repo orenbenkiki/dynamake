@@ -2,8 +2,8 @@
 Test the application utilities.
 """
 
-import argparse
 import sys
+from argparse import ArgumentParser
 from threading import current_thread
 from typing import Any
 from typing import Callable
@@ -11,12 +11,16 @@ from typing import List
 from typing import Optional
 from typing import Tuple
 
+from testfixtures import OutputCapture
+
 from dynamake.application import Func
 from dynamake.application import Param
 from dynamake.application import Prog
 from dynamake.application import config
+from dynamake.application import main as da_main
 from dynamake.application import override
 from dynamake.application import parallel
+from dynamake.patterns import str2int
 from tests import TestWithFiles
 from tests import TestWithReset
 from tests import write_file
@@ -28,12 +32,12 @@ from tests import write_file
 class TestFunction(TestWithReset):
 
     def test_conflicting(self) -> None:
-        @config
+        @config()
         def repeated() -> None:  # pylint: disable=unused-variable
             pass
 
         def conflict() -> Any:
-            @config
+            @config()
             def repeated() -> None:  # pylint: disable=unused-variable
                 pass
 
@@ -48,7 +52,7 @@ class TestFunction(TestWithReset):
         Func.finalize()
 
         def post_finalize() -> Any:
-            @config
+            @config()
             def function() -> None:  # pylint: disable=unused-variable
                 pass
 
@@ -59,19 +63,19 @@ class TestFunction(TestWithReset):
 
     def test_collect_parameters(self) -> None:
 
-        @config
+        @config()
         def use_foo(*, foo: int = 0) -> int:
             return foo
 
-        @config
+        @config()
         def use_bar(*, bar: int = 0) -> int:
             return bar
 
-        @config
+        @config()
         def use_both() -> int:  # pylint: disable=unused-variable
             return use_foo() + use_bar()
 
-        @config
+        @config()
         def use_none(baz: int) -> int:  # pylint: disable=unused-variable
             use_foo = 1
             use_bar = 2
@@ -101,15 +105,15 @@ class TestFunction(TestWithReset):
 
     def test_collect_recursive_parameters(self) -> None:
 
-        @config
+        @config()
         def use_foo(*, foo: int = 0) -> int:
             return foo + use_bar()
 
-        @config
+        @config()
         def use_bar(*, bar: int = 0) -> int:
             return bar + use_foo()
 
-        @config
+        @config()
         def use_both(baz: int) -> int:  # pylint: disable=unused-variable
             return baz + use_foo() + use_bar()
 
@@ -134,7 +138,7 @@ class TestFunction(TestWithReset):
 class TestParameters(TestWithReset):
 
     def test_missing_parameter(self) -> None:
-        @config
+        @config()
         def use_foo(*, foo: int) -> int:  # pylint: disable=unused-variable
             return foo
 
@@ -172,7 +176,7 @@ class TestParameters(TestWithReset):
         Prog.logger.setLevel('WARN')
         Param(name='bar', default=1, parser=int, description='The number of bars')
 
-        @config
+        @config()
         def foo(*, bar: int = 0) -> int:
             return bar
 
@@ -195,7 +199,7 @@ class TestParameters(TestWithReset):
         Prog.logger.setLevel('WARN')
         Param(name='bar', default=1, parser=int, description='The number of bars')
 
-        @config
+        @config()
         def foo(*, bar: int = 0) -> int:
             return bar
 
@@ -209,19 +213,19 @@ def _call_in_parallel(index: int) -> Tuple[str, int]:
 
 def define_main_function() -> Callable:
     class Foo:
-        @config
+        @config()
         @staticmethod
         def add_foo(foo: int, *, bar: int = 0) -> int:
             return foo + bar
 
-    @config
+    @config()
     def add(foo: int, *, bar: int = 0) -> int:
         return foo + bar
 
     def main_function() -> int:
         Param(name='bar', default=1, parser=int, description='The number of bars')
-        parser = argparse.ArgumentParser(description='Test')
-        Prog.add_to_parser(parser)
+        parser = ArgumentParser(description='Test')
+        Prog.add_parameters_to_parser(parser, functions=['add', 'add_foo'])
         args = parser.parse_args()
         Prog.parse_args(args)
         return add(1) + Foo.add_foo(0, bar=0)
@@ -301,9 +305,9 @@ class TestSimpleMain(TestWithFiles):
                                define_main_function())
 
 
-def define_main_commands(extra: Optional[List[str]] = None) -> Callable:
+def define_main_commands(is_top: bool, extra: Optional[List[str]] = None) -> Callable:
     class Foo:  # pylint: disable=unused-variable
-        @config
+        @config(top=is_top)
         @staticmethod
         def add_foo(*, foo: int = 0, bar: int = 0) -> int:
             """
@@ -311,16 +315,19 @@ def define_main_commands(extra: Optional[List[str]] = None) -> Callable:
             """
             return 1 + foo + bar
 
-    @config
+    @config(top=is_top)
     def add(*, bar: int = 0, baz: int = 0) -> int:  # pylint: disable=unused-variable
         return bar + baz
 
     def main_function() -> int:
-        parser = argparse.ArgumentParser(description='Test')
+        parser = ArgumentParser(description='Test')
         Param(name='foo', default=1, parser=int, description='The number of foos')
         Param(name='bar', default=1, parser=int, description='The number of bars')
         Param(name='baz', default=1, parser=int, description='The number of bazes')
-        Prog.add_to_parser(parser, ['add', 'add_foo'] + (extra or []))
+        functions: Optional[List[str]] = None
+        if not is_top:
+            functions = ['add', 'add_foo'] + (extra or [])
+        Prog.add_commands_to_parser(parser, functions)
         args = parser.parse_args()
         Prog.parse_args(args)
         return Prog.call_with_args(args)
@@ -332,29 +339,31 @@ class TestCommandsMain(TestWithFiles):
 
     def test_add_defaults(self) -> None:
         sys.argv = ['test', 'add']
-        self.assertEqual(define_main_commands()(), 2)
+        self.assertEqual(define_main_commands(True)(), 2)
 
     def test_add_foo_defaults(self) -> None:
         sys.argv = ['test', 'add_foo']
-        self.assertEqual(define_main_commands()(), 3)
+        self.assertEqual(define_main_commands(False)(), 3)
 
     def test_unknown_command(self) -> None:
         sys.argv = ['test', 'bar']
         self.assertRaisesRegex(RuntimeError,
                                'Unknown .* function: bar',
-                               define_main_commands(['bar']))
+                               define_main_commands(False, ['bar']))
 
     def test_unknown_function(self) -> None:
-        @config
+        sys.argv = ['test', 'add']
+
+        @config()
         def unreachable() -> None:  # pylint: disable=unused-variable
             pass
         self.assertRaisesRegex(RuntimeError,
                                'function: .*.test_unknown_function.<locals>.unreachable '
                                '.* not reachable',
-                               define_main_commands())
+                               define_main_commands(True))
 
     def test_positional_command(self) -> None:
-        @config
+        @config()
         def bar(foo: int, *, baz: int = 0) -> int:  # pylint: disable=unused-variable
             return foo + baz
 
@@ -362,4 +371,19 @@ class TestCommandsMain(TestWithFiles):
         self.assertRaisesRegex(RuntimeError,
                                'function: .*.test_positional_command.<locals>.bar .* '
                                'positional arguments',
-                               define_main_commands(['bar']))
+                               define_main_commands(False, ['bar']))
+
+
+class TestUniversalMain(TestWithFiles):
+
+    def test_defaults(self) -> None:
+        Param(name='foo', parser=str2int(), default=1, description='The size of a foo.')
+
+        @config(top=True)
+        def top(*, foo: int = 0) -> None:  # pylint: disable=unused-variable
+            print('foo', foo)
+
+        sys.argv = ['test', 'top']
+        with OutputCapture() as output:
+            da_main(ArgumentParser(description='Test'))
+        output.compare('foo 1')
