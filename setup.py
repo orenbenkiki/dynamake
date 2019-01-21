@@ -195,6 +195,9 @@ setup(name='dynamake',
       author_email='oren@ben-kiki.org',
       license='MIT',
       packages=find_packages(exclude=['tests']),
+      entry_points={'console_scripts': [
+          'dynamake=dynamake.bin.dynamake:main',
+      ]},
       # TODO: Replicated in tox.ini
       install_requires=INSTALL_REQUIRES,
       tests_require=TESTS_REQUIRE,

@@ -253,6 +253,20 @@ This demonstrates some additional concepts:
   existing files that match the output glob pattern. Either way, the actual list of outputs is
   available in the returned action object, available to be used by additional steps.
 
+Universal Build Script
+.......................
+
+Installing DynaMake provides a universal executable build script called ``dynamake`` which invokes
+the above main function. In order for this script to be aware of the build steps, it needs to
+``import`` the Python modules defining the build steps. This can be done by providing the script
+with explicit ``-m module`` command line flags, and/or by listing them in the ``modules``
+configuration parameter for the ``/`` build step in the configuration file (such as
+``Config.yaml``).
+
+It is also possible to create your own build script which simply loads the relevant Python modules
+and then invokes the :py:func:`dynamake.make.main` function as described above. Such pre-loaded
+scripts still allow users to further extend them by loading additional modules.
+
 Annotations
 ...........
 
@@ -411,7 +425,11 @@ function. If we do this, all source files will be compiled with ``-g -O2``, exce
 ``src/main.c`` which will be compiled with ``-g -O3``.
 
 It is common to manually load a default configuration file before invoking
-:py:func:`dynamake.make.main`. In general the last matching rule wins, so any user-specified
+:py:func:`dynamake.make.main`. By default this is ``Config.yaml``, which can be overriden
+by setting the ``DYNAMAKE_CONFIG_FILE`` environment variable, or by specifying
+an explicit ``--config`` command line flag.
+
+In general the last matching rule wins, so any user-specified
 configuration using command-line arguments will take precedence over this default configuration.
 
 Generated Configuration Files
@@ -453,7 +471,7 @@ argument which does not exist for the step.
 The generated configuration file is created in a special directory. By default, this is
 ``.dynamake``, but this can be overriden using :py:func:`dynamake.make.set_config_dir`, or, if using
 the provided :py:func:`dynamake.make.main` function, by setting an environment variable
-``DYNAMAKE_DIR`` or providing explicit command line flag.
+``DYNAMAKE_CONFIG_DIR`` or providing explicit command line flag.
 
 Configuration Help
 ..................
