@@ -5,7 +5,6 @@ Utilities for dynamic make.
 # pylint: disable=too-many-lines
 
 import argparse
-import inspect
 import logging
 import os
 import shutil
@@ -17,6 +16,8 @@ from concurrent.futures import Future
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from importlib import import_module
+from inspect import Parameter
+from inspect import signature
 from textwrap import dedent
 from threading import Condition
 from time import sleep
@@ -173,7 +174,8 @@ class Step:  # pylint: disable=too-many-instance-attributes
         finally:
             Step.set_current(parent)
 
-    def __init__(self, parent: Optional['Step'], function: Optional[Callable],
+    def __init__(self, parent: Optional['Step'],  # pylint: disable=too-many-branches
+                 function: Optional[Callable],
                  args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> None:
         """
         Create a new tested build state.
@@ -197,10 +199,21 @@ class Step:  # pylint: disable=too-many-instance-attributes
         #: The ``/``-separated call stack.
         self.stack: str
 
+        #: The current known parameters (expandable wildcards).
+        self.wildcards = kwargs.copy()
+
+        #: The used configuration values for the step, if configuration is used.
+        self.used_params: Set[str] = set()
+
+        #: The path name of the generated configuration file, if used.
+        self.config_path: Optional[str] = None
+
         #: The parent step of this one.
         if parent is None:
             self.parent = self
             self.stack = '/'
+            self.wildcards['step'] = '/'
+            self.wildcards['stack'] = '/'
             assert isinstance(self, Planner)
         else:
             self.parent = parent
@@ -208,29 +221,43 @@ class Step:  # pylint: disable=too-many-instance-attributes
                 self.stack = parent.stack + self.name
             else:
                 self.stack = parent.stack + '/' + self.name
-            if isinstance(parent, Agent):
-                raise RuntimeError('The nested step: %s.%s '
-                                   'is invoked from an action step: %s.%s'
-                                   % (self.function.__module__, self.function.__qualname__,
-                                      parent.function.__module__, parent.function.__qualname__))
 
-        #: The current known parameters (expandable wildcards).
-        self.wildcards = kwargs.copy()
-        if function is not None:
-            for name, arg \
-                    in zip(getattr(self.function, '_dynamake_positional_argument_names'), args):
-                self.wildcards[name] = arg
         self.wildcards['step'] = self.name
         self.wildcards['stack'] = self.stack
 
         #: The configuration values for the step.
         self.config_values = Config.values_for_context(self.wildcards)
 
-        #: The used configuration values for the step, if configuration is used.
-        self.used_params: Set[str] = set()
+        if isinstance(parent, Agent):
+            raise RuntimeError('The nested step: %s.%s '
+                               'is invoked from an action step: %s.%s'
+                               % (self.function.__module__, self.function.__qualname__,
+                                  parent.function.__module__, parent.function.__qualname__))
 
-        #: The path name of the generated configuration file, if used.
-        self.config_path: Optional[str] = None
+        if function is None:
+            return
+
+        specified_names = set(kwargs.keys())
+        positional_argument_names = getattr(function, '_dynamake_positional_argument_names')
+        for name, arg in zip(positional_argument_names, args):
+            specified_names.add(name)
+            self.wildcards[name] = arg
+
+        environment_argument_names = getattr(function, '_dynamake_environment_argument_names')
+        for name in environment_argument_names:
+            if name not in specified_names:
+                step = self
+                while True:
+                    if name in step.wildcards:
+                        specified_names.add(name)
+                        self.wildcards[name] = self.kwargs[name] = step.wildcards[name]
+                        break
+                    if step.stack == '/':
+                        break
+                    step = step.parent
+            if name not in specified_names:
+                raise RuntimeError('Missing value for the parameter: %s of the step: %s'
+                                   % (name, self.stack))
 
     def config_param(self, name: str, default: Any) -> Any:
         """
@@ -347,7 +374,7 @@ def _request_resources(resources: Dict[str, float]) -> Iterator[None]:
         yield
     finally:
         with Make.condition:
-            _free_resources(resources)
+            _free_resources(stack, resources)
             Make.parallel_actions -= 1
             assert Make.parallel_actions >= 0
             Make.condition.notify_all()
@@ -370,18 +397,22 @@ def _use_resources(stack: str, resources: Dict[str, float]) -> None:
                              stack, name, amount, Make.available_resources[name])
             amount = Make.available_resources[name]
 
-        Make.logger.debug('%s: use resource: %s amount: %s remaining: %s',
-                          stack, name, amount, Make.available_resources[name] - amount)
         Make.used_resources[name] += amount
+        Make.logger.debug('%s: use resource: %s amount: %s remaining: %s',
+                          stack, name, amount,
+                          Make.available_resources[name] - Make.used_resources[name])
         assert 0 <= Make.used_resources[name] <= Make.available_resources[name]
 
 
-def _free_resources(resources: Dict[str, float]) -> None:
+def _free_resources(stack: str, resources: Dict[str, float]) -> None:
     for name, amount in resources.items():
         if amount <= Make.available_resources[name]:
             Make.used_resources[name] -= amount
         else:
             Make.used_resources[name] = 0
+        Make.logger.debug('%s: free resource: %s amount: %s remaining: %s',
+                          stack, name, amount,
+                          Make.available_resources[name] - Make.used_resources[name])
         assert 0 <= Make.used_resources[name] <= Make.available_resources[name]
 
 
@@ -392,7 +423,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
 
     def __init__(self, *, input: Strings,  # pylint: disable=redefined-builtin,too-many-locals
                  output: Strings, run: Strings,
-                 runner: Optional[Strings] = None,
+                 runner: Strings = None,
                  ignore_exit_status: bool = False,
                  delete_stale_outputs: Optional[bool] = None,
                  touch_success_outputs: Optional[bool] = None,
@@ -484,6 +515,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         #: The resources needed by the action, to restrict parallel action execution.
         self.resources = {'steps': 1.0}
         self.resources.update(resources or {})
+        self.resources.update(config_param('resources', {}))
 
         #: How to run each command.
         self.runner = dp.flatten(runner or config_param('runner', []))
@@ -707,7 +739,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         return paths
 
 
-def plan(run_help: Optional[Strings] = None) -> Callable[[Wrapped], Wrapped]:
+def plan(run_help: Strings = None) -> Callable[[Wrapped], Wrapped]:
     """
     Decorate a plan step function.
 
@@ -720,7 +752,7 @@ def plan(run_help: Optional[Strings] = None) -> Callable[[Wrapped], Wrapped]:
     return _wrap
 
 
-def action(run_help: Optional[Strings] = None) -> Callable[[Wrapped], Wrapped]:
+def action(run_help: Strings = None) -> Callable[[Wrapped], Wrapped]:
     """
     Decorate an action step function.
 
@@ -733,7 +765,7 @@ def action(run_help: Optional[Strings] = None) -> Callable[[Wrapped], Wrapped]:
     return _wrap
 
 
-def _step(step: type, run_help: Optional[Strings], wrapped: Wrapped) -> Wrapped:
+def _step(step: type, run_help: Strings, wrapped: Wrapped) -> Wrapped:
     function = _callable_function(wrapped)
 
     def _wrapper_function(*args: Any, **kwargs: Any) -> Any:
@@ -745,7 +777,9 @@ def _step(step: type, run_help: Optional[Strings], wrapped: Wrapped) -> Wrapped:
         run_help = [string.format(step=function.__name__) for string in dp.each_string(run_help)]
     setattr(_wrapper_function, '_dynamake_run_help', run_help)
 
-    setattr(function, '_dynamake_positional_argument_names', _positional_argument_names(function))
+    positional_argument_names, environment_argument_names = _argument_names(function)
+    setattr(function, '_dynamake_positional_argument_names', positional_argument_names)
+    setattr(function, '_dynamake_environment_argument_names', environment_argument_names)
 
     conflicting = Make.step_by_name.get(function.__name__)
     if conflicting is not None:
@@ -768,13 +802,32 @@ def _callable_function(wrapped: Callable) -> Callable:
     return wrapped
 
 
-def _positional_argument_names(function: Callable) -> List[str]:
-    names: List[str] = []
-    for parameter in inspect.signature(function).parameters.values():
-        if parameter.kind in [inspect.Parameter.POSITIONAL_ONLY,
-                              inspect.Parameter.POSITIONAL_OR_KEYWORD]:
-            names.append(parameter.name)
-    return names
+class Env:
+    """
+    Marker for default for environment parameters.
+    """
+
+
+def env() -> Any:
+    """
+    Used as a default value for environment parameters.
+
+    When a step uses this as a default value for a parameter,
+    and an invocation does not specify an explicit or a configuration value for the parameter,
+    then the value will be taken from the nearest parent which has a parameter with the same name.
+    """
+    return Env()
+
+
+def _argument_names(function: Callable) -> Tuple[List[str], List[str]]:
+    positional_names: List[str] = []
+    environment_names: List[str] = []
+    for parameter in signature(function).parameters.values():
+        if parameter.kind in [Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD]:
+            positional_names.append(parameter.name)
+        if isinstance(parameter.default, Env):
+            environment_names.append(parameter.name)
+    return positional_names, environment_names
 
 
 def expand(*patterns: Strings) -> List[str]:
@@ -941,11 +994,11 @@ def pareach(wildcards: List[Dict[str, Any]], function: Callable, *args: Any, **k
     return results
 
 
-def parcall(*steps: Tuple[Callable, List[Any], Dict[str, Any]]) -> List[Any]:
+def parcall(*steps: Tuple[Callable, Dict[str, Any]]) -> List[Any]:
     """
     Invoke multiple arbitrary functions in parallel.
     """
-    futures = [parallel(step, *args, **kwargs) for step, args, kwargs in steps]
+    futures = [parallel(step, **kwargs) for step, kwargs in steps]
     return [future.result() for future in futures]
 
 
@@ -1033,6 +1086,38 @@ def parallel(step: Callable, *args: Any, **kwargs: Any) -> Future:
     Invoke a step in parallel to the main thread.
     """
     return Make.executor.submit(Step.call_in_parallel, Step.current(), step, *args, **kwargs)
+
+
+def optional_flag(flag: str, *value: Strings) -> List[str]:
+    """
+    An optional flag for a run command.
+
+    If ``value`` contains only ``None``, returns ``[]``.
+    Otherwise, returns a list with the ``flag`` and the (flattened) ``value``.
+    """
+    values = dp.flatten(*value)
+    if values:
+        values = [flag] + values
+    return values
+
+
+def pass_flags(*names: Strings) -> List[str]:
+    """
+    Given some flag names, return a list of command line arguments.
+
+    The command line arguments for the flag ``foo`` will be ``--foo`` followed by the
+    expanded value of ``{foo}``.
+
+    If a name with :py:func:`dynamake.patterns.optional`, and it has no value
+    in the current context, or its value is ``None``, then the flag is silently omitted.
+    """
+    flags = []
+    for name in dp.each_string(*names):
+        if dp.is_optional(name) and Step.current().wildcards.get(name) is None:
+            continue
+        flags.append('--' + name)
+        flags.append('{name}')
+    return expand(*flags)
 
 
 def main(parser: argparse.ArgumentParser, default_step: Optional[Callable] = None) -> None:
@@ -1145,6 +1230,11 @@ def _configure_by_arguments(args: argparse.Namespace) -> Tuple[Dict[str, Any], S
     Make.delete_empty_directories = \
         _get('delete_empty_directories', dp.str2bool, Make.delete_empty_directories)
 
+    def _parse_available_resources(string: str) -> Dict[str, float]:
+        raise RuntimeError('Configuration for available resources is not a mapping: %s' % string)
+
+    available_resources(**_get('available_resources', _parse_available_resources, {}))
+
     return config_values, used_values
 
 
@@ -1198,13 +1288,13 @@ def _call_steps(default_step: Optional[Callable],  # pylint: disable=too-many-br
     def _call_step(step_function: Callable) -> None:
         function = getattr(step_function, '_dynamake_wrapped_function')
         kwargs: Dict[str, Any] = {}
-        for parameter in inspect.signature(function).parameters.values():
+        for parameter in signature(function).parameters.values():
             used_values.add(parameter.name)
             if parameter.name in step_parameters:
                 kwargs[parameter.name] = step_parameters[parameter.name]
             elif parameter.name in config_values:
                 kwargs[parameter.name] = config_values[parameter.name]
-            else:
+            elif parameter.default == parameter.empty or isinstance(parameter.default, Env):
                 raise RuntimeError('Missing top-level parameter: %s for the step: /%s'
                                    % (parameter.name, function.__name__))
             used_parameters.add(parameter.name)
