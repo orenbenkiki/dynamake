@@ -31,6 +31,7 @@ from dynamake.make import available_resources
 from dynamake.make import capture
 from dynamake.make import config_file
 from dynamake.make import config_param
+from dynamake.make import env
 from dynamake.make import exists
 from dynamake.make import expand
 from dynamake.make import extract
@@ -39,6 +40,7 @@ from dynamake.make import glob
 from dynamake.make import load_config
 from dynamake.make import main
 from dynamake.make import optional
+from dynamake.make import optional_flag
 from dynamake.make import parallel
 from dynamake.make import parcall
 from dynamake.make import pareach
@@ -141,6 +143,31 @@ class TestMake(TestWithReset):
 
         strategy()
 
+    def test_use_env_parameters(self) -> None:
+        @action()
+        def use_env(foo: int = env(), bar: int = env()) -> None:
+            self.assertEqual(foo, 1)
+            self.assertEqual(bar, 2)
+
+        @plan()
+        def set_env(foo: int) -> None:  # pylint: disable=unused-argument
+            use_env(bar=2)
+
+        set_env(1)
+
+    def test_missing_env_parameters(self) -> None:
+        @action()
+        def use_env(foo: int = env()) -> None:  # pylint: disable=unused-argument
+            pass
+
+        @plan()
+        def no_env() -> None:
+            use_env()
+
+        self.assertRaisesRegex(RuntimeError,
+                               'Missing .* parameter: foo .* step: /no_env/use_env',
+                               no_env)
+
     def test_parallel_plan(self) -> None:
         main_thread = threading.current_thread().name
         left_thread = main_thread
@@ -189,7 +216,7 @@ class TestMake(TestWithReset):
 
         @plan()
         def both() -> None:
-            parcall((left, [], {}), (right, [], {}))
+            parcall((left, {}), (right, {}))
 
         both()
 
@@ -225,9 +252,9 @@ class TestMake(TestWithReset):
 
         @plan()
         def foos() -> None:
-            parcall((foo, [1], {}),
-                    (foo, [1], {}),
-                    (foo, [3], {}))
+            parcall((foo, dict(amount=1)),
+                    (foo, dict(amount=1)),
+                    (foo, dict(amount=3)))
 
         start_time = datetime.now()
         foos()
@@ -244,8 +271,8 @@ class TestMake(TestWithReset):
 
         @plan()
         def foos() -> None:
-            parcall((foo, [1], {}),
-                    (foo, [-1], {}))
+            parcall((foo, dict(amount=1)),
+                    (foo, dict(amount=-1)))
 
         self.assertRaisesRegex(RuntimeError,
                                'Negative amount: -1 .* resource: foo .* step: /foos/foo',
@@ -258,9 +285,9 @@ class TestMake(TestWithReset):
 
         @plan()
         def foos() -> None:
-            parcall((foo, [1], {}),
-                    (foo, [1], {}),
-                    (foo, [3], {}))
+            parcall((foo, dict(amount=1)),
+                    (foo, dict(amount=1)),
+                    (foo, dict(amount=3)))
 
         self.assertRaisesRegex(RuntimeError,
                                'Unknown resource: foo .* step: /foos/foo',
@@ -376,7 +403,9 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/empty: output(s): None'),
                   ('dynamake', 'DEBUG', '/empty: needs to execute because has no outputs'),
                   ('dynamake', 'DEBUG',
-                   StringComparison('/empty: use resource: steps amount: 1.0 .*')))
+                   StringComparison('/empty: use resource: steps amount: 1.0 .*')),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/empty: free resource: steps amount: 1.0 .*')))
 
     def test_true_action(self) -> None:
         @action()
@@ -391,7 +420,9 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/empty: needs to execute because has no outputs'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/empty: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'INFO', '/empty: run: true'))
+                  ('dynamake', 'INFO', '/empty: run: true'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/empty: free resource: steps amount: 1.0 .*')))
 
     def test_forbidden_missing_input(self) -> None:
         @action()
@@ -424,7 +455,9 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/missing: no input: missing.txt'),
                   ('dynamake', 'DEBUG', '/missing: needs to execute because has no outputs'),
                   ('dynamake', 'DEBUG',
-                   StringComparison('/missing: use resource: steps amount: 1.0 .*')))
+                   StringComparison('/missing: use resource: steps amount: 1.0 .*')),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/missing: free resource: steps amount: 1.0 .*')))
 
     def test_forbidden_missing_output(self) -> None:
         @action()
@@ -450,7 +483,9 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/missing: need to execute because no output(s) exist'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/missing: use resource: steps amount: 1.0 .*')),
-                  ('dynamake', 'DEBUG', '/missing: no output: output.txt'))
+                  ('dynamake', 'DEBUG', '/missing: no output: output.txt'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/missing: free resource: steps amount: 1.0 .*')))
 
     def test_main_default_step(self) -> None:
         @action()
@@ -467,6 +502,8 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/do_nothing: needs to execute because has no outputs'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/do_nothing: use resource: steps amount: 1.0 .*')),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/do_nothing: free resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', 'done'))
 
     def test_main_non_default_step(self) -> None:
@@ -489,6 +526,8 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG', '/do_something: needs to execute because has no outputs'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/do_something: use resource: steps amount: 1.0 .*')),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/do_something: free resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', 'done'))
 
     def test_non_step_function(self) -> None:
@@ -574,6 +613,11 @@ class TestMake(TestWithReset):
         self.assertRaisesRegex(RuntimeError,
                                r'Missing top-level parameter: foo .* step: /do_nothing',
                                main, argparse.ArgumentParser(), do_nothing)
+
+    def test_optional_flag(self) -> None:
+        self.assertEqual(optional_flag('--foo', None), [])
+        self.assertEqual(optional_flag('--foo', 'bar'), ['--foo', 'bar'])
+        self.assertEqual(optional_flag('--foo', ['bar', 'baz']), ['--foo', 'bar', 'baz'])
 
 
 class TestFiles(TestWithFiles):
@@ -674,7 +718,9 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/touch: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/touch: run: touch output.txt'),
-                  ('dynamake', 'DEBUG', '/touch: exists output: output.txt'))
+                  ('dynamake', 'DEBUG', '/touch: exists output: output.txt'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/touch: free resource: steps amount: 1.0 .*')))
 
     def test_shell_for_missing_output(self) -> None:
         @action()
@@ -695,7 +741,9 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/echo: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/echo: run: echo > output.txt'),
-                  ('dynamake', 'DEBUG', '/echo: exists output: output.txt'))
+                  ('dynamake', 'DEBUG', '/echo: exists output: output.txt'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/echo: free resource: steps amount: 1.0 .*')))
 
     def test_skip_for_old_input(self) -> None:
         @action()
@@ -738,7 +786,9 @@ class TestFiles(TestWithFiles):
                    StringComparison('/touch: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/touch: delete stale output: output.txt'),
                   ('dynamake', 'INFO', '/touch: run: touch output.txt'),
-                  ('dynamake', 'DEBUG', '/touch: exists output: output.txt'))
+                  ('dynamake', 'DEBUG', '/touch: exists output: output.txt'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/touch: free resource: steps amount: 1.0 .*')))
 
     def test_remove_before_run(self) -> None:
         @action()
@@ -763,7 +813,9 @@ class TestFiles(TestWithFiles):
                    StringComparison('/fail: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/fail: delete stale output: output.txt'),
                   ('dynamake', 'INFO', '/fail: run: false'),
-                  ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'))
+                  ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/fail: free resource: steps amount: 1.0 .*')))
 
         self.assertFalse(os.path.exists('output.txt'))
 
@@ -793,7 +845,9 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'INFO', '/fail: run: touch output.txt'),
                   ('dynamake', 'INFO', '/fail: run: false'),
                   ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'),
-                  ('dynamake', 'DEBUG', '/fail: delete failed output: output.txt'))
+                  ('dynamake', 'DEBUG', '/fail: delete failed output: output.txt'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/fail: free resource: steps amount: 1.0 .*')))
 
         self.assertFalse(os.path.exists('output.txt'))
 
@@ -820,7 +874,9 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/fail: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/fail: run: false'),
-                  ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'))
+                  ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/fail: free resource: steps amount: 1.0 .*')))
 
         self.assertTrue(os.path.exists('output.txt'))
 
@@ -845,7 +901,9 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/keeper: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/keeper: run: true'),
-                  ('dynamake', 'DEBUG', '/keeper: exists output: output.txt'))
+                  ('dynamake', 'DEBUG', '/keeper: exists output: output.txt'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/keeper: free resource: steps amount: 1.0 .*')))
 
         self.expect_file('output.txt', 'a\n')
 
@@ -872,7 +930,9 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/keeper: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/keeper: run: false'),
-                  ('dynamake', 'DEBUG', '/keeper: failed with exit status: 1'))
+                  ('dynamake', 'DEBUG', '/keeper: failed with exit status: 1'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/keeper: free resource: steps amount: 1.0 .*')))
 
         self.expect_file('output.txt', 'a\n')
 
@@ -903,7 +963,9 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'INFO', '/mkdir: run: mkdir output.dir'),
                   ('dynamake', 'INFO', '/mkdir: run: touch output.txt'),
                   ('dynamake', 'DEBUG', '/mkdir: exists output: output.dir'),
-                  ('dynamake', 'DEBUG', '/mkdir: exists output: output.txt'))
+                  ('dynamake', 'DEBUG', '/mkdir: exists output: output.txt'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/mkdir: free resource: steps amount: 1.0 .*')))
 
         self.assertFalse(os.path.exists('output.dir/output.txt'))
 
@@ -931,7 +993,9 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/toucher: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/toucher: exists output: output.txt'),
-                  ('dynamake', 'DEBUG', '/toucher: touch output: output.txt'))
+                  ('dynamake', 'DEBUG', '/toucher: touch output: output.txt'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/toucher: free resource: steps amount: 1.0 .*')))
 
         self.assertTrue(os.stat('input.txt').st_mtime_ns < os.stat('output.txt').st_mtime_ns)
 
@@ -960,7 +1024,9 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/mkdir: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/mkdir: run: mkdir -p output.dir'),
-                  ('dynamake', 'DEBUG', '/mkdir: exists output: output.dir'))
+                  ('dynamake', 'DEBUG', '/mkdir: exists output: output.dir'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/mkdir: free resource: steps amount: 1.0 .*')))
 
         self.assertTrue(os.path.exists('output.dir/output.txt'))
 
@@ -991,7 +1057,9 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/fail: delete empty directory: .*/output.dir')),
                   ('dynamake', 'INFO', '/fail: run: false'),
-                  ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'))
+                  ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/fail: free resource: steps amount: 1.0 .*')))
 
         self.assertFalse(os.path.exists('output.dir'))
 
@@ -1046,7 +1114,9 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/not_use_param: output(s): None'),
                   ('dynamake', 'DEBUG', '/not_use_param: needs to execute because has no outputs'),
                   ('dynamake', 'DEBUG',
-                   StringComparison('/not_use_param: use resource: steps amount: 1.0 .*')))
+                   StringComparison('/not_use_param: use resource: steps amount: 1.0 .*')),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/not_use_param: free resource: steps amount: 1.0 .*')))
 
     def test_use_config_file(self) -> None:
         @action()
@@ -1073,7 +1143,9 @@ class TestFiles(TestWithFiles):
                    StringComparison('/use_file: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/use_file: run: '
                    'cp .dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
-                  ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'))
+                  ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/use_file: free resource: steps amount: 1.0 .*')))
 
         write_file('config.yaml', '- { when: { step: use_file }, then: { foo: 1 } }')
         load_config('config.yaml')
@@ -1108,7 +1180,9 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/use_file: delete stale output: output.yaml'),
                   ('dynamake', 'INFO', '/use_file: run: cp '
                    '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
-                  ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'))
+                  ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/use_file: free resource: steps amount: 1.0 .*')))
 
     def test_main_config(self) -> None:
         @action()
@@ -1277,4 +1351,6 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/do_nothing: needs to execute because has no outputs'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/do_nothing: use resource: steps amount: 1.0 .*')),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/do_nothing: free resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', 'done'))

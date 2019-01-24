@@ -17,6 +17,7 @@ from dynamake.application import Func
 from dynamake.application import Param
 from dynamake.application import Prog
 from dynamake.application import config
+from dynamake.application import env
 from dynamake.application import main as da_main
 from dynamake.application import override
 from dynamake.application import parallel
@@ -64,11 +65,11 @@ class TestFunction(TestWithReset):
     def test_collect_parameters(self) -> None:
 
         @config()
-        def use_foo(*, foo: int = 0) -> int:
+        def use_foo(*, foo: int = env()) -> int:
             return foo
 
         @config()
-        def use_bar(*, bar: int = 0) -> int:
+        def use_bar(*, bar: int = env()) -> int:
             return bar
 
         @config()
@@ -84,33 +85,33 @@ class TestFunction(TestWithReset):
         Func.finalize()
 
         foo = Func.by_name['use_foo']
-        self.assertFalse(foo.has_positional_arguments)
+        self.assertFalse(foo.has_required_arguments)
         self.assertEqual(foo.direct_parameter_names, set(['foo']))
         self.assertEqual(foo.indirect_parameter_names, set(['foo']))
 
         bar = Func.by_name['use_bar']
-        self.assertFalse(bar.has_positional_arguments)
+        self.assertFalse(bar.has_required_arguments)
         self.assertEqual(bar.direct_parameter_names, set(['bar']))
         self.assertEqual(bar.indirect_parameter_names, set(['bar']))
 
         both = Func.by_name['use_both']
-        self.assertFalse(both.has_positional_arguments)
+        self.assertFalse(both.has_required_arguments)
         self.assertEqual(both.direct_parameter_names, set())
         self.assertEqual(both.indirect_parameter_names, set(['foo', 'bar']))
 
         none = Func.by_name['use_none']
-        self.assertTrue(none.has_positional_arguments)
+        self.assertTrue(none.has_required_arguments)
         self.assertEqual(none.direct_parameter_names, set())
         self.assertEqual(none.indirect_parameter_names, set())
 
     def test_collect_recursive_parameters(self) -> None:
 
         @config()
-        def use_foo(*, foo: int = 0) -> int:
+        def use_foo(*, foo: int = env()) -> int:
             return foo + use_bar()
 
         @config()
-        def use_bar(*, bar: int = 0) -> int:
+        def use_bar(*, bar: int = env()) -> int:
             return bar + use_foo()
 
         @config()
@@ -120,17 +121,17 @@ class TestFunction(TestWithReset):
         Func.finalize()
 
         foo = Func.by_name['use_foo']
-        self.assertFalse(foo.has_positional_arguments)
+        self.assertFalse(foo.has_required_arguments)
         self.assertEqual(foo.direct_parameter_names, set(['foo']))
         self.assertEqual(foo.indirect_parameter_names, set(['foo', 'bar']))
 
         bar = Func.by_name['use_bar']
-        self.assertFalse(bar.has_positional_arguments)
+        self.assertFalse(bar.has_required_arguments)
         self.assertEqual(bar.direct_parameter_names, set(['bar']))
         self.assertEqual(bar.indirect_parameter_names, set(['foo', 'bar']))
 
         both = Func.by_name['use_both']
-        self.assertTrue(both.has_positional_arguments)
+        self.assertTrue(both.has_required_arguments)
         self.assertEqual(both.direct_parameter_names, set())
         self.assertEqual(both.indirect_parameter_names, set(['foo', 'bar']))
 
@@ -139,11 +140,11 @@ class TestParameters(TestWithReset):
 
     def test_missing_parameter(self) -> None:
         @config()
-        def use_foo(*, foo: int) -> int:  # pylint: disable=unused-variable
+        def use_foo(*, foo: int = env()) -> int:  # pylint: disable=unused-variable
             return foo
 
         self.assertRaisesRegex(RuntimeError,
-                               'Missing .* parameter: foo .* '
+                               'unknown parameter: foo .* '
                                'function: .*.test_missing_parameter.<locals>.use_foo',
                                Prog.current.verify)
 
@@ -158,7 +159,7 @@ class TestParameters(TestWithReset):
     def test_used_parameter(self) -> None:
         Param(name='foo', default=1, parser=int, description='The number of foos')
         self.assertRaisesRegex(RuntimeError,
-                               'Unused parameter: foo',
+                               'parameter: foo .* not used',
                                Prog.current.verify)
 
     def test_unknown_parameter(self) -> None:
@@ -177,7 +178,7 @@ class TestParameters(TestWithReset):
         Param(name='bar', default=1, parser=int, description='The number of bars')
 
         @config()
-        def foo(*, bar: int = 0) -> int:
+        def foo(*, bar: int = env()) -> int:
             return bar
 
         self.assertEqual(foo(), 1)
@@ -200,7 +201,7 @@ class TestParameters(TestWithReset):
         Param(name='bar', default=1, parser=int, description='The number of bars')
 
         @config()
-        def foo(*, bar: int = 0) -> int:
+        def foo(*, bar: int = env()) -> int:
             return bar
 
         results = parallel(1, 2, foo, overrides=lambda index: {'bar': index})
@@ -215,11 +216,11 @@ def define_main_function() -> Callable:
     class Foo:
         @config()
         @staticmethod
-        def add_foo(foo: int, *, bar: int = 0) -> int:
+        def add_foo(foo: int, *, bar: int = env()) -> int:
             return foo + bar
 
     @config()
-    def add(foo: int, *, bar: int = 0) -> int:
+    def add(foo: int, *, bar: int = env()) -> int:
         return foo + bar
 
     def main_function() -> int:
@@ -309,14 +310,14 @@ def define_main_commands(is_top: bool, extra: Optional[List[str]] = None) -> Cal
     class Foo:  # pylint: disable=unused-variable
         @config(top=is_top)
         @staticmethod
-        def add_foo(*, foo: int = 0, bar: int = 0) -> int:
+        def add_foo(*, foo: int = env(), bar: int = env()) -> int:
             """
             Add with foo.
             """
             return 1 + foo + bar
 
     @config(top=is_top)
-    def add(*, bar: int = 0, baz: int = 0) -> int:  # pylint: disable=unused-variable
+    def add(*, bar: int = env(), baz: int = env()) -> int:  # pylint: disable=unused-variable
         return bar + baz
 
     def main_function() -> int:
@@ -362,15 +363,15 @@ class TestCommandsMain(TestWithFiles):
                                '.* not reachable',
                                define_main_commands(True))
 
-    def test_positional_command(self) -> None:
+    def test_missing_required(self) -> None:
         @config()
-        def bar(foo: int, *, baz: int = 0) -> int:  # pylint: disable=unused-variable
+        def bar(foo: int, *, baz: int = env()) -> int:  # pylint: disable=unused-variable
             return foo + baz
 
         sys.argv = ['test', 'bar']
         self.assertRaisesRegex(RuntimeError,
-                               'function: .*.test_positional_command.<locals>.bar .* '
-                               'positional arguments',
+                               'function: .*.test_missing_required.<locals>.bar .* '
+                               'required arguments',
                                define_main_commands(False, ['bar']))
 
 
@@ -380,7 +381,7 @@ class TestUniversalMain(TestWithFiles):
         Param(name='foo', parser=str2int(), default=1, description='The size of a foo.')
 
         @config(top=True)
-        def top(*, foo: int = 0) -> None:  # pylint: disable=unused-variable
+        def top(*, foo: int = env()) -> None:  # pylint: disable=unused-variable
             print('foo', foo)
 
         sys.argv = ['test', 'top']

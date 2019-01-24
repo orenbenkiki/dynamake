@@ -39,6 +39,23 @@ from .patterns import first_sentence
 Wrapped = TypeVar('Wrapped', bound=Callable)
 
 
+class Env:
+    """
+    Marker for default for configurable parameters.
+    """
+
+
+def env() -> Any:
+    """
+    Used as a default value for configurable parameters.
+
+    When a configurable function uses this as a default value for a parameter, and an invocation
+    does not specify an explicit value for the parameter, then the value will be taken from the
+    configuration.
+    """
+    return Env()
+
+
 class Func:  # pylint: disable=too-many-instance-attributes
     """
     Data collected for a configurable function.
@@ -90,12 +107,12 @@ class Func:  # pylint: disable=too-many-instance-attributes
         #: later filled.
         self.invoker_function_names: Set[str] = set()
 
-        has_positional_arguments, parameter_names = _parameter_names(function)
+        has_required_arguments, parameter_names = _parameter_names(function)
         for parameter_name in parameter_names:
             Func.name_by_parameter[parameter_name] = self.name
 
         #: Whether the function has non-configurable arguments.
-        self.has_positional_arguments = has_positional_arguments
+        self.has_required_arguments = has_required_arguments
 
         #: The list of parameter names the function (directly) configures.
         self.direct_parameter_names = parameter_names
@@ -198,14 +215,14 @@ def _real_function(wrapped: Wrapped) -> Callable:
 
 
 def _parameter_names(function: Callable) -> Tuple[bool, Set[str]]:
-    has_positional_arguments = False
+    has_required_arguments = False
     parameter_names: Set[str] = set()
     for parameter in signature(function).parameters.values():
-        if parameter.kind == Parameter.KEYWORD_ONLY:
+        if isinstance(parameter.default, Env):
             parameter_names.add(parameter.name)
-        else:
-            has_positional_arguments = True
-    return has_positional_arguments, parameter_names
+        elif parameter.default == Parameter.empty:
+            has_required_arguments = True
+    return has_required_arguments, parameter_names
 
 
 class NamesCollector(NodeVisitor):
@@ -326,12 +343,14 @@ class Prog:
         for parameter_name, function_name in Func.name_by_parameter.items():
             if parameter_name not in self.parameters:
                 function = Func.by_name[function_name].function
-                raise RuntimeError('Missing the parameter: %s of the configurable function: %s.%s'
+                raise RuntimeError('An unknown parameter: %s '
+                                   'is used by the configurable function: %s.%s'
                                    % (parameter_name, function.__module__, function.__qualname__))
 
         for parameter_name in self.parameters:
             if parameter_name not in Func.name_by_parameter:
-                raise RuntimeError('Unused parameter: %s' % parameter_name)
+                raise RuntimeError('The parameter: %s is not used by any configurable function'
+                                   % parameter_name)
 
     @staticmethod
     def add_parameter(parameter: Param) -> None:
@@ -456,13 +475,16 @@ class Prog:
         Prog.current.verify()
 
         parser.add_argument('-c', '--config', metavar='FILE', action='append',
-                            help='Load a parameters configuration YAML file.')
+                            help='Load a parameters configuration YAML file')
 
         parser.add_argument('-m', '--module', metavar='MODULE', action='append',
                             help='A Python module to load (containing function definitions)')
 
-        parser.add_argument('-ll', '--log_level', metavar='LEVEL', default='INFO',
-                            help='The log level to use (default: INFO)')
+        parser.add_argument('-lc', '--log_context', metavar='STR',
+                            help='Context to include in log messages')
+
+        parser.add_argument('-ll', '--log_level', metavar='LEVEL', default='WARN',
+                            help='The log level to use (default: WARN)')
 
     @staticmethod
     def _verify_function(function_name: str, is_command: bool) -> Func:
@@ -470,9 +492,9 @@ class Prog:
             raise RuntimeError('Unknown top function: %s' % function_name)
         configurable = Func.by_name[function_name]
         function = configurable.function
-        if is_command and configurable.has_positional_arguments:
+        if is_command and configurable.has_required_arguments:
             raise RuntimeError("Can't directly invoke the function: %s.%s "
-                               'since it has positional arguments'
+                               'since it has required arguments'
                                % (function.__module__, function.__qualname__))
         return configurable
 
@@ -500,12 +522,18 @@ class Prog:
         if 'command' in vars(args):
             name += ' ' + args.command
         handler = logging.StreamHandler(sys.stderr)
-        formatter = \
-            logging.Formatter('%(asctime)s - ' + name
-                              + ' - %(threadName)s - %(name)s - %(levelname)s - %(message)s')
+
+        context = vars(args).get('log_context')
+        if context:
+            log_format = '%(asctime)s - ' + context + ' - ' + name \
+                + ' - %(threadName)s - %(name)s - %(levelname)s - %(message)s'
+        else:
+            log_format = '%(asctime)s - ' + name \
+                + ' - %(threadName)s - %(name)s - %(levelname)s - %(message)s'
+        formatter = logging.Formatter(log_format)
         handler.setFormatter(formatter)
         Prog.logger.addHandler(handler)
-        Prog.logger.setLevel(vars(args).get('log_level', 'INFO'))
+        Prog.logger.setLevel(vars(args).get('log_level', 'WARN'))
 
     @staticmethod
     def call_with_args(args: Namespace) -> Any:

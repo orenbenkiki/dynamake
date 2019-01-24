@@ -97,12 +97,13 @@ yaml.add_constructor('!r', _load_regexp)
 
 #: An arbitrarily nested list of strings.
 #:
-#: This should really have been ``Strings = Union[str, List[Strings]]`` but ``mypy`` can't handle
-#: nested types. Therefore, do not use this as a return type; as much as possible, return a concrete
-#: type (``str``, ``List[str]``, etc.). Instead use ``Strings`` as an argument type, for functions
-#: that :py:func:`dynamake.patterns.flatten` their arguments. This will allow the callers to easily
-#: nest lists without worrying about flattening themselves.
-Strings = Union[str,
+#: This should really have been ``Strings = Union[None, str, List[Strings]]`` but ``mypy`` can't
+#: handle nested types. Therefore, do not use this as a return type; as much as possible, return a
+#: concrete type (``str``, ``List[str]``, etc.). Instead use ``Strings`` as an argument type, for
+#: functions that :py:func:`dynamake.patterns.flatten` their arguments. This will allow the callers
+#: to easily nest lists without worrying about flattening themselves.
+Strings = Union[None,
+                str,
                 Sequence[str],
                 Sequence[Sequence[str]],
                 Sequence[Sequence[Sequence[str]]],
@@ -116,7 +117,7 @@ def each_string(*args: Strings) -> Iterator[str]:
     for strings in args:
         if isinstance(strings, str):
             yield strings
-        else:
+        elif strings is not None:
             yield from each_string(*strings)
 
 

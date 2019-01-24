@@ -203,13 +203,13 @@ An example of a slightly more dynamic build script is:
     from c_source_files import scan_included_files  # Assume this for simplicity.
 
     @dm.action()
-    def compile_file(source_path: str, object_path: str) -> dm.Action:
+    def compile_file(*, source_path: str, object_path: str) -> dm.Action:
         return dm.Action(input=scan_included_files(source_path),
                          output=object_path,
                          run=['cc', '-o', object_path, source_path])
 
     @dm.plan()
-    def compile_objects(source_dir: str, object_dir: str) -> dm.Strings:
+    def compile_objects(*, source_dir: str = dm.env(), object_dir: str = dm.env()) -> dm.Strings:
        sources = dm.capture('{source_dir}/{*name}.c')
        return [compiled.output
                for compiled
@@ -219,15 +219,14 @@ An example of a slightly more dynamic build script is:
                              object_path='{object_dir}/{name}.o')]
 
     @dm.action()
-    def link_objects(objects: dm.Strings, executable_path: str) -> dm.Action:
+    def link_objects(objects: dm.Strings, executable_path: str = dm.env()) -> dm.Action:
         return dm.Action(input=objects,
                          output=executable_path,
                          run=['ld', objects, '-o', executable_path])
 
     @dm.plan()
     def build_executable(source_dir: str, object_dir: str, executable_path: str) -> None:
-        objects = compile_objects(source_dir, object_dir)
-        link_objects(objects, executable_path)
+        link_objects(compile_objects())
 
     dm.main(argparse.ArgumentParser(description='...'), build_executable)
 
@@ -252,6 +251,11 @@ This demonstrates some additional concepts:
   set of these files is dynamic: run the action if any of the input files is newer than any of the
   existing files that match the output glob pattern. Either way, the actual list of outputs is
   available in the returned action object, available to be used by additional steps.
+
+* If the default value of a step parameter is :py:func:`dynamake.make.env`, and it is not explicitly
+  specified for an invocation, then the value will be that of the nearest parent using this
+  parameter. This reduces a lot of boilerplate passing of "general" parameters (such as key
+  directory paths).
 
 Universal Build Script
 .......................
@@ -527,19 +531,15 @@ Here is a trivial example configurable program:
         print(add(1))  # Bar will be taken from the configuration.
 
 
-    # Note: the real default of `bar` is 1, not 0!
     @da.config
-    def add(foo: int, *, bar: int = 0) -> int:
+    def add(foo: int, *, bar: int = da,env()) -> int:
         return foo + bar
 
 A possible configuration file for this program would be:
 
 .. code-block:: python
 
-   # Parameters that may or may not apply to the program:
-   - {}  # None in this case
-   # Parameters that "must" apply to the program:
-   - bar: 2  # The program will print 3 instead of the default 2.
+   bar: 2  # The program will print 3 instead of the default 2.
 
 This file can be passed to the program using the ``--config`` flag, or ``--bar 2`` can be directly
 specified instead for the same effect.
@@ -550,8 +550,8 @@ The usage pattern of these utilities is as follows:
   :py:attr:`dynamake.application.Param` objects.
 
 * Typically one then adds all the necessary command line arguments to the program by calling
-  :py:func:`dynamake.application.Prog.add_parameters_to_parser`. This registers the ``--config`` flag
-  for loading a configuration file and a per-parameter (``--bar`` in the above example) flag
+  :py:func:`dynamake.application.Prog.add_parameters_to_parser`. This registers the ``--config``
+  flag for loading a configuration file and a per-parameter (``--bar`` in the above example) flag
   for explicit overrides.
 
 * After the command line arguments have been parsed, the configuration is finalized using
@@ -559,20 +559,11 @@ The usage pattern of these utilities is as follows:
 
 To use the finalized :py:attr:`dynamake.application.Prog` parameters, decorate any function with
 :py:func:`dynamake.application.config`. This will use the configuration to provide default values
-for each named function argument. Calling the functions with an explicit parameter value will ignore
-the configuration's value.
+for each named function argument whose default is specified to be
+:py:func:`dynamake.application.env`. Calling the functions with an explicit parameter value will
+ignore the configuration's value.
 
 One can also use the :py:attr:`dynamake.application.Prog.logger` anywhere in the code.
-
-.. note::
-
-   If using `mypy <http://mypy-lang.org/>`_ to type-check the code, then it will complain about
-   invocations that do not specify a value for all named arguments. You can work around this by
-   providing these arguments with a default value; however, when using the
-   :py:func:`dynamake.application.config` decorator, such defaults have **no effect** other than
-   shutting ``mypy`` up. This may be confusing for a reader who is not familiar with the
-   functionality of the decorator, but is *probably* an acceptable trade-off for being able to
-   type-check the code.
 
 Configurable Multi-Applications
 ...............................
