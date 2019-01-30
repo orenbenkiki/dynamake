@@ -15,12 +15,14 @@ from dynamake.patterns import NonOptionalException
 from dynamake.patterns import capture2glob
 from dynamake.patterns import capture2re
 from dynamake.patterns import capture_globs
+from dynamake.patterns import emphasized
 from dynamake.patterns import exists
 from dynamake.patterns import expand_strings
 from dynamake.patterns import extract_strings
 from dynamake.patterns import flatten
 from dynamake.patterns import glob2re
 from dynamake.patterns import glob_strings
+from dynamake.patterns import is_emphasized
 from dynamake.patterns import is_exists
 from dynamake.patterns import is_optional
 from dynamake.patterns import optional
@@ -43,14 +45,17 @@ class TestPatterns(TestWithReset):
     def test_annotations(self) -> None:
         self.assertFalse(is_optional('x'))
         self.assertFalse(is_exists('x'))
+        self.assertFalse(is_emphasized('x'))
 
         self.assertTrue(is_optional(optional('x')[0]))
         self.assertFalse(is_exists(optional('x')[0]))
+        self.assertFalse(is_emphasized(optional('x')[0]))
 
         self.assertFalse(is_optional(exists('x')[0]))
         self.assertTrue(is_exists(exists('x')[0]))
+        self.assertFalse(is_emphasized(exists('x')[0]))
 
-        self.assertTrue(is_optional(exists(optional('x'))[0]))
+        self.assertTrue(is_emphasized(exists(emphasized('x'))[0]))
         self.assertTrue(is_exists(optional(exists('x'))[0]))
 
     def test_flatten(self) -> None:
