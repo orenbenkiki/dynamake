@@ -7,6 +7,7 @@ Utilities for dynamic make.
 import argparse
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -41,6 +42,7 @@ from .config import Config
 from .config import Rule
 from .patterns import Captured
 from .patterns import Strings
+from .patterns import emphasized  # pylint: disable=unused-import
 from .patterns import exists  # pylint: disable=unused-import
 from .patterns import optional  # pylint: disable=unused-import
 from .patterns import precious  # pylint: disable=unused-import
@@ -102,6 +104,9 @@ class Make:  # pylint: disable=too-many-instance-attributes
     #: ``False``).
     delete_empty_directories: bool
 
+    #: Whether to log skipped actions.
+    log_skipped_actions: bool
+
     @staticmethod
     def reset() -> None:
         """
@@ -121,6 +126,7 @@ class Make:  # pylint: disable=too-many-instance-attributes
         Make.touch_success_outputs = False
         Make.delete_failed_outputs = True
         Make.delete_empty_directories = False
+        Make.log_skipped_actions = False
 
 
 class Step:  # pylint: disable=too-many-instance-attributes
@@ -225,39 +231,46 @@ class Step:  # pylint: disable=too-many-instance-attributes
         self.wildcards['step'] = self.name
         self.wildcards['stack'] = self.stack
 
-        #: The configuration values for the step.
-        self.config_values = Config.values_for_context(self.wildcards)
-
         if isinstance(parent, Agent):
             raise RuntimeError('The nested step: %s.%s '
                                'is invoked from an action step: %s.%s'
                                % (self.function.__module__, self.function.__qualname__,
                                   parent.function.__module__, parent.function.__qualname__))
 
-        if function is None:
-            return
+        if function is not None:
+            specified_names = set(kwargs.keys())
+            positional_argument_names = getattr(function, '_dynamake_positional_argument_names')
+            for name, arg in zip(positional_argument_names, args):
+                specified_names.add(name)
+                self.wildcards[name] = arg
 
-        specified_names = set(kwargs.keys())
-        positional_argument_names = getattr(function, '_dynamake_positional_argument_names')
-        for name, arg in zip(positional_argument_names, args):
-            specified_names.add(name)
-            self.wildcards[name] = arg
+            environment_argument_names = getattr(function, '_dynamake_environment_argument_names')
+            for name in environment_argument_names:
+                if name not in specified_names:
+                    step = self
+                    while True:
+                        if name in step.wildcards:
+                            specified_names.add(name)
+                            self.wildcards[name] = self.kwargs[name] = step.wildcards[name]
+                            break
+                        if step.stack == '/':
+                            break
+                        step = step.parent
 
-        environment_argument_names = getattr(function, '_dynamake_environment_argument_names')
-        for name in environment_argument_names:
-            if name not in specified_names:
-                step = self
-                while True:
-                    if name in step.wildcards:
-                        specified_names.add(name)
-                        self.wildcards[name] = self.kwargs[name] = step.wildcards[name]
-                        break
-                    if step.stack == '/':
-                        break
-                    step = step.parent
-            if name not in specified_names:
-                raise RuntimeError('Missing value for the parameter: %s of the step: %s'
-                                   % (name, self.stack))
+            argument_defaults = getattr(function, '_dynamake_argument_defaults')
+            for name, value in argument_defaults.items():
+                if name not in specified_names:
+                    self.wildcards[name] = value
+                    specified_names.add(name)
+
+            required_names = getattr(function, '_dynamake_required_argument_names')
+            for name in required_names:
+                if name not in specified_names:
+                    raise RuntimeError('Missing value for the parameter: %s of the step: %s'
+                                       % (name, self.stack))
+
+        #: The configuration values for the step.
+        self.config_values = Config.values_for_context(self.wildcards)
 
     def config_param(self, name: str, default: Any) -> Any:
         """
@@ -330,9 +343,12 @@ class Agent(Step):
 
     def _call(self) -> Any:
         result = self.function(*self.args, **self.kwargs)
-        if isinstance(result, Action) and result.needs_to_execute:
-            with _request_resources(result.resources):
-                result.call()
+        if isinstance(result, Action):
+            if result.needs_to_execute:
+                with _request_resources(result.resources):
+                    result.call()
+            else:
+                result.skip()
         return result
 
 
@@ -429,6 +445,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                  touch_success_outputs: Optional[bool] = None,
                  delete_failed_outputs: Optional[bool] = None,
                  delete_empty_directories: Optional[bool] = None,
+                 log_skipped_actions: Optional[bool] = None,
                  resources: Optional[Dict[str, Any]] = None,
                  **kwargs: Any) -> None:
         """
@@ -479,6 +496,8 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         delete_empty_directories
             Optional override for :py:attr:`dynamake.make.Make.delete_empty_directories` for this
             action.
+        log_skipped_actions
+            If ``True``, log skipped actions similarly to logging executed actions.
         resources
             Optional resources to restrict parallel action execution. Specified
             resources must be pre-declared via :py:func:`dynamake.resource`.
@@ -511,6 +530,11 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         self.delete_empty_directories = \
             Make.delete_empty_directories if delete_empty_directories is None \
             else delete_empty_directories
+
+        #: Whether to log skipped actions.
+        self.log_skipped_actions = \
+            Make.log_skipped_actions if log_skipped_actions is None \
+            else log_skipped_actions
 
         #: The resources needed by the action, to restrict parallel action execution.
         self.resources = {'steps': 1.0}
@@ -597,7 +621,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
 
         if minimal_output_mtime is None:
             if not self.output_paths:
-                Make.logger.debug('%s: need to execute because no output(s) exist', self.stack)
+                Make.logger.debug('%s: needs to execute because no output(s) exist', self.stack)
                 return True
             Make.logger.debug('%s: no need to execute because some output file(s) exist',
                               self.stack)
@@ -607,7 +631,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         if config_path is not None:
             config_mtime = os.stat(config_path).st_mtime_ns
             if config_mtime >= minimal_output_mtime:
-                Make.logger.debug('%s: need to execute because of newer config: %s',
+                Make.logger.debug('%s: needs to execute because of newer config: %s',
                                   self.stack, config_path)
                 return True
             has_older = True
@@ -617,7 +641,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                 continue
             input_mtime = os.stat(input_path).st_mtime_ns
             if input_mtime >= minimal_output_mtime:
-                Make.logger.debug('%s: need to execute because of newer input: %s',
+                Make.logger.debug('%s: needs to execute because of newer input: %s',
                                   self.stack, input_path)
                 return True
             has_older = True
@@ -641,24 +665,40 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         try:
             for command in self.run:
                 if self.runner == ['shell']:
-                    Make.logger.info('%s: run: %s', self.stack, ' '.join(command))
+                    log_command = ' '.join(dp.color(command))
+                    Make.logger.info('%s: run: %s', self.stack, log_command)
                     completed = subprocess.run(' '.join(command), shell=True)
 
                 else:
                     command = self.runner + command
-                    Make.logger.info('%s: run: %s', self.stack, ' '.join(command))
-                    completed = subprocess.run(self.runner + command)
+                    log_command = ' '.join(dp.color([dp.copy_annotations(part, shlex.quote(part))
+                                                     for part in command]))
+                    Make.logger.info('%s: run: %s', self.stack, log_command)
+                    completed = subprocess.run(command)
 
                 if completed.returncode != 0 and not self.ignore_exit_status:
                     Make.logger.debug('%s: failed with exit status: %s',
                                       self.stack, completed.returncode)
-                    raise RuntimeError('%s: failed command: %s' % (self.stack, ' '.join(command)))
+                    raise RuntimeError('%s: failed command: %s' % (self.stack, log_command))
 
         except BaseException:
             self._fail()
             raise
 
         self._success()
+
+    def skip(self) -> Any:
+        """
+        Skip the action since it is not needed.
+        """
+        if not self.log_skipped_actions:
+            return
+        for command in self.run:
+            if self.runner == ['shell']:
+                Make.logger.info('%s: skip: %s', self.stack, ' '.join(dp.color(command)))
+            else:
+                command = self.runner + command
+                Make.logger.info('%s: skip: %s', self.stack, ' '.join(dp.color(command)))
 
     def _fail(self) -> None:
         if self.delete_failed_outputs:
@@ -667,13 +707,41 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
             self._delete_outputs('failed')
 
     def _success(self) -> None:
-        missing_outputs_patterns: List[str] = []
         did_sleep = False
+        waited = 0.0
+        next_wait = 0.1
+        output_paths: List[str] = []
+
+        missing_outputs_patterns: List[str] = []
+
         for output_pattern in self.output:
-            try:
-                self.output_paths += self._log_glob('output', output_pattern)
-                output_paths = glob(optional(output_pattern))
-            except dp.NonOptionalException:
+            did_wait = False
+
+            def _wait_for_output() -> bool:
+                nonlocal did_sleep, waited, next_wait, output_paths, did_wait
+                while True:
+                    try:
+                        output_paths = \
+                            self._log_glob('output',
+                                           output_pattern)  # pylint: disable=cell-var-from-loop
+                        self.output_paths += output_paths
+
+                        if did_wait:
+                            Make.logger.warn('had to wait: %s seconds for the output(s): %s',
+                                             round(waited, 2), ' '.join(output_paths))
+
+                        return True
+
+                    except dp.NonOptionalException:
+                        if waited > 20:  # TODO: WhyTF is this needed?
+                            return False
+                        sleep(next_wait)   # Allow NFS time to catch up with remote operations.
+                        did_sleep = True
+                        waited += next_wait
+                        next_wait *= 2
+                        did_wait = True
+
+            if not _wait_for_output():
                 missing_outputs_patterns.append(output_pattern)
                 continue
 
@@ -777,9 +845,7 @@ def _step(step: type, run_help: Strings, wrapped: Wrapped) -> Wrapped:
         run_help = [string.format(step=function.__name__) for string in dp.each_string(run_help)]
     setattr(_wrapper_function, '_dynamake_run_help', run_help)
 
-    positional_argument_names, environment_argument_names = _argument_names(function)
-    setattr(function, '_dynamake_positional_argument_names', positional_argument_names)
-    setattr(function, '_dynamake_environment_argument_names', environment_argument_names)
+    _collect_argument_names(function)
 
     conflicting = Make.step_by_name.get(function.__name__)
     if conflicting is not None:
@@ -807,27 +873,50 @@ class Env:
     Marker for default for environment parameters.
     """
 
+    def __init__(self, default_value: Any) -> None:
+        """
+        Optionally provide a default value for the parameter.
+        """
+        #: The default value for the parameter.
+        self.value = default_value
 
-def env() -> Any:
+
+def env(default_value: Any = Parameter.empty) -> Any:
     """
     Used as a default value for environment parameters.
 
     When a step uses this as a default value for a parameter,
     and an invocation does not specify an explicit or a configuration value for the parameter,
     then the value will be taken from the nearest parent which has a parameter with the same name.
+
+    If a default value is provided, then it is used if no value is available from either the command
+    line or the invocation.
     """
-    return Env()
+    return Env(default_value)
 
 
-def _argument_names(function: Callable) -> Tuple[List[str], List[str]]:
+def _collect_argument_names(function: Callable) -> None:
     positional_names: List[str] = []
     environment_names: List[str] = []
+    required_names: List[str] = []
+    argument_defaults: Dict[str, Any] = {}
+
     for parameter in signature(function).parameters.values():
         if parameter.kind in [Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD]:
             positional_names.append(parameter.name)
-        if isinstance(parameter.default, Env):
+        default = parameter.default
+        if isinstance(default, Env):
             environment_names.append(parameter.name)
-    return positional_names, environment_names
+            default = default.value
+        if default == Parameter.empty:
+            required_names.append(parameter.name)
+        else:
+            argument_defaults[parameter.name] = default
+
+    setattr(function, '_dynamake_positional_argument_names', positional_names)
+    setattr(function, '_dynamake_environment_argument_names', environment_names)
+    setattr(function, '_dynamake_required_argument_names', required_names)
+    setattr(function, '_dynamake_argument_defaults', argument_defaults)
 
 
 def expand(*patterns: Strings) -> List[str]:
@@ -1101,22 +1190,32 @@ def optional_flag(flag: str, *value: Strings) -> List[str]:
     return values
 
 
-def pass_flags(*names: Strings) -> List[str]:
+def pass_flags(*names: Strings, **renamed: str) -> List[str]:
     """
     Given some flag names, return a list of command line arguments.
 
     The command line arguments for the flag ``foo`` will be ``--foo`` followed by the
     expanded value of ``{foo}``.
 
-    If a name with :py:func:`dynamake.patterns.optional`, and it has no value
+    If given a named argument ``pass_flags(..., foo='bar', ...)`` then the generated flag
+    will be ``--foo`` followed by the expanded value of ``{bar}``.
+
+    If an expanded name is annotated with :py:func:`dynamake.patterns.optional`, and it has no value
     in the current context, or its value is ``None``, then the flag is silently omitted.
     """
     flags = []
+
+    def _add_flag(flag_name: str, parameter_name: str) -> None:
+        if dp.is_optional(parameter_name) and Step.current().wildcards.get(parameter_name) is None:
+            return
+        flags.append('--' + flag_name)
+        flags.append(dp.copy_annotations(parameter_name, '{' + parameter_name + '}'))
+
     for name in dp.each_string(*names):
-        if dp.is_optional(name) and Step.current().wildcards.get(name) is None:
-            continue
-        flags.append('--' + name)
-        flags.append('{name}')
+        _add_flag(name, name)
+    for flag_name, parameter_name in renamed.items():
+        _add_flag(flag_name, parameter_name)
+
     return expand(*flags)
 
 
@@ -1149,6 +1248,11 @@ def _add_arguments(parser: argparse.ArgumentParser, default_step: Optional[Calla
 
     parser.add_argument('-ll', '--log_level', metavar='LEVEL', default='INFO',
                         help='The log level to use (default: INFO)')
+
+    parser.add_argument('-lse', '--log_skipped_actions', metavar='BOOL',
+                        type=dp.str2bool, nargs='?', const=True,
+                        help='Whether to log skipped actions similarly to executed actions '
+                             '(default: %s)' % Make.log_skipped_actions)
 
     parser.add_argument('-dso', '--delete_stale_outputs', metavar='BOOL',
                         type=dp.str2bool, nargs='?', const=True,
@@ -1230,6 +1334,9 @@ def _configure_by_arguments(args: argparse.Namespace) -> Tuple[Dict[str, Any], S
     Make.delete_empty_directories = \
         _get('delete_empty_directories', dp.str2bool, Make.delete_empty_directories)
 
+    Make.log_skipped_actions = \
+        _get('log_skipped_actions', dp.str2bool, Make.log_skipped_actions)
+
     def _parse_available_resources(string: str) -> Dict[str, float]:
         raise RuntimeError('Configuration for available resources is not a mapping: %s' % string)
 
@@ -1294,9 +1401,15 @@ def _call_steps(default_step: Optional[Callable],  # pylint: disable=too-many-br
                 kwargs[parameter.name] = step_parameters[parameter.name]
             elif parameter.name in config_values:
                 kwargs[parameter.name] = config_values[parameter.name]
-            elif parameter.default == parameter.empty or isinstance(parameter.default, Env):
-                raise RuntimeError('Missing top-level parameter: %s for the step: /%s'
-                                   % (parameter.name, function.__name__))
+            else:
+                if isinstance(parameter.default, Env):
+                    default = parameter.default.value
+                else:
+                    default = parameter.default
+                if default == Parameter.empty:
+                    raise RuntimeError('Missing top-level parameter: %s for the step: /%s'
+                                       % (parameter.name, function.__name__))
+                kwargs[parameter.name] = default
             used_parameters.add(parameter.name)
         step_function(**kwargs)
 

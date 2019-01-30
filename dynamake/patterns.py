@@ -17,6 +17,7 @@ from typing import Union
 from typing.re import Pattern  # pylint: disable=import-error
 
 import yaml
+from termcolor import colored
 from yaml import Loader
 from yaml import Node
 
@@ -133,7 +134,9 @@ def expand_strings(wildcards: Dict[str, Any], *patterns: Strings) -> List[str]:
     Given some wildcards values and a pattern (Python format string),
     generate one output per pattern using these values.
     """
-    return [pattern.format(**wildcards) for pattern in each_string(*patterns)]
+    return [copy_annotations(pattern, pattern.format(**wildcards))
+            for pattern
+            in each_string(*patterns)]
 
 
 class Captured:
@@ -185,6 +188,9 @@ class AnnotatedStr(str):
 
     #: Whether this was annotated by :py:func:`dynamake.patterns.precious`.
     precious = False
+
+    #: Whether this was annotated by :py:func:`dynamake.patterns.emphasized`.
+    emphasized = False
 
 
 def optional(*patterns: Strings) -> List[str]:
@@ -243,6 +249,22 @@ def precious(*patterns: Strings) -> List[str]:
     return strings
 
 
+def emphasized(*patterns: Strings) -> List[str]:
+    """
+    Annotate patterns as emphasized (impacts logging command lines).
+
+    Emphasized text in a command line is printed in color when logged. Strategic use of this makes
+    it easier to figure out the actual actions in the text soup of all the command line flags.
+    """
+    strings: List[str] = []
+    for pattern in each_string(*patterns):
+        if not isinstance(pattern, AnnotatedStr):
+            pattern = AnnotatedStr(pattern)
+        pattern.emphasized = True
+        strings.append(pattern)
+    return strings
+
+
 def is_optional(string: str) -> bool:
     """
     Whether a string has been annotated as :py:func:`dynamake.patterns.optional`.
@@ -264,6 +286,27 @@ def is_precious(string: str) -> bool:
     return isinstance(string, AnnotatedStr) and string.precious
 
 
+def is_emphasized(string: str) -> bool:
+    """
+    Whether a string has been annotated as :py:func:`dynamake.patterns.emphasized`.
+    """
+    return isinstance(string, AnnotatedStr) and string.emphasized
+
+
+def color(*strings: Strings) -> List[str]:
+    """
+    Return the strings, replacing any that were :py:func:`dynamake.patterns.emphasized` by a colored
+    version.
+    """
+    result = []
+    for string in each_string(*strings):
+        if is_emphasized(string):
+            result.append(colored(string, attrs=['bold']))
+        else:
+            result.append(string)
+    return result
+
+
 def copy_annotations(source: str, target: str) -> str:
     """
     Copy the annotations from one string to another.
@@ -276,6 +319,7 @@ def copy_annotations(source: str, target: str) -> str:
         target.optional = source.optional
         target.exists = source.exists
         target.precious = source.precious
+        target.emphasized = source.emphasized
     return target
 
 

@@ -285,6 +285,10 @@ You can annotate the input and/or outputs of an action to modify how they are pr
 * :py:func:`dynamake.patterns.precious` ensures that the action output will not be deleted,
   either before it is executed ("stale" outputs) or if the action has failed.
 
+* :py:func:`dynamake.patterns.emphasized` is used in the ``run`` parameter of
+  :py:class:`dynamake.make.Action`. Annotated string(s) are printed in **bold** in the log file.
+  This makes it easier to see the important bits of long command lines.
+
 These functions can be imported directly from the :py:mod:`dynamake.make` module.
 
 The :py:class:`dynamake.make.Make` class also contains some static flags that modify

@@ -146,6 +146,9 @@ class Rule:  # pylint: disable=too-few-public-methods
         value = rule[key]
         del rule[key]
 
+        if value is None:
+            value = {}
+
         if not isinstance(value, dict):
             raise RuntimeError('Value is not a mapping '
                                'in the key: %s '
