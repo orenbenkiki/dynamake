@@ -12,6 +12,9 @@ from typing import Optional
 from typing import Tuple
 
 from testfixtures import OutputCapture
+from tests import TestWithFiles
+from tests import TestWithReset
+from tests import write_file
 
 from dynamake.application import Func
 from dynamake.application import Param
@@ -22,9 +25,6 @@ from dynamake.application import main as da_main
 from dynamake.application import override
 from dynamake.application import parallel
 from dynamake.patterns import str2int
-from tests import TestWithFiles
-from tests import TestWithReset
-from tests import write_file
 
 # pylint: disable=missing-docstring,too-many-public-methods,no-self-use
 # pylint: disable=blacklisted-name,too-few-public-methods
