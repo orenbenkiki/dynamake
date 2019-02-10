@@ -5,10 +5,11 @@ Test the configuration classes.
 from typing import Any
 from typing import Dict
 
-from dynamake.config import Config
-from dynamake.make import load_config
 from tests import TestWithFiles
 from tests import write_file
+
+from dynamake.config import Config
+from dynamake.make import load_config
 
 # pylint: disable=missing-docstring,too-many-public-methods,no-self-use
 
