@@ -111,10 +111,12 @@ DynaMake's unique blend of features comes at some costs:
 WHAT
 ----
 
-DynaMake is a Python library. Unlike typical Python build tools like `SCons <https://scons.org/>`_,
-there's no executable provided as part of the package. Instead, you need to write your build script
-in Python, using the library's utilities, and then invoke the provided main function. You can also
-directly invoke the build functionality from your own main function.
+DynaMake is primarily a Python library. There is a ``dynamake`` universal executable script provided
+with the package, similar to `SCons <https://scons.org/>`_, but you still need to write your build
+script in Python, using the library's utilities, and you might as well also invoke the provided main
+function. Otherwise, the user will need to explicitly specify ``-m some.build.script.module`` in the
+command line. You can even directly invoke the build functionality from your own custom main
+function.
 
 DynaMake build steps may invoke applications written in any language, which are configured in any
 way (command line flags, configuration files, etc.). As a convenience, DynaMake also provides
@@ -636,11 +638,17 @@ WHAT NOT (YET)
 Since DynaMake is very new, there are many features that should be implemented, but haven't been
 worked on yet:
 
-* Allow registering additional file formats for the generated configuration files.
+* Improve the documentation. This README covers the basics but there are additional features that
+  are only mentioned in the class and function documentation, and deserves a better description.
+
+* Cache the results of ``stat`` calls. This should speed things up a lot - not that DynaMake will
+  ever compete with Ninja, of course. Caching the results of ``glob`` is also possible but much
+  harder, and will probably provides much less value for the typical build script.
+
+* Make the build script self-documenting (similarly to the provided universal application program).
+  That is, use :py:attr:`dynamake.application.Param` objects for build steps.
 
 * Allow forcing rebuilding (some) targets.
-
-* Collect merged coverage from invocations of Python sub-scripts for tests.
 
 * Dry run. While it is impossible in general to print the full set of dry run actions, if should
   be easy to just print the 1st action(s) that need to be executed. This should provide most of the
@@ -651,30 +659,22 @@ worked on yet:
   fair game to being removed as part of a clean action. However, due to the dry-run problem, we
   can't automatically clean outputs of actions that depend on actions that need to be executed.
 
-* Allow skipping generating intermediate files if otherwise no actions need to be done.
+* Allow skipping generating intermediate files if otherwise no actions need to be done. This is very
+  hard to do with a dynamic build graph - probably impossible in the general case, but common
+  cases might be possible.
 
-* Generate a tree (actually a DAG) of step invocations. This would require the steps to be
-  sufficiently simple to allow for scanning the Python source code for identifiers containing the
-  names of sub-steps.
-
-* Generate a sequence of actions execution order. It isn't possible in general to have an exact
-  dependencies DAG due to the dynamic nature of the build graph. However it is possible to sequence
-  together the steps invoked by a plan by considering the order in which the invocations appear in
-  the source code.
+* Generate a tree (actually a DAG) of step invocations.
 
 * A deeper analysis of the source code could generate a DAG by detecting when sub-steps need not
-  follow each other (e.g., using :py:func:`dynamake.make.foreach` and related functions, in
+  follow each other (e.g., using :py:func:`dynamake.make.pareach` and related functions, in
   different branches of ``if`` ... ``else`` statements, etc.).
 
 * Generate an DAG of the actions for a specific execution. This would be much simpler to generate
-  and 100% exact, by tracking the expanded action inputs and outputs.
+  and 100% exact, by tracking the expanded action inputs and outputs. It might even be able to
+  detect missed parallelization opportunities this way.
 
-* Generate a timeline of action executions showing start and end times, and resources consumption.
-  In case of distributed actions, make a distinction between submission and completion times and
-  actual start/end times to track the cluster/grid overheads.
+* Generate a visualization of the timeline of action executions showing start and end times, and
+  resources consumption. In case of distributed actions, make a distinction between submission and
+  completion times and actual start/end times to track the cluster/grid overheads.
 
-* Generate several types of help messages: basic, list all steps, detailed help for a step,
-  help of shell action of a step (for parameters).
-
-* Cache the results of glob calls, only invalidate when relevant actions are executed (if this
-  proves to be a performance bottleneck).
+* Allow registering additional file formats for the generated configuration files.
