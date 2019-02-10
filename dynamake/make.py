@@ -12,7 +12,6 @@ import shutil
 import subprocess
 import sys
 import threading
-from abc import abstractmethod
 from concurrent.futures import Future
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -21,6 +20,7 @@ from inspect import Parameter
 from inspect import signature
 from textwrap import dedent
 from threading import Condition
+from threading import current_thread
 from time import sleep
 from types import SimpleNamespace
 from typing import Any
@@ -71,6 +71,9 @@ class Make:  # pylint: disable=too-many-instance-attributes
     #: The amount of resources currently being used by parallel actions.
     used_resources: Dict[str, float]
 
+    #: The next unused step identifier.
+    next_step_id: int
+
     #: The number of parallel actions currently being executed.
     parallel_actions: int
 
@@ -80,10 +83,38 @@ class Make:  # pylint: disable=too-many-instance-attributes
     #: The logger for tracking the build flow.
     logger: logging.Logger
 
+    #: Whether to stop the script if any action fails.
+    #:
+    #: If this is ``False``, then the build will continue to execute unrelated actions.
+    #: In all cases, actions that have already been submitted will be allowed to end normally.
+    failure_aborts_build: bool
+
+    #: Whether to abort early because of an actual action failure.
+    abort_build: bool
+
     #: Whether to delete old output files before executing an action (by default, ``True``).
     #:
     #: It is possible to override this on a per-action basis.
     delete_stale_outputs: bool
+
+    #: Whether to wait before assuming an output file does not exist.
+    #:
+    #: This may be required if the output file(s) are on an NFS-mounted partition, and the NFS
+    #: client is caching `stat` results (the default behavior, since otherwise performance would be
+    #: horrible).
+    #:
+    #: Setting the NFS mount flags to include `lookupcache=positive` will force the client to avoid
+    #: caching a "file not found" `stat` result, thereby ensuring that if we detect a missing output
+    #: file, it really is missing. This has minimal impact on performance (since, most of the time,
+    #: `stat` calls are for existing files).
+    #:
+    #: If you can't tweak the NFS mount flags, set `wait_nfs_outputs`; this will cause us to wait up
+    #: to 60 seconds (the default NFS `stat` cache time) before pronouncing that the output file
+    #: really is missing.
+    wait_nfs_outputs: bool
+
+    #: The amount of time to wait for slow NFS outputs.
+    nfs_outputs_timeout: int
 
     #: Whether to touch output files on a successful action to ensure they are newer than
     #: the input file(s) (by default, ``False``).
@@ -119,14 +150,25 @@ class Make:  # pylint: disable=too-many-instance-attributes
             'steps': Make.executor._max_workers  # type: ignore # pylint: disable=protected-access
         }
         Make.used_resources = {'steps': 0}
+        Make.next_step_id = 0
         Make.parallel_actions = 0
         Make.step_by_name = {}
         Make.logger = logging.getLogger('dynamake')
+        Make.failure_aborts_build = True
+        Make.abort_build = False
         Make.delete_stale_outputs = True
+        Make.wait_nfs_outputs = False
+        Make.nfs_outputs_timeout = 60
         Make.touch_success_outputs = False
         Make.delete_failed_outputs = True
         Make.delete_empty_directories = False
         Make.log_skipped_actions = False
+
+
+class AbortBuildException(Exception):
+    """
+    Signal aborting due to an unrelated action failure.
+    """
 
 
 class Step:  # pylint: disable=too-many-instance-attributes
@@ -163,8 +205,11 @@ class Step:  # pylint: disable=too-many-instance-attributes
         """
         Invoke a step inside a parallel thread.
         """
-        Step.set_current(parent)
-        return step(*args, **kwargs)
+        try:
+            Step.set_current(parent)
+            return step(*args, **kwargs)
+        except BaseException as exception:
+            return exception
 
     @staticmethod
     def call_current(make: type, function: Callable,
@@ -180,7 +225,8 @@ class Step:  # pylint: disable=too-many-instance-attributes
         finally:
             Step.set_current(parent)
 
-    def __init__(self, parent: Optional['Step'],  # pylint: disable=too-many-branches
+    def __init__(self,  # pylint: disable=too-many-branches,too-many-statements
+                 parent: Optional['Step'],
                  function: Optional[Callable],
                  args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> None:
         """
@@ -206,30 +252,30 @@ class Step:  # pylint: disable=too-many-instance-attributes
         self.stack: str
 
         #: The current known parameters (expandable wildcards).
-        self.wildcards = kwargs.copy()
+        self.wildcards: Dict[str, Any] = dict(parallel=current_thread().name != 'MainThread')
+        self.wildcards.update(kwargs)
 
         #: The used configuration values for the step, if configuration is used.
         self.used_params: Set[str] = set()
 
-        #: The path name of the generated configuration file, if used.
-        self.config_path: Optional[str] = None
-
         #: The parent step of this one.
         if parent is None:
+            assert isinstance(self, Planner)
+            self.wildcards['step'] = '/'
             self.parent = self
             self.stack = '/'
-            self.wildcards['step'] = '/'
-            self.wildcards['stack'] = '/'
-            assert isinstance(self, Planner)
         else:
+            self.wildcards['step'] = self.name
             self.parent = parent
             if parent.stack == '/':
                 self.stack = parent.stack + self.name
             else:
                 self.stack = parent.stack + '/' + self.name
 
-        self.wildcards['step'] = self.name
         self.wildcards['stack'] = self.stack
+        with Make.condition:
+            self.wildcards['step_id'] = Make.next_step_id
+            Make.next_step_id += 1
 
         if isinstance(parent, Agent):
             raise RuntimeError('The nested step: %s.%s '
@@ -269,6 +315,9 @@ class Step:  # pylint: disable=too-many-instance-attributes
                     raise RuntimeError('Missing value for the parameter: %s of the step: %s'
                                        % (name, self.stack))
 
+        #: The path name of the generated configuration file, if used.
+        self.config_path: Optional[str] = None
+
         #: The configuration values for the step.
         self.config_values = Config.values_for_context(self.wildcards)
 
@@ -286,8 +335,15 @@ class Step:  # pylint: disable=too-many-instance-attributes
         Return the path name of the generated configuration file for this step.
         """
         if self.config_path is None:
-            self.config_path = Config.path_for_context(self.wildcards)
-            config_text = yaml.dump(self.config_values)
+            hash_values = self.wildcards.copy()
+            hash_values.pop('step_id', None)
+            self.config_path = Config.path_for_context(hash_values)
+
+            clean_values = self.config_values.copy()
+            for key in ['runner', 'resources']:
+                clean_values.pop(key, None)
+                clean_values.pop(key + '?', None)
+            config_text = yaml.dump(clean_values)
 
             disk_text: Optional[str] = None
             if os.path.exists(self.config_path):
@@ -311,7 +367,14 @@ class Step:  # pylint: disable=too-many-instance-attributes
         """
         Invoke the step function.
         """
-        result = self._call()
+        if Make.abort_build:
+            raise AbortBuildException('Abort due to unrelated action failure')
+        try:
+            result = self._call()
+        except BaseException:
+            if Make.failure_aborts_build:
+                Make.abort_build = True
+            raise
         if self.config_path is None:
             for parameter_name in self.config_values:
                 if not parameter_name.endswith('?') and parameter_name not in self.used_params:
@@ -320,20 +383,17 @@ class Step:  # pylint: disable=too-many-instance-attributes
                                        % (parameter_name, self.stack))
         return result
 
-    @abstractmethod
     def _call(self) -> Any:
         """
         Actually invoke the step function.
         """
+        return self.function(*self.args, **self.kwargs)
 
 
 class Planner(Step):
     """
     Implement a planning step.
     """
-
-    def _call(self) -> Any:
-        return self.function(*self.args, **self.kwargs)
 
 
 class Agent(Step):
@@ -342,7 +402,7 @@ class Agent(Step):
     """
 
     def _call(self) -> Any:
-        result = self.function(*self.args, **self.kwargs)
+        result = super()._call()
         if isinstance(result, Action):
             if result.needs_to_execute:
                 with _request_resources(result.resources):
@@ -441,7 +501,10 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                  output: Strings, run: Strings,
                  runner: Strings = None,
                  ignore_exit_status: bool = False,
+                 failure_aborts_build: Optional[bool] = None,
                  delete_stale_outputs: Optional[bool] = None,
+                 wait_nfs_outputs: Optional[bool] = None,
+                 nfs_outputs_timeout: Optional[int] = None,
                  touch_success_outputs: Optional[bool] = None,
                  delete_failed_outputs: Optional[bool] = None,
                  delete_empty_directories: Optional[bool] = None,
@@ -484,8 +547,17 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         ignore_exit_status
             If ``True``, the exit status of the command(s) is ignored. Otherwise, if it is not zero,
             the action is considered a failure.
+        failure_aborts_build
+            Optional override for :py:attr:`dynamake.make.Make.failure_aborts_build` for this
+            action.
         delete_stale_outputs
             Optional override for :py:attr:`dynamake.make.Make.delete_stale_outputs` for this
+            action.
+        wait_nfs_outputs
+            Optional override for :py:attr:`dynamake.make.Make.wait_nfs_outputs` for this
+            action.
+        nfs_outputs_timeout
+            Optional override for :py:attr:`dynamake.make.Make.nfs_outputs_timeout` for this
             action.
         touch_success_outputs
             Optional override for :py:attr:`dynamake.make.Make.touch_success_outputs` for this
@@ -514,9 +586,21 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         """
         super().__init__(**kwargs)
 
+        #: Whether to abort the whole build if this action fails.
+        self.failure_aborts_build = \
+            Make.failure_aborts_build if failure_aborts_build is None else failure_aborts_build
+
         #: Whether to delete out-of-date outputs.
         self.delete_stale_outputs = \
             Make.delete_stale_outputs if delete_stale_outputs is None else delete_stale_outputs
+
+        #: Whether to wait for NFS outputs to appear in the client.
+        self.wait_nfs_outputs = \
+            Make.wait_nfs_outputs if wait_nfs_outputs is None else wait_nfs_outputs
+
+        #: How long to wait for slow NFS outputs.
+        self.nfs_outputs_timeout = \
+            Make.nfs_outputs_timeout if nfs_outputs_timeout is None else nfs_outputs_timeout
 
         #: Whether to touch outputs if the execution succeeds.
         self.touch_success_outputs = \
@@ -542,7 +626,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         self.resources.update(config_param('resources', {}))
 
         #: How to run each command.
-        self.runner = dp.flatten(runner or config_param('runner', []))
+        self.runner = expand(runner or config_param('runner', []))
 
         #: Whether to ignore the command(s) exit status.
         self.ignore_exit_status = ignore_exit_status
@@ -598,6 +682,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
             return True
 
         minimal_output_mtime: Optional[int] = None
+        minimal_output_path: Optional[str] = None
         for output_pattern in self.output:
             try:
                 output_paths = self._log_glob('output', output_pattern)
@@ -618,6 +703,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                 output_mtime = os.stat(output_path).st_mtime_ns
                 if minimal_output_mtime is None or minimal_output_mtime > output_mtime:
                     minimal_output_mtime = output_mtime
+                    minimal_output_path = output_path
 
         if minimal_output_mtime is None:
             if not self.output_paths:
@@ -631,8 +717,9 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         if config_path is not None:
             config_mtime = os.stat(config_path).st_mtime_ns
             if config_mtime >= minimal_output_mtime:
-                Make.logger.debug('%s: needs to execute because of newer config: %s',
-                                  self.stack, config_path)
+                Make.logger.debug('%s: needs to execute because the config file: %s '
+                                  'is newer than the output file: %s',
+                                  self.stack, config_path, minimal_output_path)
                 return True
             has_older = True
 
@@ -641,8 +728,9 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                 continue
             input_mtime = os.stat(input_path).st_mtime_ns
             if input_mtime >= minimal_output_mtime:
-                Make.logger.debug('%s: needs to execute because of newer input: %s',
-                                  self.stack, input_path)
+                Make.logger.debug('%s: needs to execute because the input file: %s '
+                                  'is newer than the output file: %s',
+                                  self.stack, input_path, minimal_output_path)
                 return True
             has_older = True
 
@@ -679,7 +767,8 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                 if completed.returncode != 0 and not self.ignore_exit_status:
                     Make.logger.debug('%s: failed with exit status: %s',
                                       self.stack, completed.returncode)
-                    raise RuntimeError('%s: failed command: %s' % (self.stack, log_command))
+                    raise RuntimeError('%s: exit status %s for command: %s'
+                                       % (self.stack, completed.returncode, log_command))
 
         except BaseException:
             self._fail()
@@ -715,35 +804,44 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         missing_outputs_patterns: List[str] = []
 
         for output_pattern in self.output:
-            did_wait = False
+            if self.wait_nfs_outputs:
+                did_wait = False
 
-            def _wait_for_output() -> bool:
-                nonlocal did_sleep, waited, next_wait, output_paths, did_wait
-                while True:
-                    try:
-                        output_paths = \
-                            self._log_glob('output',
-                                           output_pattern)  # pylint: disable=cell-var-from-loop
-                        self.output_paths += output_paths
+                def _wait_nfs_output() -> bool:
+                    nonlocal did_sleep, waited, next_wait, output_paths, did_wait
+                    while True:
+                        try:
+                            output_paths = \
+                                self._log_glob('output',
+                                               output_pattern)  # pylint: disable=cell-var-from-loop
+                            self.output_paths += output_paths
 
-                        if did_wait:
-                            Make.logger.warn('had to wait: %s seconds for the output(s): %s',
-                                             round(waited, 2), ' '.join(output_paths))
+                            if did_wait:
+                                Make.logger.warn('waited: %s seconds for the output(s): %s',
+                                                 round(waited, 2), ' '.join(output_paths))
 
-                        return True
+                            return True
 
-                    except dp.NonOptionalException:
-                        if waited > 20:  # TODO: WhyTF is this needed?
-                            return False
-                        sleep(next_wait)   # Allow NFS time to catch up with remote operations.
-                        did_sleep = True
-                        waited += next_wait
-                        next_wait *= 2
-                        did_wait = True
+                        except dp.NonOptionalException:
+                            if waited > self.nfs_outputs_timeout:
+                                return False
+                            sleep(next_wait)   # Allow NFS time to catch up with remote operations.
+                            did_sleep = True
+                            waited += next_wait
+                            next_wait *= 2
+                            did_wait = True
 
-            if not _wait_for_output():
-                missing_outputs_patterns.append(output_pattern)
-                continue
+                if not _wait_nfs_output():
+                    missing_outputs_patterns.append(output_pattern)
+                    continue
+
+            else:
+                try:
+                    output_paths = self._log_glob('output', output_pattern)
+                    self.output_paths += output_paths
+                except dp.NonOptionalException:
+                    missing_outputs_patterns.append(output_pattern)
+                    continue
 
             if not self.touch_success_outputs:
                 continue
@@ -1078,17 +1176,30 @@ def pareach(wildcards: List[Dict[str, Any]], function: Callable, *args: Any, **k
     """
     Similar to :py:func:`dynamake.make.foreach` but invoke the functions in parallel.
     """
-    futures = foreach(wildcards, parallel, function, *args, **kwargs)
-    results = [future.result() for future in futures]
-    return results
+    if Make.available_resources['steps'] == 1:
+        return foreach(wildcards, function, *args, **kwargs)
+
+    return parallel_results(foreach(wildcards, parallel, function, *args, **kwargs))
 
 
 def parcall(*steps: Tuple[Callable, Dict[str, Any]]) -> List[Any]:
     """
     Invoke multiple arbitrary functions in parallel.
     """
-    futures = [parallel(step, **kwargs) for step, kwargs in steps]
-    return [future.result() for future in futures]
+    if Make.available_resources['steps'] == 1:
+        return forcall(*steps)
+
+    return parallel_results([parallel(step, **kwargs) for step, kwargs in steps])
+
+
+def forcall(*steps: Tuple[Callable, Dict[str, Any]]) -> List[Any]:
+    """
+    Similar to :py:func:`dynamake.make.parcall` but invoke the functions one at a time.
+
+    This is useful for easily temporarily disabling parallelism; normally you would just
+    invoke the function in the standard way.
+    """
+    return [function(**kwargs) for function, kwargs in steps]
 
 
 def load_config(path: str) -> None:
@@ -1173,8 +1284,41 @@ def config_file() -> str:
 def parallel(step: Callable, *args: Any, **kwargs: Any) -> Future:
     """
     Invoke a step in parallel to the main thread.
+
+    .. note::
+        The return value is either the actual return value from the invoked step, or the exception
+        object thrown by it. This does **not** throw on its own!
+
+        See :py:func:`dynamake.make.parallel_results` for collecting the actual return values from a
+        list of futures.
     """
     return Make.executor.submit(Step.call_in_parallel, Step.current(), step, *args, **kwargs)
+
+
+def parallel_results(futures: List[Future]) -> List[Any]:
+    """
+    Collect the results from multiple parallel invocations.
+
+    .. note::
+        This examines the return values and if any of them is an exception,
+        it will be automatically re-raised in the current thread.
+    """
+    abort_exception: Optional[AbortBuildException] = None
+    other_exception: Optional[BaseException] = None
+    results = []
+    for future in futures:
+        result = future.result()
+        if isinstance(result, AbortBuildException):
+            abort_exception = result
+        elif isinstance(result, BaseException):
+            other_exception = result
+        else:
+            results.append(result)
+    if other_exception is not None:
+        raise other_exception
+    if abort_exception is not None:
+        raise abort_exception
+    return results
 
 
 def optional_flag(flag: str, *value: Strings) -> List[str]:
@@ -1219,9 +1363,13 @@ def pass_flags(*names: Strings, **renamed: str) -> List[str]:
     return expand(*flags)
 
 
-def main(parser: argparse.ArgumentParser, default_step: Optional[Callable] = None) -> None:
+def main(parser: argparse.ArgumentParser, default_step: Optional[Callable] = None,
+         *, adapter: Optional[Callable[[argparse.Namespace], None]] = None) -> None:
     """
     A generic ``main`` function for build scripts.
+
+    The optional ``adapter`` may perform additional adaptation of the execution environment based on
+    the parsed command-line arguments before the actual build starts.
     """
     if default_step is not None and not hasattr(default_step, '_dynamake_wrapped_function'):
         raise RuntimeError('The function: %s.%s is not a DynaMake step'
@@ -1231,6 +1379,8 @@ def main(parser: argparse.ArgumentParser, default_step: Optional[Callable] = Non
     args = parser.parse_args()
     config_values, used_values = _configure_by_arguments(args)
     if not _help_by_arguments(args):
+        if adapter is not None:
+            adapter(args)
         _call_steps(default_step, args, config_values, used_values)
 
 
@@ -1254,10 +1404,25 @@ def _add_arguments(parser: argparse.ArgumentParser, default_step: Optional[Calla
                         help='Whether to log skipped actions similarly to executed actions '
                              '(default: %s)' % Make.log_skipped_actions)
 
+    parser.add_argument('-fab', '--failure_aborts_build', metavar='BOOL',
+                        type=dp.str2bool, nargs='?', const=True,
+                        help='Whether to immediately abort the build if any action fails '
+                             '(default: %s)' % Make.failure_aborts_build)
+
     parser.add_argument('-dso', '--delete_stale_outputs', metavar='BOOL',
                         type=dp.str2bool, nargs='?', const=True,
                         help='Whether to delete outputs before executing actions '
                              '(default: %s)' % Make.delete_stale_outputs)
+
+    parser.add_argument('-wno', '--wait_nfs_outputs', metavar='BOOL', nargs='?',
+                        type=dp.str2bool, const=True,
+                        help='Whether to wait for NFS output files to appear in client '
+                             '(default: %s)' % Make.wait_nfs_outputs)
+
+    parser.add_argument('-not', '--nfs_outputs_timeout', metavar='SECONDS', nargs=1,
+                        type=dp.str2int(min=1),
+                        help='How long to wait for slow NFS output files to appear in client '
+                             '(default: %s)' % Make.nfs_outputs_timeout)
 
     parser.add_argument('-tso', '--touch_success_outputs', metavar='BOOL', nargs='?',
                         type=dp.str2bool, const=True,
@@ -1291,7 +1456,7 @@ def _configure_by_arguments(args: argparse.Namespace) -> Tuple[Dict[str, Any], S
     if args.config is not None:
         load_config(args.config)
 
-    config_values = Config.values_for_context({'stack': '/', 'step': '/'})
+    config_values = Config.values_for_context({'stack': '/', 'step': '/', 'parallel': False})
     used_values: Set[str] = set()
 
     def _get(name: str, parser: Callable, default: Any) -> Any:
@@ -1317,13 +1482,22 @@ def _configure_by_arguments(args: argparse.Namespace) -> Tuple[Dict[str, Any], S
         handler = logging.StreamHandler(sys.stderr)
         formatter = \
             logging.Formatter('%(asctime)s - ' + name
-                              + ' - %(threadName)s - %(name)s - %(levelname)s - %(message)s')
+                              + ' - %(threadName)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
         Make.logger.addHandler(handler)
     Make.logger.setLevel(_get('log_level', str, 'INFO'))
 
+    Make.failure_aborts_build = \
+        _get('failure_aborts_build', dp.str2bool, Make.failure_aborts_build)
+
     Make.delete_stale_outputs = \
         _get('delete_stale_outputs', dp.str2bool, Make.delete_stale_outputs)
+
+    Make.wait_nfs_outputs = \
+        _get('wait_nfs_outputs', dp.str2bool, Make.wait_nfs_outputs)
+
+    Make.nfs_outputs_timeout = \
+        _get('nfs_outputs_timeout', dp.str2int(min=1), Make.nfs_outputs_timeout)
 
     Make.touch_success_outputs = \
         _get('touch_success_outputs', dp.str2bool, Make.touch_success_outputs)
@@ -1379,7 +1553,6 @@ def _call_steps(default_step: Optional[Callable],  # pylint: disable=too-many-br
                 config_values: Dict[str, Any],
                 used_values: Set[str]) -> None:
     step_parameters: Dict[str, Any] = {}
-    used_parameters: Set[str] = set()
 
     for parameter in args.parameter or []:
         parts = parameter.split('=')
@@ -1410,7 +1583,6 @@ def _call_steps(default_step: Optional[Callable],  # pylint: disable=too-many-br
                     raise RuntimeError('Missing top-level parameter: %s for the step: /%s'
                                        % (parameter.name, function.__name__))
                 kwargs[parameter.name] = default
-            used_parameters.add(parameter.name)
         step_function(**kwargs)
 
     if not args.step and 'steps' in config_values:
@@ -1438,7 +1610,7 @@ def _call_steps(default_step: Optional[Callable],  # pylint: disable=too-many-br
     Make.logger.info('done')
 
     for parameter_name in step_parameters:
-        if parameter_name not in used_parameters:
+        if parameter_name not in used_values:
             raise RuntimeError('Unused top-level step parameter: %s' % parameter_name)
 
     for parameter_name in config_values:

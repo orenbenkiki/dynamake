@@ -526,10 +526,10 @@ class Prog:
         context = vars(args).get('log_context')
         if context:
             log_format = '%(asctime)s - ' + context + ' - ' + name \
-                + ' - %(threadName)s - %(name)s - %(levelname)s - %(message)s'
+                + ' - %(threadName)s - %(levelname)s - %(message)s'
         else:
             log_format = '%(asctime)s - ' + name \
-                + ' - %(threadName)s - %(name)s - %(levelname)s - %(message)s'
+                + ' - %(threadName)s - %(levelname)s - %(message)s'
         formatter = logging.Formatter(log_format)
         handler.setFormatter(formatter)
         Prog.logger.addHandler(handler)
@@ -752,13 +752,19 @@ def reset_application() -> None:
     Parallel.reset()
 
 
-def main(parser: ArgumentParser, functions: Optional[List[str]] = None) -> None:
+def main(parser: ArgumentParser, functions: Optional[List[str]] = None,
+         *, adapter: Optional[Callable[[Namespace], None]] = None) -> None:
     """
     A generic ``main`` function for configurable functions.
+
+    The optional ``adapter`` may perform additional adaptation of the execution environment based on
+    the parsed command-line arguments before the actual function(s) are invoked.
     """
     Prog.add_commands_to_parser(parser, functions)
     args = parser.parse_args()
     Prog.parse_args(args)
+    if adapter is not None:
+        adapter(args)
     Prog.call_with_args(args)
 
 

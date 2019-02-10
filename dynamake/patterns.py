@@ -366,7 +366,7 @@ def capture_globs(wildcards: Dict[str, Any], *patterns: Strings) -> Captured:
     for capture in each_string(*patterns):
         regexp = capture2re(capture).format(**wildcards)
         glob = capture2glob(capture).format(**wildcards)
-        paths = glob_files(glob)
+        paths = glob_files(glob, recursive=True)
 
         if not paths and not is_optional(capture):
             raise NonOptionalException(glob, capture)
@@ -390,7 +390,7 @@ def glob_strings(wildcards: Dict[str, Any], *patterns: Strings) -> List[str]:
     results: List[str] = []
     for capture in each_string(*patterns):
         glob = capture2glob(capture).format(**wildcards)
-        paths = glob_files(glob)
+        paths = glob_files(glob, recursive=True)
 
         if not paths and not is_optional(capture):
             raise NonOptionalException(glob, capture)
@@ -429,7 +429,7 @@ def _capture_string(capture: str, regexp: Pattern, string: str) -> Dict[str, Any
         try:
             values[name] = yaml.load(value)
         except BaseException:
-            pass
+            values[name] = str(value or '')
     return values
 
 
