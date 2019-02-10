@@ -426,10 +426,7 @@ def _capture_string(capture: str, regexp: Pattern, string: str) -> Dict[str, Any
 
     values = match.groupdict()
     for name, value in values.items():
-        try:
-            values[name] = yaml.load(value)
-        except BaseException:
-            values[name] = str(value or '')
+        values[name] = str(value or '')
     return values
 
 

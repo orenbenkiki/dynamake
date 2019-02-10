@@ -284,5 +284,5 @@ class TestGlob(TestWithFiles):
         write_file('12.txt', '')
         captured = capture_globs({}, '{*foo}.txt')
         self.assertEqual(captured.paths, ['12.txt'])
-        self.assertEqual(captured.wildcards, [{'foo': 12}])
+        self.assertEqual(captured.wildcards, [{'foo': '12'}])
         self.assertEqual(glob_strings({}, '{*foo}.txt'), ['12.txt'])
