@@ -414,8 +414,7 @@ class Prog:
         for name, parameter in self.parameters.items():
             if name in used_parameters:
                 text = parameter.description + ' (default: %s)' % parameter.default
-                group.add_argument('--' + name, help=text,  # type: ignore
-                                   metavar=parameter.metavar)
+                group.add_argument('--' + name, help=text, metavar=parameter.metavar)
 
     @staticmethod
     def add_commands_to_parser(parser: ArgumentParser,
@@ -454,8 +453,7 @@ class Prog:
             for name, parameter in self.parameters.items():
                 if name in configurable.indirect_parameter_names:
                     text = parameter.description + ' (default: %s)' % parameter.default
-                    command_parser.add_argument('--' + name, help=text,  # type: ignore
-                                                metavar=parameter.metavar)
+                    command_parser.add_argument('--' + name, help=text, metavar=parameter.metavar)
 
         if not verify_reachability:
             return
