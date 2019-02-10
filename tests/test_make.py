@@ -198,6 +198,34 @@ class TestMake(TestWithReset):
         self.assertNotEqual(right_thread, main_thread)
         self.assertNotEqual(left_thread, right_thread)
 
+    def test_forcall_plan(self) -> None:
+        Make.available_resources['steps'] = 1
+        main_thread = threading.current_thread().name
+        left_thread = main_thread
+        right_thread = main_thread
+
+        @action()
+        def left() -> None:
+            sleep(0.01)
+            nonlocal left_thread
+            left_thread = threading.current_thread().name
+
+        @action()
+        def right() -> None:
+            sleep(0.01)
+            nonlocal right_thread
+            right_thread = threading.current_thread().name
+
+        @plan()
+        def both() -> None:
+            parcall((left, {}), (right, {}))
+
+        both()
+
+        self.assertEqual(left_thread, main_thread)
+        self.assertEqual(right_thread, main_thread)
+        self.assertEqual(left_thread, right_thread)
+
     def test_parcall_plan(self) -> None:
         main_thread = threading.current_thread().name
         left_thread = main_thread
@@ -243,6 +271,25 @@ class TestMake(TestWithReset):
         self.assertNotEqual(threads[0], main_thread)
         self.assertNotEqual(threads[1], main_thread)
         self.assertNotEqual(threads[0], threads[1])
+
+    def test_foreach_plan(self) -> None:
+        Make.available_resources['steps'] = 1
+        main_thread = threading.current_thread().name
+
+        @action()
+        def in_parallel() -> str:
+            sleep(0.01)
+            return threading.current_thread().name
+
+        @plan()
+        def every() -> List[str]:
+            return pareach([{}, {}], in_parallel)
+
+        threads = every()
+
+        self.assertEqual(len(threads), 2)
+        self.assertEqual(threads[0], main_thread)
+        self.assertEqual(threads[1], main_thread)
 
     def test_resources_plan(self) -> None:
         available_resources(foo=2)
@@ -640,6 +687,77 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG',
                    StringComparison('/passer: free resource: steps amount: 1.0 .*')))
 
+    def test_early_abort(self) -> None:
+        @plan()
+        def first(index: int) -> None:
+            try:
+                Make.logger.warn('start first %s', index)
+                sleep(0.1 * (1 + index))
+                if index == 0:
+                    raise RuntimeError('abort')
+                Make.logger.warn('end first %s', index)
+            finally:
+                Make.logger.warn('final first %s', index)
+
+        @plan()
+        def second(index: int) -> None:
+            Make.logger.warn('second %s', index)
+
+        @plan()
+        def both(index: int) -> None:
+            first(index)
+            second(index)
+
+        @plan()
+        def par() -> None:
+            parcall((both, dict(index=0)), (both, dict(index=1)))
+
+        with LogCapture() as log:
+            self.assertRaisesRegex(RuntimeError, 'abort', par)
+
+        log.check(('dynamake', 'WARNING', 'start first 0'),
+                  ('dynamake', 'WARNING', 'start first 1'),
+                  ('dynamake', 'WARNING', 'final first 0'),
+                  ('dynamake', 'WARNING', 'end first 1'),
+                  ('dynamake', 'WARNING', 'final first 1'))
+
+    def test_late_abort(self) -> None:
+        Make.failure_aborts_build = False
+
+        @plan()
+        def first(index: int) -> None:
+            try:
+                Make.logger.warn('start first %s', index)
+                sleep(0.1 * (1 + index))
+                if index == 0:
+                    raise RuntimeError('abort')
+                Make.logger.warn('end first %s', index)
+            finally:
+                Make.logger.warn('final first %s', index)
+
+        @plan()
+        def second(index: int) -> None:
+            Make.logger.warn('second %s', index)
+
+        @plan()
+        def both(index: int) -> None:
+            first(index)
+            second(index)
+
+        @plan()
+        def par() -> None:
+            parcall((both, dict(index=0)), (both, dict(index=1)))
+
+        with LogCapture() as log:
+            self.assertRaisesRegex(RuntimeError, 'abort', par)
+
+        log.check(('dynamake', 'WARNING', 'start first 0'),
+                  ('dynamake', 'WARNING', 'start first 1'),
+                  ('dynamake', 'WARNING', 'final first 0'),
+                  ('dynamake', 'WARNING', 'end first 1'),
+                  ('dynamake', 'WARNING', 'final first 1'),
+                  ('dynamake', 'WARNING', 'second 1'))
+
 
 class TestFiles(TestWithFiles):
 
@@ -766,6 +884,66 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/echo: free resource: steps amount: 1.0 .*')))
 
+    def test_wait_slow_nfs_output(self) -> None:
+        Make.wait_nfs_outputs = True
+
+        @action()
+        def echo() -> Action:
+            return Action(input=[], output=['output.txt'], runner='shell',
+                          run=['(', 'sleep', '1', ';', 'echo', '>', 'output.txt', ')', '&'])
+
+        with LogCapture() as log:
+            echo()
+
+        log.check(('dynamake', 'DEBUG', '/echo: input(s): None'),
+                  ('dynamake', 'DEBUG', '/echo: output(s): output.txt'),
+                  ('dynamake', 'DEBUG',
+                   '/echo: needs to execute because missing output(s): output.txt'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/echo: use resource: steps amount: 1.0 .*')),
+                  ('dynamake', 'INFO', '/echo: run: ( sleep 1 ; echo > output.txt ) &'),
+                  ('dynamake', 'DEBUG', '/echo: exists output: output.txt'),
+                  ('dynamake', 'WARNING',
+                   StringComparison('waited: .* seconds for the output.s.: output.txt')),
+                  ('dynamake',
+                   'DEBUG',
+                   StringComparison('/echo: free resource: steps amount: 1.0 .*')))
+
+    def test_wait_fast_nfs_output(self) -> None:
+        Make.wait_nfs_outputs = True
+
+        @action()
+        def echo() -> Action:
+            return Action(input=[], output=['output.txt'], runner='shell',
+                          run=['echo', '>', 'output.txt'])
+
+        with LogCapture() as log:
+            echo()
+
+        log.check(('dynamake', 'DEBUG', '/echo: input(s): None'),
+                  ('dynamake', 'DEBUG', '/echo: output(s): output.txt'),
+                  ('dynamake', 'DEBUG',
+                   '/echo: needs to execute because missing output(s): output.txt'),
+                  ('dynamake', 'DEBUG',
+                   StringComparison('/echo: use resource: steps amount: 1.0 .*')),
+                  ('dynamake', 'INFO', '/echo: run: echo > output.txt'),
+                  ('dynamake', 'DEBUG', '/echo: exists output: output.txt'),
+                  ('dynamake',
+                   'DEBUG',
+                   StringComparison('/echo: free resource: steps amount: 1.0 .*')))
+
+    def test_wait_missing_nfs_output(self) -> None:
+        Make.wait_nfs_outputs = True
+        Make.nfs_outputs_timeout = 1
+
+        @action()
+        def no_echo() -> Action:
+            return Action(input=[], output=['output.txt'], runner='shell', run=['true'])
+
+        self.assertRaisesRegex(RuntimeError,
+                               r'Missing output.s.: output.txt',
+                               no_echo)
+
     def test_skip_for_old_input(self) -> None:
         Make.log_skipped_actions = True
 
@@ -805,7 +983,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/touch: exists input: input.txt'),
                   ('dynamake', 'DEBUG', '/touch: exists output: output.txt'),
                   ('dynamake', 'DEBUG',
-                   '/touch: needs to execute because of newer input: input.txt'),
+                   '/touch: needs to execute because the input file: input.txt '
+                   'is newer than the output file: output.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/touch: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/touch: delete stale output: output.txt'),
@@ -833,7 +1012,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/fail: exists input: input.txt'),
                   ('dynamake', 'DEBUG', '/fail: exists output: output.txt'),
                   ('dynamake', 'DEBUG',
-                   '/fail: needs to execute because of newer input: input.txt'),
+                   '/fail: needs to execute because the input file: input.txt '
+                   'is newer than the output file: output.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/fail: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/fail: delete stale output: output.txt'),
@@ -864,7 +1044,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/fail: exists input: input.txt'),
                   ('dynamake', 'DEBUG', '/fail: exists output: output.txt'),
                   ('dynamake', 'DEBUG',
-                   '/fail: needs to execute because of newer input: input.txt'),
+                   '/fail: needs to execute because the input file: input.txt '
+                   'is newer than the output file: output.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/fail: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/fail: delete stale output: output.txt'),
@@ -897,7 +1078,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/fail: exists input: input.txt'),
                   ('dynamake', 'DEBUG', '/fail: exists output: output.txt'),
                   ('dynamake', 'DEBUG',
-                   '/fail: needs to execute because of newer input: input.txt'),
+                   '/fail: needs to execute because the input file: input.txt is '
+                   'newer than the output file: output.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/fail: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/fail: run: false'),
@@ -924,7 +1106,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/keeper: exists input: input.txt'),
                   ('dynamake', 'DEBUG', '/keeper: exists output: output.txt'),
                   ('dynamake', 'DEBUG',
-                   '/keeper: needs to execute because of newer input: input.txt'),
+                   '/keeper: needs to execute because the input file: input.txt '
+                   'is newer than the output file: output.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/keeper: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/keeper: run: true'),
@@ -953,7 +1136,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/keeper: exists input: input.txt'),
                   ('dynamake', 'DEBUG', '/keeper: exists output: output.txt'),
                   ('dynamake', 'DEBUG',
-                   '/keeper: needs to execute because of newer input: input.txt'),
+                   '/keeper: needs to execute because the input file: input.txt '
+                   'is newer than the output file: output.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/keeper: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/keeper: run: false'),
@@ -1016,7 +1200,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/toucher: exists input: input.txt'),
                   ('dynamake', 'DEBUG', '/toucher: exists output: output.txt'),
                   ('dynamake', 'DEBUG',
-                   '/toucher: needs to execute because of newer input: input.txt'),
+                   '/toucher: needs to execute because the input file: input.txt '
+                   'is newer than the output file: output.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/toucher: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/toucher: exists output: output.txt'),
@@ -1047,7 +1232,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/mkdir: exists input: input.txt'),
                   ('dynamake', 'DEBUG', '/mkdir: exists output: output.dir'),
                   ('dynamake', 'DEBUG',
-                   '/mkdir: needs to execute because of newer input: input.txt'),
+                   '/mkdir: needs to execute because the input file: input.txt '
+                   'is newer than the output file: output.dir'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/mkdir: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/mkdir: run: mkdir -p output.dir'),
@@ -1078,7 +1264,8 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/fail: exists input: input.txt'),
                   ('dynamake', 'DEBUG', '/fail: exists output: output.dir/output.txt'),
                   ('dynamake', 'DEBUG',
-                   '/fail: needs to execute because of newer input: input.txt'),
+                   '/fail: needs to execute because the input file: input.txt '
+                   'is newer than the output file: output.dir/output.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/fail: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/fail: delete stale output: output.dir/output.txt'),
@@ -1162,7 +1349,7 @@ class TestFiles(TestWithFiles):
 
         log.check(('dynamake', 'DEBUG',
                    '/use_file: write new config: '
-                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml'),
+                   '.dynamake/config.be42f6be-cb6f-e467-7d19-c37987459bc9.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: input(s): None'),
                   ('dynamake', 'DEBUG', '/use_file: output(s): output.yaml'),
                   ('dynamake', 'DEBUG',
@@ -1170,7 +1357,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/use_file: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/use_file: run: '
-                   'cp .dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
+                   'cp .dynamake/config.be42f6be-cb6f-e467-7d19-c37987459bc9.yaml output.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/use_file: free resource: steps amount: 1.0 .*')))
@@ -1182,7 +1369,7 @@ class TestFiles(TestWithFiles):
             use_file()
 
         log.check(('dynamake', 'DEBUG', '/use_file: use existing config: '
-                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml'),
+                   '.dynamake/config.be42f6be-cb6f-e467-7d19-c37987459bc9.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: input(s): None'),
                   ('dynamake', 'DEBUG', '/use_file: output(s): output.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'),
@@ -1197,17 +1384,19 @@ class TestFiles(TestWithFiles):
         self.expect_file('output.yaml', '{foo: 2}\n')
 
         log.check(('dynamake', 'DEBUG', '/use_file: write new config: '
-                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml'),
+                   '.dynamake/config.be42f6be-cb6f-e467-7d19-c37987459bc9.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: input(s): None'),
                   ('dynamake', 'DEBUG', '/use_file: output(s): output.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'),
-                  ('dynamake', 'DEBUG', '/use_file: needs to execute because of newer config: '
-                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml'),
+                  ('dynamake', 'DEBUG',
+                   '/use_file: needs to execute because the config file: '
+                   '.dynamake/config.be42f6be-cb6f-e467-7d19-c37987459bc9.yaml '
+                   'is newer than the output file: output.yaml'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/use_file: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/use_file: delete stale output: output.yaml'),
                   ('dynamake', 'INFO', '/use_file: run: cp '
-                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
+                   '.dynamake/config.be42f6be-cb6f-e467-7d19-c37987459bc9.yaml output.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/use_file: free resource: steps amount: 1.0 .*')))

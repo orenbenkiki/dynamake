@@ -113,7 +113,7 @@ class Rule:  # pylint: disable=too-few-public-methods
             return False
 
         if isinstance(condition, Pattern):
-            return bool(condition.match(value))
+            return bool(condition.fullmatch(value))
 
         return value == condition
 
