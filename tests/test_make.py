@@ -19,9 +19,6 @@ from typing import List
 from testfixtures import LogCapture
 from testfixtures import OutputCapture
 from testfixtures import StringComparison
-from tests import TestWithFiles
-from tests import TestWithReset
-from tests import write_file
 
 import dynamake.bin.dynamake as dm
 from dynamake.make import Action
@@ -50,6 +47,9 @@ from dynamake.make import pareach
 from dynamake.make import pass_flags
 from dynamake.make import plan
 from dynamake.make import precious
+from tests import TestWithFiles
+from tests import TestWithReset
+from tests import write_file
 
 # pylint: disable=missing-docstring,too-many-public-methods,no-self-use
 # pylint: disable=blacklisted-name,too-few-public-methods

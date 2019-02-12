@@ -33,27 +33,13 @@ from typing import TypeVar
 
 import yaml
 
-from .patterns import first_sentence
+import dynamake.patterns as dp
+
+from .parameters import Env
+from .parameters import env  # pylint: disable=unused-import
 
 #: The type of a wrapped function.
 Wrapped = TypeVar('Wrapped', bound=Callable)
-
-
-class Env:
-    """
-    Marker for default for configurable parameters.
-    """
-
-
-def env() -> Any:
-    """
-    Used as a default value for configurable parameters.
-
-    When a configurable function uses this as a default value for a parameter, and an invocation
-    does not specify an explicit value for the parameter, then the value will be taken from the
-    configuration.
-    """
-    return Env()
 
 
 class Func:  # pylint: disable=too-many-instance-attributes
@@ -107,28 +93,43 @@ class Func:  # pylint: disable=too-many-instance-attributes
         #: later filled.
         self.invoker_function_names: Set[str] = set()
 
-        has_required_arguments, parameter_names = _parameter_names(function)
-        for parameter_name in parameter_names:
+        has_required_arguments, parameter_names, \
+            env_parameter_names, parameter_defaults = _parameter_names(function)
+        for parameter_name in env_parameter_names:
             Func.name_by_parameter[parameter_name] = self.name
+
+        #: The ordered parameter names.
+        self.parameter_names = parameter_names
+
+        #: The override for the parameter defaults.
+        self.parameter_defaults = parameter_defaults
 
         #: Whether the function has non-configurable arguments.
         self.has_required_arguments = has_required_arguments
 
         #: The list of parameter names the function (directly) configures.
-        self.direct_parameter_names = parameter_names
+        self.direct_parameter_names = env_parameter_names
 
         #: The set of parameter names the function (indirectly) depends on. This starts identical to
         #: the direct parameter names and is later expanded to include the names of indirectly
         #: invoked functions.
-        self.indirect_parameter_names = parameter_names.copy()
+        self.indirect_parameter_names = env_parameter_names.copy()
 
         def _wrapper_function(*args: Any, **kwargs: Any) -> Any:
             assert Prog.current is not None
-            for name in parameter_names:
+            for name, value in zip(self.parameter_names, args):
                 if name not in kwargs:
-                    kwargs[name] = Prog.current.get(name, function)
+                    kwargs[name] = value
+            for name in env_parameter_names:
+                if name not in kwargs:
+                    if name in Prog.current.values:
+                        if name in self.parameter_defaults \
+                                and name not in Prog.current.explicit_parameters:
+                            kwargs[name] = self.parameter_defaults[name]
+                        else:
+                            kwargs[name] = Prog.current.values[name]
             Prog.logger.log(Prog.TRACE, 'call: %s.%s', function.__module__, function.__qualname__)
-            return function(*args, **kwargs)
+            return function(**kwargs)
 
         #: The wrapper we place around the real function.
         self.wrapper = _wrapper_function
@@ -214,15 +215,20 @@ def _real_function(wrapped: Wrapped) -> Callable:
     return wrapped
 
 
-def _parameter_names(function: Callable) -> Tuple[bool, Set[str]]:
+def _parameter_names(function: Callable) -> Tuple[bool, List[str], Set[str], Dict[str, Any]]:
     has_required_arguments = False
-    parameter_names: Set[str] = set()
+    parameter_names: List[str] = []
+    env_parameter_names: Set[str] = set()
+    parameter_defaults: Dict[str, Any] = {}
     for parameter in signature(function).parameters.values():
+        parameter_names.append(parameter.name)
         if isinstance(parameter.default, Env):
-            parameter_names.add(parameter.name)
+            env_parameter_names.add(parameter.name)
+            if parameter.default.value != Parameter.empty:
+                parameter_defaults[parameter.name] = parameter.default.value
         elif parameter.default == Parameter.empty:
             has_required_arguments = True
-    return has_required_arguments, parameter_names
+    return has_required_arguments, parameter_names, env_parameter_names, parameter_defaults
 
 
 class NamesCollector(NodeVisitor):
@@ -336,6 +342,9 @@ class Prog:
         #: The value for each parameter.
         self.values: Dict[str, Any] = {}
 
+        #: The names of the explicitly set parameters.
+        self.explicit_parameters: Set[str] = set()
+
     def verify(self) -> None:
         """
         Verify the collection of parameters.
@@ -446,7 +455,7 @@ class Prog:
         for command_name in functions:
             configurable = Prog._verify_function(command_name, True)
             description = configurable.function.__doc__
-            sentence = first_sentence(description)
+            sentence = dp.first_sentence(description)
             command_parser = subparsers.add_parser(configurable.name, help=sentence,
                                                    description=description,
                                                    formatter_class=RawDescriptionHelpFormatter)
@@ -512,6 +521,7 @@ class Prog:
             if value is not None:
                 try:
                     self.values[name] = parameter.parser(value)
+                    self.explicit_parameters.add(name)
                 except BaseException:
                     raise RuntimeError('Invalid value: %s for the parameter: %s'
                                        % (vars(args)[name], name))
@@ -528,7 +538,7 @@ class Prog:
         else:
             log_format = '%(asctime)s - ' + name \
                 + ' - %(threadName)s - %(levelname)s - %(message)s'
-        formatter = logging.Formatter(log_format)
+        formatter = dp.LoggingFormatter(log_format)
         handler.setFormatter(formatter)
         Prog.logger.addHandler(handler)
         Prog.logger.setLevel(vars(args).get('log_level', 'WARN'))
@@ -580,6 +590,7 @@ class Prog:
                                        % (value, name))
 
             self.values[name] = value
+            self.explicit_parameters.add(name)
 
 
 class Parallel:
@@ -733,12 +744,15 @@ def override(**values: Any) -> Iterator[None]:
         if name not in Prog.current.values:
             raise RuntimeError('Unknown override parameter: %s' % name)
     old_values = Prog.current.values
+    old_explicit_parameters = Prog.current.explicit_parameters.copy()
     Prog.current.values = Prog.current.values.copy()
     Prog.current.values.update(values)
+    Prog.current.explicit_parameters.update(values.keys())
     try:
         yield None
     finally:
         Prog.current.values = old_values
+        Prog.current.explicit_parameters = old_explicit_parameters
 
 
 def reset_application() -> None:

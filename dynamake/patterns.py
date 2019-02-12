@@ -3,8 +3,10 @@ Allow simple loading of regular expressions in configuration YAML files.
 """
 
 import argparse
+import logging
 import re
 from curses.ascii import isalnum
+from datetime import datetime
 from glob import glob as glob_files
 from typing import Any
 from typing import Callable
@@ -845,3 +847,20 @@ def str2optional(parser: Callable[[str], Any]) -> Callable[[str], Optional[Any]]
             return None
         return parser(string)
     return _parse
+
+
+class LoggingFormatter(logging.Formatter):
+    """
+    A formatter that uses a decimal point for milliseconds.
+    """
+
+    def formatTime(self, record: Any, datefmt: Optional[str] = None) -> str:
+        """
+        Format the time.
+        """
+        record_datetime = datetime.fromtimestamp(record.created)
+        if datefmt is not None:
+            return record_datetime.strftime(datefmt)
+
+        seconds = record_datetime.strftime('%Y-%m-%d %H:%M:%S')
+        return '%s.%03d' % (seconds, record.msecs)

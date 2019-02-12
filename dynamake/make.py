@@ -40,6 +40,8 @@ import dynamake.patterns as dp
 
 from .config import Config
 from .config import Rule
+from .parameters import Env
+from .parameters import env  # pylint: disable=unused-import
 from .patterns import Captured
 from .patterns import Strings
 from .patterns import emphasized  # pylint: disable=unused-import
@@ -966,33 +968,6 @@ def _callable_function(wrapped: Callable) -> Callable:
     return wrapped
 
 
-class Env:
-    """
-    Marker for default for environment parameters.
-    """
-
-    def __init__(self, default_value: Any) -> None:
-        """
-        Optionally provide a default value for the parameter.
-        """
-        #: The default value for the parameter.
-        self.value = default_value
-
-
-def env(default_value: Any = Parameter.empty) -> Any:
-    """
-    Used as a default value for environment parameters.
-
-    When a step uses this as a default value for a parameter,
-    and an invocation does not specify an explicit or a configuration value for the parameter,
-    then the value will be taken from the nearest parent which has a parameter with the same name.
-
-    If a default value is provided, then it is used if no value is available from either the command
-    line or the invocation.
-    """
-    return Env(default_value)
-
-
 def _collect_argument_names(function: Callable) -> None:
     positional_names: List[str] = []
     environment_names: List[str] = []
@@ -1481,8 +1456,8 @@ def _configure_by_arguments(args: argparse.Namespace) -> Tuple[Dict[str, Any], S
             name += ' ' + args.command
         handler = logging.StreamHandler(sys.stderr)
         formatter = \
-            logging.Formatter('%(asctime)s - ' + name
-                              + ' - %(threadName)s - %(levelname)s - %(message)s')
+            dp.LoggingFormatter('%(asctime)s - ' + name
+                                + ' - %(threadName)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
         Make.logger.addHandler(handler)
     Make.logger.setLevel(_get('log_level', str, 'INFO'))
