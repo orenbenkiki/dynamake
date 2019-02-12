@@ -10,9 +10,6 @@ from typing import Callable
 from typing import List
 
 import yaml
-from tests import TestWithFiles
-from tests import TestWithReset
-from tests import write_file
 
 from dynamake.patterns import NonOptionalException
 from dynamake.patterns import capture2glob
@@ -36,6 +33,9 @@ from dynamake.patterns import str2float
 from dynamake.patterns import str2int
 from dynamake.patterns import str2list
 from dynamake.patterns import str2optional
+from tests import TestWithFiles
+from tests import TestWithReset
+from tests import write_file
 
 # pylint: disable=missing-docstring
 
