@@ -48,6 +48,7 @@ from .patterns import emphasized  # pylint: disable=unused-import
 from .patterns import exists  # pylint: disable=unused-import
 from .patterns import optional  # pylint: disable=unused-import
 from .patterns import precious  # pylint: disable=unused-import
+from .stat import Stat
 
 #: The type of a wrapped function.
 Wrapped = TypeVar('Wrapped', bound=Callable)
@@ -348,7 +349,7 @@ class Step:  # pylint: disable=too-many-instance-attributes
             config_text = yaml.dump(clean_values)
 
             disk_text: Optional[str] = None
-            if os.path.exists(self.config_path):
+            if Stat.exists(self.config_path):
                 with open(self.config_path, 'r') as file:
                     disk_text = file.read()
 
@@ -356,12 +357,14 @@ class Step:  # pylint: disable=too-many-instance-attributes
                 Make.logger.debug('%s: use existing config: %s',
                                   self.stack, self.config_path)
             else:
-                if not os.path.exists(Config.DIRECTORY):
+                if not Stat.exists(Config.DIRECTORY):
                     os.mkdir(Config.DIRECTORY)
+                    Stat.forget(Config.DIRECTORY)
                 Make.logger.debug('%s: write new config: %s',
                                   self.stack, self.config_path)
                 with open(self.config_path, 'w') as file:
                     file.write(config_text)
+                Stat.forget(self.config_path)
 
         return self.config_path
 
@@ -702,7 +705,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                 continue
 
             for output_path in output_paths:
-                output_mtime = os.stat(output_path).st_mtime_ns
+                output_mtime = Stat.stat(output_path).st_mtime_ns
                 if minimal_output_mtime is None or minimal_output_mtime > output_mtime:
                     minimal_output_mtime = output_mtime
                     minimal_output_path = output_path
@@ -717,7 +720,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
 
         has_older = False
         if config_path is not None:
-            config_mtime = os.stat(config_path).st_mtime_ns
+            config_mtime = Stat.stat(config_path).st_mtime_ns
             if config_mtime >= minimal_output_mtime:
                 Make.logger.debug('%s: needs to execute because the config file: %s '
                                   'is newer than the output file: %s',
@@ -728,7 +731,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         for input_path in self.input_paths:
             if dp.is_exists(input_path):
                 continue
-            input_mtime = os.stat(input_path).st_mtime_ns
+            input_mtime = Stat.stat(input_path).st_mtime_ns
             if input_mtime >= minimal_output_mtime:
                 Make.logger.debug('%s: needs to execute because the input file: %s '
                                   'is newer than the output file: %s',
@@ -749,7 +752,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         Actually execute the action.
         """
         if self.delete_stale_outputs:
-            self._delete_outputs('stale')
+            self._delete_outputs('stale', forget=False)
         self.output_paths = []
 
         try:
@@ -795,7 +798,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         if self.delete_failed_outputs:
             for pattern in self.output:
                 self.output_paths += glob(optional(pattern))
-            self._delete_outputs('failed')
+            self._delete_outputs('failed', forget=True)
 
     def _success(self) -> None:
         did_sleep = False
@@ -816,6 +819,8 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                             output_paths = \
                                 self._log_glob('output',
                                                output_pattern)  # pylint: disable=cell-var-from-loop
+                            for output_path in output_paths:
+                                Stat.forget(output_path)
                             self.output_paths += output_paths
 
                             if did_wait:
@@ -849,7 +854,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                 continue
 
             for output_path in output_paths:
-                if dp.is_exists(output_path) or os.path.isdir(output_path):
+                if dp.is_exists(output_path) or Stat.isdir(output_path):
                     continue
                 Make.logger.debug('%s: touch output: %s', self.stack, output_path)
                 if not did_sleep:
@@ -859,21 +864,25 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
 
         self._raise_if_missing('output', missing_outputs_patterns)
 
-    def _delete_outputs(self, reason: str) -> None:
+    def _delete_outputs(self, reason: str, *, forget: bool) -> None:
         for path in self.output_paths:
+            if forget:
+                Stat.forget(path)
             if dp.is_precious(path):
                 continue
             Make.logger.debug('%s: delete %s output: %s', self.stack, reason, path)
             path = os.path.abspath(path)
-            if os.path.isfile(path):
+            if Stat.isfile(path):
                 os.remove(path)
-            elif os.path.exists(path):
+            elif Stat.exists(path):
                 shutil.rmtree(path)
+            Stat.forget(path)
 
             while self.delete_empty_directories:
                 path = os.path.dirname(path)
                 try:
                     os.rmdir(path)
+                    Stat.forget(path)
                     Make.logger.debug('%s: delete empty directory: %s', self.stack, path)
                 except BaseException:
                     return
@@ -1426,7 +1435,7 @@ def _add_arguments(parser: argparse.ArgumentParser, default_step: Optional[Calla
 
 
 def _configure_by_arguments(args: argparse.Namespace) -> Tuple[Dict[str, Any], Set[str]]:
-    if args.config is None and os.path.exists(Make.FILE):
+    if args.config is None and Stat.exists(Make.FILE):
         args.config = Make.FILE
     if args.config is not None:
         load_config(args.config)
