@@ -7,7 +7,6 @@ import logging
 import re
 from curses.ascii import isalnum
 from datetime import datetime
-from glob import glob as glob_files
 from typing import Any
 from typing import Callable
 from typing import Dict
@@ -22,6 +21,8 @@ import yaml
 from termcolor import colored
 from yaml import Loader
 from yaml import Node
+
+from .stat import Stat
 
 
 def glob2re(glob: str) -> str:  # pylint: disable=too-many-branches
@@ -368,7 +369,7 @@ def capture_globs(wildcards: Dict[str, Any], *patterns: Strings) -> Captured:
     for capture in each_string(*patterns):
         regexp = capture2re(capture).format(**wildcards)
         glob = capture2glob(capture).format(**wildcards)
-        paths = glob_files(glob, recursive=True)
+        paths = Stat.glob(glob)
 
         if not paths and not is_optional(capture):
             raise NonOptionalException(glob, capture)
@@ -392,7 +393,7 @@ def glob_strings(wildcards: Dict[str, Any], *patterns: Strings) -> List[str]:
     results: List[str] = []
     for capture in each_string(*patterns):
         glob = capture2glob(capture).format(**wildcards)
-        paths = glob_files(glob, recursive=True)
+        paths = Stat.glob(glob)
 
         if not paths and not is_optional(capture):
             raise NonOptionalException(glob, capture)

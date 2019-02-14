@@ -234,6 +234,11 @@ An example of a slightly more dynamic build script is:
 
 This demonstrates some additional concepts:
 
+* If the default value of a step parameter is :py:func:`dynamake.make.env`, and it is not explicitly
+  specified for an invocation, then the value will be that of the nearest parent using this
+  parameter. This reduces a lot of boilerplate passing of "general" parameters (such as key
+  directory paths).
+
 * All DynaMake functions will automatically expand ``{name}`` inside strings.
   The ``name`` can be the name of a function parameter, or the name of a wildcard.
 
@@ -244,20 +249,22 @@ This demonstrates some additional concepts:
   Wildcards lists-of-dictionaries can be used to generate file lists, and/or to invoke multiple
   steps with different parameters.
 
-  DynaMake scripts make heavy use of captures. The current implementation inefficiently re-executes
-  such captures. If this turns out to be a bottleneck, it should be modified to cache the glob
-  results to drastically reduce the number of slow file system operations.
-
   Captures allows steps to have dynamic outputs in a controlled way. By specifying a glob pattern
   for the outputs of an action, DynaMake can still detect when it needs to be executed, even if the
   set of these files is dynamic: run the action if any of the input files is newer than any of the
   existing files that match the output glob pattern. Either way, the actual list of outputs is
   available in the returned action object, available to be used by additional steps.
 
-* If the default value of a step parameter is :py:func:`dynamake.make.env`, and it is not explicitly
-  specified for an invocation, then the value will be that of the nearest parent using this
-  parameter. This reduces a lot of boilerplate passing of "general" parameters (such as key
-  directory paths).
+  DynaMake scripts make heavy use of captures, and of course the implementation needs to ``stat`` a
+  lot of files. Therefore, the results of ``stat`` calls are cached, and all captures and/or
+  ``glob`` calls (that do not actually use any wildcards) are handled by this cache. This speeds up
+  execution a lot. Of course, this isn't anywhere as fast as Ninja and similar tools, but speed
+  should be comparable to simple ``make`` and similar tools.
+
+.. note::
+
+    The correctness of the ``stat`` cache depends on accurate listing of each action's inputs and
+    outputs. In general DynaMake needs these lists to be accurate for correct operation.
 
 Universal Build Script
 .......................
@@ -640,10 +647,6 @@ worked on yet:
 
 * Improve the documentation. This README covers the basics but there are additional features that
   are only mentioned in the class and function documentation, and deserves a better description.
-
-* Cache the results of ``stat`` calls. This should speed things up a lot - not that DynaMake will
-  ever compete with Ninja, of course. Caching the results of ``glob`` is also possible but much
-  harder, and will probably provides much less value for the typical build script.
 
 * Make the build script self-documenting (similarly to the provided universal application program).
   That is, use :py:attr:`dynamake.application.Param` objects for build steps.
