@@ -96,7 +96,7 @@ class Stat:
             result = Stat._cache.get(path)
 
         if result is None:
-            return glob_files(pattern)
+            return glob_files(pattern, recursive=True)
 
         if isinstance(result, BaseException):
             return []
