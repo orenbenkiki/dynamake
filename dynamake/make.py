@@ -671,6 +671,9 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         #: Whether the action needs to be executed.
         self.needs_to_execute = self._needs_to_execute(step.config_path)
 
+        #: The executed command.
+        self.commands: List[str] = []
+
     def _collect_input_paths(self) -> None:
         missing_input_patterns: List[str] = []
         for input_pattern in self.input:
@@ -758,12 +761,14 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         try:
             for command in self.run:
                 if self.runner == ['shell']:
+                    self.commands.append(' '.join(command))
                     log_command = ' '.join(dp.color(command))
                     Make.logger.info('%s: run: %s', self.stack, log_command)
                     completed = subprocess.run(' '.join(command), shell=True)
 
                 else:
                     command = self.runner + command
+                    self.commands.append(' '.join(command))
                     log_command = ' '.join(dp.color([dp.copy_annotations(part, shlex.quote(part))
                                                      for part in command]))
                     Make.logger.info('%s: run: %s', self.stack, log_command)
@@ -893,16 +898,20 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
 
         pattern = patterns[0]
         expanded = expand(pattern)[0]
+        if direction == 'output':
+            suffix = 'command(s): ' + '\n'.join(self.commands)
+        else:
+            suffix = ''
 
         if expanded == pattern:
             raise RuntimeError('Missing %s(s): %s '
-                               'for the action step: %s'
-                               % (direction, pattern, self.stack))
+                               'for the action step: %s%s'
+                               % (direction, pattern, self.stack, suffix))
 
         raise RuntimeError('Missing %s(s): %s '
                            'for the pattern: %s '
-                           'for the action step: %s'
-                           % (direction, expanded, pattern, self.stack))
+                           'for the action step: %s%s'
+                           % (direction, expanded, pattern, self.stack, suffix))
 
     def _log_glob(self, direction: str, pattern: str) -> List[str]:
         paths = glob(pattern)
@@ -1403,7 +1412,7 @@ def _add_arguments(parser: argparse.ArgumentParser, default_step: Optional[Calla
                         help='Whether to wait for NFS output files to appear in client '
                              '(default: %s)' % Make.wait_nfs_outputs)
 
-    parser.add_argument('-not', '--nfs_outputs_timeout', metavar='SECONDS', nargs=1,
+    parser.add_argument('-not', '--nfs_outputs_timeout', metavar='SECONDS',
                         type=dp.str2int(min=1),
                         help='How long to wait for slow NFS output files to appear in client '
                              '(default: %s)' % Make.nfs_outputs_timeout)
