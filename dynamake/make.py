@@ -33,6 +33,7 @@ from typing import Set
 from typing import Tuple
 from typing import TypeVar
 from typing import Union
+from typing import overload
 
 import yaml
 
@@ -43,6 +44,7 @@ from .config import Rule
 from .parameters import Env
 from .parameters import env  # pylint: disable=unused-import
 from .patterns import Captured
+from .patterns import NotString
 from .patterns import Strings
 from .patterns import emphasized  # pylint: disable=unused-import
 from .patterns import exists  # pylint: disable=unused-import
@@ -631,7 +633,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         self.resources.update(config_param('resources', {}))
 
         #: How to run each command.
-        self.runner = expand(runner or config_param('runner', []))
+        self.runner = expand([runner] or [config_param('runner', [])])  # type: ignore
 
         #: Whether to ignore the command(s) exit status.
         self.ignore_exit_status = ignore_exit_status
@@ -644,7 +646,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
             run = [run]  # type: ignore
 
         #: The expanded command(s) to execute.
-        self.run = [expand(command) for command in run]
+        self.run = [expand([command]) for command in run]
 
         step = Step.current()
 
@@ -897,7 +899,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
             return
 
         pattern = patterns[0]
-        expanded = expand(pattern)[0]
+        expanded = expand(pattern)
         if direction == 'output':
             suffix = 'command(s): ' + '\n'.join(self.commands)
         else:
@@ -1009,14 +1011,37 @@ def _collect_argument_names(function: Callable) -> None:
     setattr(function, '_dynamake_required_argument_names', required_names)
     setattr(function, '_dynamake_argument_defaults', argument_defaults)
 
+# pylint: disable=function-redefined
+# pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
 
-def expand(*patterns: Strings) -> List[str]:
+
+@overload
+def expand(pattern: str) -> str: ...
+
+
+@overload
+def expand(not_string: NotString) -> List[str]: ...
+
+
+@overload
+def expand(first: Strings, second: Strings, *patterns: Strings) -> List[str]: ...
+
+# pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+
+def expand(*patterns: Any) -> Any:  # type: ignore
     """
     Expand the value of the current known parameters for each ``...{name}...`` inside the patterns.
 
     See :py:func:`dynamake.patterns.expand_strings`.
     """
-    return dp.expand_strings(Step.current().wildcards, *patterns)
+    expanded = dp.expand_strings(Step.current().wildcards, *patterns)
+    if len(patterns) == 1 and isinstance(patterns[0], str):
+        assert len(expanded) == 1
+        return expanded[0]
+    return expanded
+
+# pylint: enable=function-redefined
 
 
 def glob(*patterns: Strings) -> List[str]:
@@ -1353,7 +1378,7 @@ def pass_flags(*names: Strings, **renamed: str) -> List[str]:
     for flag_name, parameter_name in renamed.items():
         _add_flag(flag_name, parameter_name)
 
-    return expand(*flags)
+    return expand(flags)
 
 
 def main(parser: argparse.ArgumentParser, default_step: Optional[Callable] = None,
