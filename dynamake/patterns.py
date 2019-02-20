@@ -15,6 +15,7 @@ from typing import List
 from typing import Optional
 from typing import Sequence
 from typing import Union
+from typing import overload
 from typing.re import Pattern  # pylint: disable=import-error
 
 import yaml
@@ -114,6 +115,14 @@ Strings = Union[None,
                 Sequence[Sequence[Sequence[Sequence[str]]]]]
 
 
+#: Same as ``Strings`` but without the actual ``str`` type, for ``overload`` specifications.
+NotString = Union[None,
+                  Sequence[str],
+                  Sequence[Sequence[str]],
+                  Sequence[Sequence[Sequence[str]]],
+                  Sequence[Sequence[Sequence[Sequence[str]]]]]
+
+
 def each_string(*args: Strings) -> Iterator[str]:
     """
     Iterate on all strings in an arbitrarily nested list of strings.
@@ -196,7 +205,24 @@ class AnnotatedStr(str):
     emphasized = False
 
 
-def optional(*patterns: Strings) -> List[str]:
+# pylint: disable=function-redefined
+# pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+@overload
+def optional(pattern: str) -> str: ...
+
+
+@overload
+def optional(not_string: NotString) -> List[str]: ...
+
+
+@overload
+def optional(first: Strings, second: Strings, *patterns: Strings) -> List[str]: ...
+
+# pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+
+def optional(*patterns: Any) -> Any:  # type: ignore
     """
     Annotate patterns as optional (for use in action ``input`` and/or ``output``).
 
@@ -213,10 +239,30 @@ def optional(*patterns: Strings) -> List[str]:
             pattern = AnnotatedStr(pattern)
         pattern.optional = True
         strings.append(pattern)
+    if len(patterns) == 1 and isinstance(patterns[0], str):
+        assert len(strings) == 1
+        return strings[0]
     return strings
 
+# pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
 
-def exists(*patterns: Strings) -> List[str]:
+
+@overload
+def exists(pattern: str) -> str: ...
+
+
+@overload
+def exists(not_string: NotString) -> List[str]: ...
+
+
+@overload
+def exists(first: Strings, second: Strings, *patterns: Strings) -> List[str]: ...
+
+
+# pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+
+def exists(*patterns: Any) -> Any:  # type: ignore
     """
     Annotate patterns as exist-only (for use in action ``input`` and/or ``output``).
 
@@ -233,10 +279,29 @@ def exists(*patterns: Strings) -> List[str]:
             pattern = AnnotatedStr(pattern)
         pattern.exists = True
         strings.append(pattern)
+    if len(patterns) == 1 and isinstance(patterns[0], str):
+        assert len(strings) == 1
+        return strings[0]
     return strings
 
 
-def precious(*patterns: Strings) -> List[str]:
+# pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+@overload
+def precious(pattern: str) -> str: ...
+
+
+@overload
+def precious(not_string: NotString) -> List[str]: ...
+
+
+@overload
+def precious(first: Strings, second: Strings, *patterns: Strings) -> List[str]: ...
+
+# pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+
+def precious(*patterns: Any) -> Any:  # type: ignore
     """
     Annotate patterns as precious (for use in action ``output``).
 
@@ -249,10 +314,29 @@ def precious(*patterns: Strings) -> List[str]:
             pattern = AnnotatedStr(pattern)
         pattern.precious = True
         strings.append(pattern)
+    if len(patterns) == 1 and isinstance(patterns[0], str):
+        assert len(strings) == 1
+        return strings[0]
     return strings
 
 
-def emphasized(*patterns: Strings) -> List[str]:
+# pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+@overload
+def emphasized(pattern: str) -> str: ...
+
+
+@overload
+def emphasized(not_string: NotString) -> List[str]: ...
+
+
+@overload
+def emphasized(first: Strings, second: Strings, *patterns: Strings) -> List[str]: ...
+
+
+# pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+def emphasized(*patterns: Any) -> Any:  # type: ignore
     """
     Annotate patterns as emphasized (impacts logging command lines).
 
@@ -265,7 +349,13 @@ def emphasized(*patterns: Strings) -> List[str]:
             pattern = AnnotatedStr(pattern)
         pattern.emphasized = True
         strings.append(pattern)
+    if len(patterns) == 1 and isinstance(patterns[0], str):
+        assert len(strings) == 1
+        return strings[0]
     return strings
+
+# pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+# pylint: enable=function-redefined
 
 
 def is_optional(string: str) -> bool:

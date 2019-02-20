@@ -343,10 +343,10 @@ class TestMake(TestWithReset):
 
     def test_expand_in_step(self) -> None:
         @plan()
-        def expander(foo: str, *, bar: str) -> List[str]:  # pylint: disable=unused-argument
+        def expander(foo: str, *, bar: str) -> str:  # pylint: disable=unused-argument
             return expand('{foo}/{bar}')
 
-        self.assertEqual(expander('a', bar='b'), ['a/b'])
+        self.assertEqual(expander('a', bar='b'), 'a/b')
 
     def test_extract_in_step(self) -> None:
         @plan()

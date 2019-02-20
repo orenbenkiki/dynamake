@@ -26,6 +26,7 @@ from dynamake.patterns import is_emphasized
 from dynamake.patterns import is_exists
 from dynamake.patterns import is_optional
 from dynamake.patterns import optional
+from dynamake.patterns import precious
 from dynamake.patterns import str2bool
 from dynamake.patterns import str2choice
 from dynamake.patterns import str2enum
@@ -47,16 +48,22 @@ class TestPatterns(TestWithReset):
         self.assertFalse(is_exists('x'))
         self.assertFalse(is_emphasized('x'))
 
-        self.assertTrue(is_optional(optional('x')[0]))
-        self.assertFalse(is_exists(optional('x')[0]))
-        self.assertFalse(is_emphasized(optional('x')[0]))
+        self.assertEqual(optional(['x']), ['x'])
+        self.assertTrue(is_optional(optional('x')))
+        self.assertFalse(is_exists(optional('x')))
+        self.assertFalse(is_emphasized(optional('x')))
 
-        self.assertFalse(is_optional(exists('x')[0]))
-        self.assertTrue(is_exists(exists('x')[0]))
-        self.assertFalse(is_emphasized(exists('x')[0]))
+        self.assertEqual(exists(['x']), ['x'])
+        self.assertFalse(is_optional(exists('x')))
+        self.assertTrue(is_exists(exists('x')))
+        self.assertFalse(is_emphasized(exists('x')))
 
-        self.assertTrue(is_emphasized(exists(emphasized('x'))[0]))
-        self.assertTrue(is_exists(optional(exists('x'))[0]))
+        self.assertEqual(emphasized(['x']), ['x'])
+        self.assertTrue(is_emphasized(exists(emphasized('x'))))
+        self.assertTrue(is_exists(optional(exists('x'))))
+
+        self.assertEqual(precious(['x']), ['x'])
+        self.assertEqual(precious('x'), 'x')
 
     def test_flatten(self) -> None:
         self.assertEqual(flatten('a', ['b', ['c']]), ['a', 'b', 'c'])
