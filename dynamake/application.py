@@ -461,7 +461,8 @@ class Prog:
                                                    formatter_class=RawDescriptionHelpFormatter)
             for name, parameter in self.parameters.items():
                 if name in configurable.indirect_parameter_names:
-                    text = parameter.description + ' (default: %s)' % parameter.default
+                    text = parameter.description.replace('%', '%%') \
+                        + ' (default: %s)' % parameter.default
                     command_parser.add_argument('--' + name, help=text, metavar=parameter.metavar)
 
         if not verify_reachability:
