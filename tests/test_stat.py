@@ -2,13 +2,12 @@
 Test the stat caching.
 """
 
-import os
-import shutil
-
+from dynamake.stat import Stat
 from tests import TestWithFiles
 from tests import write_file
 
-from dynamake.stat import Stat
+import os
+import shutil
 
 # pylint: disable=missing-docstring,too-many-public-methods,no-self-use
 

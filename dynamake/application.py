@@ -2,10 +2,8 @@
 Utilities for configurable applications.
 """
 
-import ctypes
-import logging
-import re
-import sys
+from .parameters import Env
+from .parameters import env  # pylint: disable=unused-import
 from argparse import ArgumentParser
 from argparse import Namespace
 from argparse import RawDescriptionHelpFormatter
@@ -14,8 +12,8 @@ from ast import Name
 from ast import NodeVisitor
 from ast import parse
 from contextlib import contextmanager
-from inspect import Parameter
 from inspect import getsource
+from inspect import Parameter
 from inspect import signature
 from multiprocessing import Pool
 from multiprocessing import Value
@@ -31,12 +29,12 @@ from typing import Set
 from typing import Tuple
 from typing import TypeVar
 
-import yaml
-
+import ctypes
 import dynamake.patterns as dp
-
-from .parameters import Env
-from .parameters import env  # pylint: disable=unused-import
+import logging
+import re
+import sys
+import yaml
 
 #: The type of a wrapped function.
 Wrapped = TypeVar('Wrapped', bound=Callable)

@@ -6,12 +6,12 @@ happens to be the problem domain DynaMake was originally developed for. Arguably
 implementation was better, there wouldn't have been a need for this at all.
 """
 
-import os
-from typing import Optional
-
-import pandas as pd
 from feather import read_dataframe
 from feather import write_dataframe
+from typing import Optional
+
+import os
+import pandas as pd
 
 
 def write_pandas_series(series: pd.Series, path: str, *, name: Optional[str] = None) -> None:

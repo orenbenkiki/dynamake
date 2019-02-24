@@ -1,11 +1,11 @@
+from setuptools import find_packages
+from setuptools import setup
+
 import distutils.cmd
 import distutils.log
 import os
 import re
 import subprocess
-
-from setuptools import find_packages
-from setuptools import setup
 
 VERSION = '0.2'
 

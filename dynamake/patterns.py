@@ -2,28 +2,27 @@
 Allow simple loading of regular expressions in configuration YAML files.
 """
 
-import argparse
-import logging
-import re
+from .stat import Stat
 from curses.ascii import isalnum
 from datetime import datetime
+from termcolor import colored
 from typing import Any
 from typing import Callable
 from typing import Dict
 from typing import Iterator
 from typing import List
 from typing import Optional
+from typing import overload
 from typing import Sequence
 from typing import Union
-from typing import overload
 from typing.re import Pattern  # pylint: disable=import-error
-
-import yaml
-from termcolor import colored
 from yaml import Loader
 from yaml import Node
 
-from .stat import Stat
+import argparse
+import logging
+import re
+import yaml
 
 
 def glob2re(glob: str) -> str:  # pylint: disable=too-many-branches

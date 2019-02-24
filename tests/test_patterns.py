@@ -3,18 +3,6 @@ Test the pattern matching.
 """
 
 
-import argparse
-import re
-from enum import Enum
-from typing import Callable
-from typing import List
-
-import yaml
-from tests import TestWithFiles
-from tests import TestWithReset
-from tests import write_file
-
-from dynamake.patterns import NonOptionalException
 from dynamake.patterns import capture2glob
 from dynamake.patterns import capture2re
 from dynamake.patterns import capture_globs
@@ -28,6 +16,7 @@ from dynamake.patterns import glob_strings
 from dynamake.patterns import is_emphasized
 from dynamake.patterns import is_exists
 from dynamake.patterns import is_optional
+from dynamake.patterns import NonOptionalException
 from dynamake.patterns import optional
 from dynamake.patterns import precious
 from dynamake.patterns import str2bool
@@ -37,6 +26,16 @@ from dynamake.patterns import str2float
 from dynamake.patterns import str2int
 from dynamake.patterns import str2list
 from dynamake.patterns import str2optional
+from enum import Enum
+from tests import TestWithFiles
+from tests import TestWithReset
+from tests import write_file
+from typing import Callable
+from typing import List
+
+import argparse
+import re
+import yaml
 
 # pylint: disable=missing-docstring
 

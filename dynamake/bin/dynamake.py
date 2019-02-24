@@ -2,9 +2,9 @@
 Universal main function for invoking DynaMake steps.
 """
 
-import argparse
 from textwrap import dedent
 
+import argparse
 import dynamake.make as dm
 
 

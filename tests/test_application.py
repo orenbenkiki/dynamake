@@ -2,8 +2,20 @@
 Test the application utilities.
 """
 
-import sys
 from argparse import ArgumentParser
+from dynamake.application import config
+from dynamake.application import env
+from dynamake.application import Func
+from dynamake.application import main as da_main
+from dynamake.application import override
+from dynamake.application import parallel
+from dynamake.application import Param
+from dynamake.application import Prog
+from dynamake.patterns import str2int
+from testfixtures import OutputCapture
+from tests import TestWithFiles
+from tests import TestWithReset
+from tests import write_file
 from threading import current_thread
 from typing import Any
 from typing import Callable
@@ -11,20 +23,7 @@ from typing import List
 from typing import Optional
 from typing import Tuple
 
-from testfixtures import OutputCapture
-from tests import TestWithFiles
-from tests import TestWithReset
-from tests import write_file
-
-from dynamake.application import Func
-from dynamake.application import Param
-from dynamake.application import Prog
-from dynamake.application import config
-from dynamake.application import env
-from dynamake.application import main as da_main
-from dynamake.application import override
-from dynamake.application import parallel
-from dynamake.patterns import str2int
+import sys
 
 # pylint: disable=missing-docstring,too-many-public-methods,no-self-use
 # pylint: disable=blacklisted-name,too-few-public-methods

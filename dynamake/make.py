@@ -4,14 +4,18 @@ Utilities for dynamic make.
 
 # pylint: disable=too-many-lines
 
-import argparse
-import logging
-import os
-import shlex
-import shutil
-import subprocess
-import sys
-import threading
+from .config import Config
+from .config import Rule
+from .parameters import Env
+from .parameters import env  # pylint: disable=unused-import
+from .patterns import Captured
+from .patterns import emphasized  # pylint: disable=unused-import
+from .patterns import exists  # pylint: disable=unused-import
+from .patterns import NotString
+from .patterns import optional  # pylint: disable=unused-import
+from .patterns import precious  # pylint: disable=unused-import
+from .patterns import Strings
+from .stat import Stat
 from concurrent.futures import Future
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -29,28 +33,22 @@ from typing import Dict
 from typing import Iterator
 from typing import List
 from typing import Optional
+from typing import overload
 from typing import Set
 from typing import Tuple
 from typing import TypeVar
 from typing import Union
-from typing import overload
 
-import yaml
-
+import argparse
 import dynamake.patterns as dp
-
-from .config import Config
-from .config import Rule
-from .parameters import Env
-from .parameters import env  # pylint: disable=unused-import
-from .patterns import Captured
-from .patterns import NotString
-from .patterns import Strings
-from .patterns import emphasized  # pylint: disable=unused-import
-from .patterns import exists  # pylint: disable=unused-import
-from .patterns import optional  # pylint: disable=unused-import
-from .patterns import precious  # pylint: disable=unused-import
-from .stat import Stat
+import logging
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+import threading
+import yaml
 
 #: The type of a wrapped function.
 Wrapped = TypeVar('Wrapped', bound=Callable)
