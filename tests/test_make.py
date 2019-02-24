@@ -4,34 +4,13 @@ Test the make utilities.
 
 # pylint: disable=too-many-lines
 
-import argparse
-import os
-import sys
-import threading
 from concurrent.futures import wait
 from datetime import datetime
-from textwrap import dedent
-from time import sleep
-from typing import Any
-from typing import Dict
-from typing import List
-
-from testfixtures import LogCapture
-from testfixtures import OutputCapture
-from testfixtures import StringComparison
-from tests import TestWithFiles
-from tests import TestWithReset
-from tests import write_file
-
-import dynamake.bin.dynamake as dm
 from dynamake.make import Action
-from dynamake.make import Captured
-from dynamake.make import Make
-from dynamake.make import Step
-from dynamake.make import Wild
 from dynamake.make import action
 from dynamake.make import available_resources
 from dynamake.make import capture
+from dynamake.make import Captured
 from dynamake.make import config_file
 from dynamake.make import config_param
 from dynamake.make import env
@@ -42,6 +21,7 @@ from dynamake.make import foreach
 from dynamake.make import glob
 from dynamake.make import load_config
 from dynamake.make import main
+from dynamake.make import Make
 from dynamake.make import optional
 from dynamake.make import optional_flag
 from dynamake.make import parallel
@@ -50,6 +30,25 @@ from dynamake.make import pareach
 from dynamake.make import pass_flags
 from dynamake.make import plan
 from dynamake.make import precious
+from dynamake.make import Step
+from dynamake.make import Wild
+from testfixtures import LogCapture
+from testfixtures import OutputCapture
+from testfixtures import StringComparison
+from tests import TestWithFiles
+from tests import TestWithReset
+from tests import write_file
+from textwrap import dedent
+from time import sleep
+from typing import Any
+from typing import Dict
+from typing import List
+
+import argparse
+import dynamake.bin.dynamake as dm
+import os
+import sys
+import threading
 
 # pylint: disable=missing-docstring,too-many-public-methods,no-self-use
 # pylint: disable=blacklisted-name,too-few-public-methods

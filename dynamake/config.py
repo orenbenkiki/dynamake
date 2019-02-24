@@ -2,7 +2,6 @@
 Manage per-step configurations.
 """
 
-import os
 from hashlib import md5
 from typing import Any
 from typing import Dict
@@ -11,6 +10,7 @@ from typing import Optional
 from typing.re import Pattern  # pylint: disable=import-error
 from uuid import UUID
 
+import os
 import yaml
 
 

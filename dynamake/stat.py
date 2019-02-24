@@ -2,14 +2,14 @@
 Cache stat calls for better performance.
 """
 
-import os
 from glob import glob as glob_files
+from prwlock import RWLock
+from sortedcontainers import SortedDict
 from stat import S_ISDIR
 from typing import List
 from typing import Union
 
-from prwlock import RWLock
-from sortedcontainers import SortedDict
+import os
 
 #: Internal cached stat result.
 StatResult = Union[BaseException, os.stat_result]

@@ -2,19 +2,18 @@
 Common utilities for tests.
 """
 
-import os
-import shutil
-import sys
-import tempfile
-from textwrap import dedent
-from unittest import TestCase
-
-from testfixtures import StringComparison
-
 from dynamake.application import Prog
 from dynamake.application import reset_application
 from dynamake.make import Make
 from dynamake.make import reset_make
+from testfixtures import StringComparison
+from textwrap import dedent
+from unittest import TestCase
+
+import os
+import shutil
+import sys
+import tempfile
 
 # pylint: disable=missing-docstring
 
