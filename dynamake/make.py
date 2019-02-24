@@ -633,7 +633,9 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         self.resources.update(config_param('resources', {}))
 
         #: How to run each command.
-        self.runner = expand([runner] or [config_param('runner', [])])  # type: ignore
+        self.runner = expand(runner or config_param('runner', []))
+        if isinstance(self.runner, str):
+            self.runner = [self.runner]
 
         #: Whether to ignore the command(s) exit status.
         self.ignore_exit_status = ignore_exit_status
@@ -901,7 +903,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         pattern = patterns[0]
         expanded = expand(pattern)
         if direction == 'output':
-            suffix = 'command(s): ' + '\n'.join(self.commands)
+            suffix = ' command(s): ' + '\n'.join(self.commands)
         else:
             suffix = ''
 
