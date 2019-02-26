@@ -299,8 +299,8 @@ class Step:  # pylint: disable=too-many-instance-attributes
                     step = self
                     while True:
                         if name in step.wildcards:
-                            specified_names.add(name)
                             self.wildcards[name] = self.kwargs[name] = step.wildcards[name]
+                            specified_names.add(name)
                             break
                         if step.stack == '/':
                             break
@@ -309,7 +309,7 @@ class Step:  # pylint: disable=too-many-instance-attributes
             argument_defaults = getattr(function, '_dynamake_argument_defaults')
             for name, value in argument_defaults.items():
                 if name not in specified_names:
-                    self.wildcards[name] = value
+                    self.wildcards[name] = self.kwargs[name] = value
                     specified_names.add(name)
 
             required_names = getattr(function, '_dynamake_required_argument_names')
