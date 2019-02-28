@@ -360,8 +360,12 @@ class Step:  # pylint: disable=too-many-instance-attributes
                 if not Stat.exists(Config.DIRECTORY):
                     os.mkdir(Config.DIRECTORY)
                     Stat.forget(Config.DIRECTORY)
-                Make.logger.debug('%s: write new config: %s',
-                                  self.stack, self.config_path)
+                if disk_text is None:
+                    Make.logger.debug('%s: write new config: %s',
+                                      self.stack, self.config_path)
+                else:
+                    Make.logger.debug('%s: write modified config: %s',
+                                      self.stack, self.config_path)
                 with open(self.config_path, 'w') as file:
                     file.write(config_text)
                 Stat.forget(self.config_path)

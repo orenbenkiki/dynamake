@@ -1382,7 +1382,7 @@ class TestFiles(TestWithFiles):
             use_file()
         self.expect_file('output.yaml', '{foo: 2}\n')
 
-        log.check(('dynamake', 'DEBUG', '/use_file: write new config: '
+        log.check(('dynamake', 'DEBUG', '/use_file: write modified config: '
                    '.dynamake/config.be42f6be-cb6f-e467-7d19-c37987459bc9.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: input(s): None'),
                   ('dynamake', 'DEBUG', '/use_file: output(s): output.yaml'),
