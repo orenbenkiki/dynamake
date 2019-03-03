@@ -83,6 +83,9 @@ class Make:  # pylint: disable=too-many-instance-attributes
     #: Known (wrapped) step functions.
     step_by_name: Dict[str, Callable]
 
+    #: The log level for logging the reasons for call.
+    WHY = (logging.DEBUG + logging.INFO) // 2
+
     #: The logger for tracking the build flow.
     logger: logging.Logger
 
@@ -340,32 +343,36 @@ class Step:  # pylint: disable=too-many-instance-attributes
         if self.config_path is None:
             hash_values = self.wildcards.copy()
             hash_values.pop('step_id', None)
+            hash_values.pop('parallel', None)
             self.config_path = Config.path_for_context(hash_values)
 
             clean_values = self.config_values.copy()
             for key in ['runner', 'resources']:
                 clean_values.pop(key, None)
                 clean_values.pop(key + '?', None)
-            config_text = yaml.dump(clean_values)
+            config_text = yaml.dump(clean_values, default_flow_style=False)
 
             disk_text: Optional[str] = None
             if Stat.exists(self.config_path):
                 with open(self.config_path, 'r') as file:
                     disk_text = file.read()
 
+            Make.logger.debug('%s: config id: %s', self.stack, hash_values)
             if disk_text == config_text:
-                Make.logger.debug('%s: use existing config: %s',
-                                  self.stack, self.config_path)
+                Make.logger.debug('%s: use existing config: %s', self.stack, self.config_path)
             else:
                 if not Stat.exists(Config.DIRECTORY):
                     os.mkdir(Config.DIRECTORY)
                     Stat.forget(Config.DIRECTORY)
                 if disk_text is None:
-                    Make.logger.debug('%s: write new config: %s',
-                                      self.stack, self.config_path)
+                    Make.logger.debug('%s: write new config: %s', self.stack, self.config_path)
+                    with open(self.config_path.replace('.yaml', '.for.yaml'), 'w') as file:
+                        file.write(yaml.dump(hash_values, default_flow_style=False))
                 else:
                     Make.logger.debug('%s: write modified config: %s',
                                       self.stack, self.config_path)
+                    Make.logger.error('%s: old config:\n%s', self.stack, disk_text)
+                    Make.logger.error('%s: new config:\n%s', self.stack, config_text)
                 with open(self.config_path, 'w') as file:
                     file.write(config_text)
                 Stat.forget(self.config_path)
@@ -692,7 +699,7 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
     def _needs_to_execute(self,  # pylint: disable=too-many-return-statements,too-many-branches
                           config_path: Optional[str]) -> bool:
         if not self.output:
-            Make.logger.debug('%s: needs to execute because has no outputs', self.stack)
+            Make.logger.log(Make.WHY, '%s: needs to execute because has no outputs', self.stack)
             return True
 
         minimal_output_mtime: Optional[int] = None
@@ -703,11 +710,13 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                 self.output_paths += output_paths
             except dp.NonOptionalException as exception:
                 if exception.glob == output_pattern:
-                    Make.logger.debug('%s: needs to execute because missing output(s): %s',
-                                      self.stack, output_pattern)
+                    Make.logger.log(Make.WHY,
+                                    '%s: needs to execute because missing output(s): %s',
+                                    self.stack, output_pattern)
                 else:
-                    Make.logger.debug('%s: needs to execute because missing output(s): %s glob: %s',
-                                      self.stack, output_pattern, exception.glob)
+                    Make.logger.log(Make.WHY,
+                                    '%s: needs to execute because missing output(s): %s glob: %s',
+                                    self.stack, output_pattern, exception.glob)
                 return True
 
             if dp.is_exists(output_pattern):
@@ -721,7 +730,9 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
 
         if minimal_output_mtime is None:
             if not self.output_paths:
-                Make.logger.debug('%s: needs to execute because no output(s) exist', self.stack)
+                Make.logger.log(Make.WHY,
+                                '%s: needs to execute because no output(s) exist',
+                                self.stack)
                 return True
             Make.logger.debug('%s: no need to execute because some output file(s) exist',
                               self.stack)
@@ -731,9 +742,10 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
         if config_path is not None:
             config_mtime = Stat.stat(config_path).st_mtime_ns
             if config_mtime >= minimal_output_mtime:
-                Make.logger.debug('%s: needs to execute because the config file: %s '
-                                  'is newer than the output file: %s',
-                                  self.stack, config_path, minimal_output_path)
+                Make.logger.log(Make.WHY,
+                                '%s: needs to execute because the config file: %s '
+                                'is newer than the output file: %s',
+                                self.stack, config_path, minimal_output_path)
                 return True
             has_older = True
 
@@ -742,9 +754,10 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                 continue
             input_mtime = Stat.stat(input_path).st_mtime_ns
             if input_mtime >= minimal_output_mtime:
-                Make.logger.debug('%s: needs to execute because the input file: %s '
-                                  'is newer than the output file: %s',
-                                  self.stack, input_path, minimal_output_path)
+                Make.logger.log(Make.WHY,
+                                '%s: needs to execute because the input file: %s '
+                                'is newer than the output file: %s',
+                                self.stack, input_path, minimal_output_path)
                 return True
             has_older = True
 
@@ -1638,6 +1651,9 @@ def _call_steps(default_step: Optional[Callable],  # pylint: disable=too-many-br
     for parameter_name in config_values:
         if parameter_name not in used_values and not parameter_name.endswith('?'):
             raise RuntimeError('Unused top-level configuration parameter: %s ' % parameter_name)
+
+
+logging.addLevelName(Make.WHY, 'WHY')
 
 
 def reset_make() -> None:

@@ -525,6 +525,30 @@ printing the documentation of a specified step, or triggering the help command o
 This "should" list all the available parameters and act as a guide for creating a configuration
 file.
 
+Logging
+.......
+
+Complex build scripts are notoriously difficult to debug. To help alleviate this pain, DynaMake
+uses the standard Python logging mechanism, and supports the following logging levels:
+
+* ``INFO`` prints only the executed actions. This is similar to the default ``make`` behavior.
+  Use this if you just want to know what is being run, when all is well.
+
+* ``WHY`` also prints the reason for executing each action (which output file does not exist and
+  needs to be created, which input file is newer than which output file, etc.). This is useful
+  for debugging the logic of the build script.
+
+* ``DEBUG`` prints a lot of very detailed information about the flow. Expanded globs, the full
+  list of input and output files, the configuration files used, etc. This is useful in the hopefully
+  very rare cases when the terse output from the ``WHY`` level is not sufficient for figuring out
+  what went wrong.
+
+The ``WHY`` level is not a standard python log level; it is defined to be between ``INFO`` and
+``DEBUG``.
+
+If using the universal build script (or your custom build script using the provided main function),
+you can set the logging level using the ``-ll`` or ``--log-level`` flag.
+
 Configurable Applications
 .........................
 
