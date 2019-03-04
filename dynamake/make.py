@@ -214,7 +214,7 @@ class Step:  # pylint: disable=too-many-instance-attributes
         try:
             Step.set_current(parent)
             return step(*args, **kwargs)
-        except BaseException as exception:
+        except BaseException as exception:  # pylint: disable=broad-except
             return exception
 
     @staticmethod
@@ -906,10 +906,10 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                 path = os.path.dirname(path)
                 try:
                     os.rmdir(path)
-                    Stat.forget(path)
-                    Make.logger.debug('%s: delete empty directory: %s', self.stack, path)
-                except BaseException:
+                except OSError:
                     return
+                Stat.forget(path)
+                Make.logger.debug('%s: delete empty directory: %s', self.stack, path)
 
     def _raise_if_missing(self, direction: str, patterns: List[str]) -> None:
         if not patterns:
@@ -1596,7 +1596,7 @@ def _call_steps(default_step: Optional[Callable],  # pylint: disable=too-many-br
         name, value = parts
         try:
             value = yaml.load(value)
-        except BaseException:
+        except BaseException:  # pylint: disable=broad-except
             pass
         step_parameters[name] = value
 
