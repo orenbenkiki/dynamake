@@ -71,7 +71,7 @@ class Stat:
 
         try:
             result = os.stat(path)
-        except BaseException as exception:
+        except OSError as exception:
             result = exception
 
         with Stat._lock.writer_lock():
