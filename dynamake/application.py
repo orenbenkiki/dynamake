@@ -119,13 +119,17 @@ class Func:  # pylint: disable=too-many-instance-attributes
                 if name not in kwargs:
                     kwargs[name] = value
             for name in env_parameter_names:
-                if name not in kwargs:
-                    if name in Prog.current.values:
-                        if name in self.parameter_defaults \
-                                and name not in Prog.current.explicit_parameters:
-                            kwargs[name] = self.parameter_defaults[name]
-                        else:
-                            kwargs[name] = Prog.current.values[name]
+                if name in kwargs:
+                    continue
+                if name in self.parameter_defaults \
+                        and name not in Prog.current.explicit_parameters:
+                    kwargs[name] = self.parameter_defaults[name]
+                    continue
+                if name not in Prog.current.values:
+                    raise RuntimeError('Missing value for the required parameter: %s '
+                                       'of the function: %s.%s'
+                                       % (name, function.__module__, function.__qualname__))
+                kwargs[name] = Prog.current.values[name]
             Prog.logger.log(Prog.TRACE, 'call: %s.%s', function.__module__, function.__qualname__)
             return function(**kwargs)
 
