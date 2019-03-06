@@ -1390,8 +1390,8 @@ class TestFiles(TestWithFiles):
                    "/use_file: config id: {'step': 'use_file', 'stack': '/use_file'}"),
                   ('dynamake', 'DEBUG', '/use_file: write modified config: '
                    '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml'),
-                  ('dynamake', 'ERROR', '/use_file: old config:\nfoo: 1\n'),
-                  ('dynamake', 'ERROR', '/use_file: new config:\nfoo: 2\n'),
+                  ('dynamake', 'DEBUG', '/use_file: old config:\nfoo: 1\n'),
+                  ('dynamake', 'DEBUG', '/use_file: new config:\nfoo: 2\n'),
                   ('dynamake', 'DEBUG', '/use_file: input(s): None'),
                   ('dynamake', 'DEBUG', '/use_file: output(s): output.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'),
