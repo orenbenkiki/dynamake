@@ -371,8 +371,8 @@ class Step:  # pylint: disable=too-many-instance-attributes
                 else:
                     Make.logger.debug('%s: write modified config: %s',
                                       self.stack, self.config_path)
-                    Make.logger.error('%s: old config:\n%s', self.stack, disk_text)
-                    Make.logger.error('%s: new config:\n%s', self.stack, config_text)
+                    Make.logger.debug('%s: old config:\n%s', self.stack, disk_text)
+                    Make.logger.debug('%s: new config:\n%s', self.stack, config_text)
                 with open(self.config_path, 'w') as file:
                     file.write(config_text)
                 Stat.forget(self.config_path)
