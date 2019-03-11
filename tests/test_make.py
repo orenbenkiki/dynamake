@@ -468,6 +468,7 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG',
                    StringComparison('/empty: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/empty: run: true'),
+                  ('dynamake', 'INFO', '/empty: done: true'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/empty: free resource: steps amount: 1.0 .*')))
 
@@ -683,6 +684,7 @@ class TestMake(TestWithReset):
                   ('dynamake', 'DEBUG',
                    StringComparison('/passer: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/passer: run: true --foo 0 --baz Bar'),
+                  ('dynamake', 'INFO', '/passer: done: true --foo 0 --baz Bar'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/passer: free resource: steps amount: 1.0 .*')))
 
@@ -856,6 +858,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/touch: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/touch: run: touch output.txt'),
+                  ('dynamake', 'INFO', '/touch: done: touch output.txt'),
                   ('dynamake', 'DEBUG', '/touch: exists output: output.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/touch: free resource: steps amount: 1.0 .*')))
@@ -879,6 +882,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/echo: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/echo: run: echo > output.txt'),
+                  ('dynamake', 'INFO', '/echo: done: echo > output.txt'),
                   ('dynamake', 'DEBUG', '/echo: exists output: output.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/echo: free resource: steps amount: 1.0 .*')))
@@ -901,6 +905,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/echo: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/echo: run: ( sleep 1 ; echo > output.txt ) &'),
+                  ('dynamake', 'INFO', '/echo: done: ( sleep 1 ; echo > output.txt ) &'),
                   ('dynamake', 'DEBUG', '/echo: exists output: output.txt'),
                   ('dynamake', 'WARNING',
                    StringComparison('waited: .* seconds for the output.s.: output.txt')),
@@ -926,6 +931,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/echo: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/echo: run: echo > output.txt'),
+                  ('dynamake', 'INFO', '/echo: done: echo > output.txt'),
                   ('dynamake', 'DEBUG', '/echo: exists output: output.txt'),
                   ('dynamake',
                    'DEBUG',
@@ -988,6 +994,7 @@ class TestFiles(TestWithFiles):
                    StringComparison('/touch: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/touch: delete stale output: output.txt'),
                   ('dynamake', 'INFO', '/touch: run: touch output.txt'),
+                  ('dynamake', 'INFO', '/touch: done: touch output.txt'),
                   ('dynamake', 'DEBUG', '/touch: exists output: output.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/touch: free resource: steps amount: 1.0 .*')))
@@ -1049,6 +1056,7 @@ class TestFiles(TestWithFiles):
                    StringComparison('/fail: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/fail: delete stale output: output.txt'),
                   ('dynamake', 'INFO', '/fail: run: touch output.txt'),
+                  ('dynamake', 'INFO', '/fail: done: touch output.txt'),
                   ('dynamake', 'INFO', '/fail: run: false'),
                   ('dynamake', 'DEBUG', '/fail: failed with exit status: 1'),
                   ('dynamake', 'DEBUG', '/fail: delete failed output: output.txt'),
@@ -1110,6 +1118,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/keeper: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/keeper: run: true'),
+                  ('dynamake', 'INFO', '/keeper: done: true'),
                   ('dynamake', 'DEBUG', '/keeper: exists output: output.txt'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/keeper: free resource: steps amount: 1.0 .*')))
@@ -1171,7 +1180,9 @@ class TestFiles(TestWithFiles):
                    StringComparison('/mkdir: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/mkdir: delete stale output: output.dir'),
                   ('dynamake', 'INFO', '/mkdir: run: mkdir output.dir'),
+                  ('dynamake', 'INFO', '/mkdir: done: mkdir output.dir'),
                   ('dynamake', 'INFO', '/mkdir: run: touch output.txt'),
+                  ('dynamake', 'INFO', '/mkdir: done: touch output.txt'),
                   ('dynamake', 'DEBUG', '/mkdir: exists output: output.dir'),
                   ('dynamake', 'DEBUG', '/mkdir: exists output: output.txt'),
                   ('dynamake', 'DEBUG',
@@ -1236,6 +1247,7 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/mkdir: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/mkdir: run: mkdir -p output.dir'),
+                  ('dynamake', 'INFO', '/mkdir: done: mkdir -p output.dir'),
                   ('dynamake', 'DEBUG', '/mkdir: exists output: output.dir'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/mkdir: free resource: steps amount: 1.0 .*')))
@@ -1359,6 +1371,8 @@ class TestFiles(TestWithFiles):
                    StringComparison('/use_file: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/use_file: run: '
                    'cp .dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
+                  ('dynamake', 'INFO', '/use_file: done: '
+                   'cp .dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/use_file: free resource: steps amount: 1.0 .*')))
@@ -1403,6 +1417,8 @@ class TestFiles(TestWithFiles):
                    StringComparison('/use_file: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/use_file: delete stale output: output.yaml'),
                   ('dynamake', 'INFO', '/use_file: run: cp '
+                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
+                  ('dynamake', 'INFO', '/use_file: done: cp '
                    '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'),
                   ('dynamake', 'DEBUG',

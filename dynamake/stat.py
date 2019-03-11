@@ -95,11 +95,15 @@ class Stat:
         with Stat._lock.reader_lock():
             result = Stat._cache.get(path)
 
-        if result is None:
-            return glob_files(pattern, recursive=True)
-
         if isinstance(result, BaseException):
             return []
+
+        if result is None:
+            paths = glob_files(pattern, recursive=True)
+            if paths != [pattern]:
+                return paths
+            result = Stat._result(pattern, throw=False)
+            assert not isinstance(result, BaseException)
 
         return [pattern]
 
