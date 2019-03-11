@@ -207,13 +207,19 @@ class Step:  # pylint: disable=too-many-instance-attributes
         Step.set_current(Planner(None, None, (), {}))
 
     @staticmethod
-    def call_in_parallel(parent: 'Step', step: Callable, *args: Any, **kwargs: Any) -> Any:
+    def call_in_parallel(parent: 'Step',
+                         parallel_index: Optional[int], parallel_size: Optional[int],
+                         step_function: Callable, *args: Any, **kwargs: Any) -> Any:
         """
-        Invoke a step inside a parallel thread.
+        Invoke a step function inside a parallel thread.
         """
         try:
+            if parallel_index is not None:
+                parent.wildcards['parallel_index'] = parallel_index
+            if parallel_size is not None:
+                parent.wildcards['parallel_size'] = parallel_size
             Step.set_current(parent)
-            return step(*args, **kwargs)
+            return step_function(*args, **kwargs)
         except BaseException as exception:  # pylint: disable=broad-except
             return exception
 
@@ -272,6 +278,10 @@ class Step:  # pylint: disable=too-many-instance-attributes
             self.stack = '/'
         else:
             self.wildcards['step'] = self.name
+            if 'parallel_index' in parent.wildcards:
+                self.wildcards['parallel_index'] = parent.wildcards['parallel_index']
+            if 'parallel_size' in parent.wildcards:
+                self.wildcards['parallel_size'] = parent.wildcards['parallel_size']
             self.parent = parent
             if parent.stack == '/':
                 self.stack = parent.stack + self.name
@@ -342,12 +352,15 @@ class Step:  # pylint: disable=too-many-instance-attributes
         """
         if self.config_path is None:
             hash_values = self.wildcards.copy()
+            hash_values.pop('log_level', None)
             hash_values.pop('step_id', None)
             hash_values.pop('parallel', None)
+            hash_values.pop('parallel_index', None)
+            hash_values.pop('parallel_size', None)
             self.config_path = Config.path_for_context(hash_values)
 
             clean_values = self.config_values.copy()
-            for key in ['runner', 'resources']:
+            for key in ['log_level', 'runner', 'resources']:
                 clean_values.pop(key, None)
                 clean_values.pop(key + '?', None)
             config_text = yaml.dump(clean_values, default_flow_style=False)
@@ -793,7 +806,9 @@ class Action(SimpleNamespace):  # pylint: disable=too-many-instance-attributes
                     Make.logger.info('%s: run: %s', self.stack, log_command)
                     completed = subprocess.run(command)
 
-                if completed.returncode != 0 and not self.ignore_exit_status:
+                if completed.returncode == 0 or self.ignore_exit_status:
+                    Make.logger.info('%s: done: %s', self.stack, log_command)
+                else:
                     Make.logger.debug('%s: failed with exit status: %s',
                                       self.stack, completed.returncode)
                     raise RuntimeError('%s: exit status %s for command: %s'
@@ -1181,7 +1196,7 @@ def foreach(wildcards: List[Dict[str, Any]], function: Callable, *args: Any, **k
     """
     results = []
 
-    for values in wildcards:
+    for index, values in enumerate(wildcards):
         expanded_values = Step.current().wildcards.copy()
         expanded_values.update(values)
 
@@ -1194,6 +1209,8 @@ def foreach(wildcards: List[Dict[str, Any]], function: Callable, *args: Any, **k
             expanded_args.append(arg)
 
         expanded_kwargs: Dict[str, Any] = {}
+        if 'parallel_size' in kwargs:
+            expanded_kwargs['parallel_index'] = index
         for name, arg in kwargs.items():
             if isinstance(arg, str):
                 arg = arg.format(**expanded_values)
@@ -1211,10 +1228,12 @@ def pareach(wildcards: List[Dict[str, Any]], function: Callable, *args: Any, **k
     """
     Similar to :py:func:`dynamake.make.foreach` but invoke the functions in parallel.
     """
-    if Make.available_resources['steps'] == 1:
+    parallel_size = len(wildcards)
+    if parallel_size == 1 or Make.available_resources['steps'] == 1:
         return foreach(wildcards, function, *args, **kwargs)
 
-    return parallel_results(foreach(wildcards, parallel, function, *args, **kwargs))
+    return parallel_results(foreach(wildcards, parallel, function, *args,
+                                    parallel_size=parallel_size, **kwargs))
 
 
 def parcall(*steps: Tuple[Callable, Dict[str, Any]]) -> List[Any]:
@@ -1316,18 +1335,22 @@ def config_file() -> str:
     return Step.current().config_file()
 
 
-def parallel(step: Callable, *args: Any, **kwargs: Any) -> Future:
+def parallel(step_function: Callable, *args: Any,
+             parallel_index: Optional[int] = None, parallel_size: Optional[int] = None,
+             **kwargs: Any) -> Future:
     """
-    Invoke a step in parallel to the main thread.
+    Invoke a step function in parallel to the main thread.
 
     .. note::
-        The return value is either the actual return value from the invoked step, or the exception
-        object thrown by it. This does **not** throw on its own!
+        The return value is either the actual return value from the invoked step function, or the
+        exception object thrown by it. This does **not** throw on its own!
 
         See :py:func:`dynamake.make.parallel_results` for collecting the actual return values from a
         list of futures.
     """
-    return Make.executor.submit(Step.call_in_parallel, Step.current(), step, *args, **kwargs)
+    return Make.executor.submit(Step.call_in_parallel, Step.current(),
+                                parallel_index, parallel_size,
+                                step_function, *args, **kwargs)
 
 
 def parallel_results(futures: List[Future]) -> List[Any]:
@@ -1434,7 +1457,7 @@ def _add_arguments(parser: argparse.ArgumentParser, default_step: Optional[Calla
     parser.add_argument('-ll', '--log_level', metavar='LEVEL', default='INFO',
                         help='The log level to use (default: INFO)')
 
-    parser.add_argument('-lse', '--log_skipped_actions', metavar='BOOL',
+    parser.add_argument('-lsa', '--log_skipped_actions', metavar='BOOL',
                         type=dp.str2bool, nargs='?', const=True,
                         help='Whether to log skipped actions similarly to executed actions '
                              '(default: %s)' % Make.log_skipped_actions)
