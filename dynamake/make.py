@@ -1448,7 +1448,7 @@ def _add_arguments(parser: argparse.ArgumentParser, default_step: Optional[Calla
     parser.add_argument('-hs', '--help-step', metavar='STEP',
                         help='Describe a specific step and exit')
 
-    parser.add_argument('-c', '--config', metavar='CONFIG.yaml',
+    parser.add_argument('-c', '--config', metavar='CONFIG.yaml', action='append',
                         help='The configuration file to use (default: %s)' % Make.FILE)
 
     parser.add_argument('-m', '--module', metavar='MODULE', action='append',
@@ -1509,10 +1509,11 @@ def _add_arguments(parser: argparse.ArgumentParser, default_step: Optional[Calla
 
 
 def _configure_by_arguments(args: argparse.Namespace) -> Tuple[Dict[str, Any], Set[str]]:
-    if args.config is None and Stat.exists(Make.FILE):
-        args.config = Make.FILE
-    if args.config is not None:
-        load_config(args.config)
+    configs: List[str] = args.config or []
+    if not configs and Stat.exists(Make.FILE):
+        configs = [Make.FILE]
+    for config in configs:
+        load_config(config)
 
     config_values = Config.values_for_context({'stack': '/', 'step': '/', 'parallel': False})
     used_values: Set[str] = set()
