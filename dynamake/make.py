@@ -363,7 +363,7 @@ class Step:  # pylint: disable=too-many-instance-attributes
             for key in ['log_level', 'runner', 'resources']:
                 clean_values.pop(key, None)
                 clean_values.pop(key + '?', None)
-            config_text = yaml.dump(clean_values, default_flow_style=False)
+            config_text = yaml.dump(clean_values)
 
             disk_text: Optional[str] = None
             if Stat.exists(self.config_path):
@@ -380,7 +380,7 @@ class Step:  # pylint: disable=too-many-instance-attributes
                 if disk_text is None:
                     Make.logger.debug('%s: write new config: %s', self.stack, self.config_path)
                     with open(self.config_path.replace('.yaml', '.for.yaml'), 'w') as file:
-                        file.write(yaml.dump(hash_values, default_flow_style=False))
+                        file.write(yaml.dump(hash_values))
                 else:
                     Make.logger.debug('%s: write modified config: %s',
                                       self.stack, self.config_path)
@@ -1619,7 +1619,7 @@ def _call_steps(default_step: Optional[Callable],  # pylint: disable=too-many-br
             raise RuntimeError('Invalid parameter flag: %s' % parameter)
         name, value = parts
         try:
-            value = yaml.load(value)
+            value = yaml.full_load(value)  # type: ignore
         except BaseException:  # pylint: disable=broad-except
             pass
         step_parameters[name] = value
