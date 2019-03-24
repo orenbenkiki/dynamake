@@ -1362,7 +1362,7 @@ class TestFiles(TestWithFiles):
                    "/use_file: config id: {'step': 'use_file', 'stack': '/use_file'}"),
                   ('dynamake', 'DEBUG',
                    '/use_file: write new config: '
-                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml'),
+                   '.dynamake/config.512b2018-a457-395d-7b82-cf995548de03.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: input(s): None'),
                   ('dynamake', 'DEBUG', '/use_file: output(s): output.yaml'),
                   ('dynamake', 'WHY',
@@ -1370,9 +1370,9 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG',
                    StringComparison('/use_file: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'INFO', '/use_file: run: '
-                   'cp .dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
+                   'cp .dynamake/config.512b2018-a457-395d-7b82-cf995548de03.yaml output.yaml'),
                   ('dynamake', 'INFO', '/use_file: done: '
-                   'cp .dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
+                   'cp .dynamake/config.512b2018-a457-395d-7b82-cf995548de03.yaml output.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/use_file: free resource: steps amount: 1.0 .*')))
@@ -1386,7 +1386,7 @@ class TestFiles(TestWithFiles):
         log.check(('dynamake', 'DEBUG',
                    "/use_file: config id: {'step': 'use_file', 'stack': '/use_file'}"),
                   ('dynamake', 'DEBUG', '/use_file: use existing config: '
-                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml'),
+                   '.dynamake/config.512b2018-a457-395d-7b82-cf995548de03.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: input(s): None'),
                   ('dynamake', 'DEBUG', '/use_file: output(s): output.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'),
@@ -1403,7 +1403,7 @@ class TestFiles(TestWithFiles):
         log.check(('dynamake', 'DEBUG',
                    "/use_file: config id: {'step': 'use_file', 'stack': '/use_file'}"),
                   ('dynamake', 'DEBUG', '/use_file: write modified config: '
-                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml'),
+                   '.dynamake/config.512b2018-a457-395d-7b82-cf995548de03.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: old config:\nfoo: 1\n'),
                   ('dynamake', 'DEBUG', '/use_file: new config:\nfoo: 2\n'),
                   ('dynamake', 'DEBUG', '/use_file: input(s): None'),
@@ -1411,15 +1411,15 @@ class TestFiles(TestWithFiles):
                   ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'),
                   ('dynamake', 'WHY',
                    '/use_file: needs to execute because the config file: '
-                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml '
+                   '.dynamake/config.512b2018-a457-395d-7b82-cf995548de03.yaml '
                    'is newer than the output file: output.yaml'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/use_file: use resource: steps amount: 1.0 .*')),
                   ('dynamake', 'DEBUG', '/use_file: delete stale output: output.yaml'),
-                  ('dynamake', 'INFO', '/use_file: run: cp '
-                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
-                  ('dynamake', 'INFO', '/use_file: done: cp '
-                   '.dynamake/config.48aaf62e-3246-dea5-ae11-ab57f68e4508.yaml output.yaml'),
+                  ('dynamake', 'INFO', '/use_file: run: '
+                   'cp .dynamake/config.512b2018-a457-395d-7b82-cf995548de03.yaml output.yaml'),
+                  ('dynamake', 'INFO', '/use_file: done: '
+                   'cp .dynamake/config.512b2018-a457-395d-7b82-cf995548de03.yaml output.yaml'),
                   ('dynamake', 'DEBUG', '/use_file: exists output: output.yaml'),
                   ('dynamake', 'DEBUG',
                    StringComparison('/use_file: free resource: steps amount: 1.0 .*')))

@@ -90,14 +90,14 @@ def _load_glob(loader: Loader, node: Node) -> Pattern:
     return re.compile(glob2re(loader.construct_scalar(node)))
 
 
-yaml.add_constructor('!g', _load_glob)
+yaml.add_constructor('!g', _load_glob, Loader=yaml.FullLoader)  # type: ignore
 
 
 def _load_regexp(loader: Loader, node: Node) -> Pattern:
     return re.compile(loader.construct_scalar(node))
 
 
-yaml.add_constructor('!r', _load_regexp)
+yaml.add_constructor('!r', _load_regexp, Loader=yaml.FullLoader)  # type: ignore
 
 #: An arbitrarily nested list of strings.
 #:
