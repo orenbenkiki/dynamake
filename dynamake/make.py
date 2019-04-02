@@ -352,15 +352,14 @@ class Step:  # pylint: disable=too-many-instance-attributes
         """
         if self.config_path is None:
             hash_values = self.wildcards.copy()
-            hash_values.pop('log_level', None)
-            hash_values.pop('step_id', None)
-            hash_values.pop('parallel', None)
-            hash_values.pop('parallel_index', None)
-            hash_values.pop('parallel_size', None)
+            for key in ['log_level', 'processes', 'runner', 'resources',
+                        'parallel_index', 'parallel', 'parallel_size', 'step_id']:
+                hash_values.pop(key, None)
+                hash_values.pop(key + '?', None)
             self.config_path = Config.path_for_context(hash_values)
 
             clean_values = self.config_values.copy()
-            for key in ['log_level', 'runner', 'resources']:
+            for key in ['log_level', 'processes', 'runner', 'resources']:
                 clean_values.pop(key, None)
                 clean_values.pop(key + '?', None)
             config_text = yaml.dump(clean_values)
