@@ -1618,7 +1618,7 @@ def _call_steps(default_step: Optional[Callable],  # pylint: disable=too-many-br
             raise RuntimeError('Invalid parameter flag: %s' % parameter)
         name, value = parts
         try:
-            value = yaml.full_load(value)  # type: ignore
+            value = yaml.full_load(value)
         except BaseException:  # pylint: disable=broad-except
             pass
         step_parameters[name] = value
