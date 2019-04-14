@@ -559,7 +559,7 @@ class Prog:
         Load a configuration file.
         """
         with open(path, 'r') as file:
-            data = yaml.full_load(file.read())  # type: ignore
+            data = yaml.full_load(file.read())
 
         if data is None:
             data = {}
@@ -642,7 +642,8 @@ class Parallel:
         Parallel._indexed_overrides = []
 
     @staticmethod
-    def _calls(processes: int, invocations: int, function: Callable, *fixed_args: Any,
+    def _calls(processes: int, invocations: int,  # pylint: disable=too-many-locals
+               function: Callable, *fixed_args: Any,
                kwargs: Optional[Callable[[int], Dict[str, Any]]] = None,
                overrides: Optional[Callable[[int], Dict[str, Any]]] = None,
                **fixed_kwargs: Any) -> List[Any]:
@@ -680,7 +681,7 @@ class Parallel:
     @staticmethod
     def _call(index: int) -> Any:  # TODO: Appears uncovered since runs in a separate thread.
         assert Parallel._function is not None
-        with override(**Parallel._indexed_overrides[index]):
+        with override(processes=1, **Parallel._indexed_overrides[index]):
             return Parallel._function(*Parallel._fixed_args,
                                       **Parallel._fixed_kwargs,
                                       **Parallel._indexed_kwargs[index])
@@ -744,7 +745,7 @@ def override(**values: Any) -> Iterator[None]:
     as if the parameter ``foo`` was configured to have the specified ``value``.
     """
     for name in values:
-        if name not in Prog.current.values:
+        if name not in Prog.current.values and name != 'processes':
             raise RuntimeError('Unknown override parameter: %s' % name)
     old_values = Prog.current.values
     old_explicit_parameters = Prog.current.explicit_parameters.copy()

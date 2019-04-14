@@ -172,7 +172,7 @@ class Rule:  # pylint: disable=too-few-public-methods
         Load configuration rules from a YAML file.
         """
         with open(path, 'r') as file:
-            data = yaml.full_load(file.read())  # type: ignore
+            data = yaml.full_load(file.read())
 
         if data is None:
             data = []

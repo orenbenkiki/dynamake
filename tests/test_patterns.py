@@ -68,11 +68,11 @@ class TestPatterns(TestWithReset):
         self.assertEqual(flatten('a', ['b', ['c']]), ['a', 'b', 'c'])
 
     def test_load_regexp(self) -> None:
-        pattern = yaml.load('!r a.*b')
+        pattern = yaml.full_load('!r a.*b')
         self.assertEqual(str(pattern), "re.compile('a.*b')")
 
     def test_load_glob(self) -> None:
-        pattern = yaml.load('!g a*b')
+        pattern = yaml.full_load('!g a*b')
         self.assertEqual(str(pattern), "re.compile('a[^/]*b')")
 
     def test_expand_strings(self) -> None:
