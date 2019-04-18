@@ -237,7 +237,7 @@ class Step:  # pylint: disable=too-many-instance-attributes
         finally:
             Step.set_current(parent)
 
-    def __init__(self,  # pylint: disable=too-many-branches,too-many-statements
+    def __init__(self,  # pylint: disable=too-many-branches,too-many-statements,too-many-locals
                  parent: Optional['Step'],
                  function: Optional[Callable],
                  args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> None:
@@ -264,7 +264,8 @@ class Step:  # pylint: disable=too-many-instance-attributes
         self.stack: str
 
         #: The current known parameters (expandable wildcards).
-        self.wildcards: Dict[str, Any] = dict(parallel=current_thread().name != 'MainThread')
+        is_parallel = current_thread().name != 'MainThread'
+        self.wildcards: Dict[str, Any] = dict(parallel=is_parallel)
         self.wildcards.update(kwargs)
 
         #: The used configuration values for the step, if configuration is used.
@@ -273,14 +274,14 @@ class Step:  # pylint: disable=too-many-instance-attributes
         #: The parent step of this one.
         if parent is None:
             assert isinstance(self, Planner)
+            assert not is_parallel
             self.wildcards['step'] = '/'
             self.parent = self
             self.stack = '/'
         else:
             self.wildcards['step'] = self.name
-            if 'parallel_index' in parent.wildcards:
+            if is_parallel:
                 self.wildcards['parallel_index'] = parent.wildcards['parallel_index']
-            if 'parallel_size' in parent.wildcards:
                 self.wildcards['parallel_size'] = parent.wildcards['parallel_size']
             self.parent = parent
             if parent.stack == '/':
@@ -1242,7 +1243,9 @@ def parcall(*steps: Tuple[Callable, Dict[str, Any]]) -> List[Any]:
     if Make.available_resources['steps'] == 1:
         return forcall(*steps)
 
-    return parallel_results([parallel(step, **kwargs) for step, kwargs in steps])
+    return parallel_results([parallel(step, parallel_size=len(steps),
+                                      parallel_index=index, **kwargs)
+                             for index, (step, kwargs) in enumerate(steps)])
 
 
 def forcall(*steps: Tuple[Callable, Dict[str, Any]]) -> List[Any]:
@@ -1335,7 +1338,7 @@ def config_file() -> str:
 
 
 def parallel(step_function: Callable, *args: Any,
-             parallel_index: Optional[int] = None, parallel_size: Optional[int] = None,
+             parallel_index: int = 0, parallel_size: int = 1,
              **kwargs: Any) -> Future:
     """
     Invoke a step function in parallel to the main thread.

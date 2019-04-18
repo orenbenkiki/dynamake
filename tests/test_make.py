@@ -187,8 +187,8 @@ class TestMake(TestWithReset):
 
         @plan()
         def both() -> None:
-            left_future = parallel(left)
-            right_future = parallel(right)
+            left_future = parallel(left, parallel_index=0, parallel_size=2)
+            right_future = parallel(right, parallel_index=1, parallel_size=2)
             wait([left_future, right_future])
 
         both()
