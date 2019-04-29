@@ -12,7 +12,7 @@ from dynamake.application import parallel
 from dynamake.application import Param
 from dynamake.application import Prog
 from dynamake.patterns import str2int
-from testfixtures import OutputCapture
+from testfixtures import OutputCapture  # type: ignore
 from tests import TestWithFiles
 from tests import TestWithReset
 from tests import write_file

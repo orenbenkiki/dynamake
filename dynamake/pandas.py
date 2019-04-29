@@ -6,12 +6,11 @@ happens to be the problem domain DynaMake was originally developed for. Arguably
 implementation was better, there wouldn't have been a need for this at all.
 """
 
-from feather import read_dataframe
-from feather import write_dataframe
 from typing import Optional
 
+import feather  # type: ignore
 import os
-import pandas as pd
+import pandas as pd  # type: ignore
 
 
 def write_pandas_series(series: pd.Series, path: str, *, name: Optional[str] = None) -> None:
@@ -69,7 +68,7 @@ def write_pandas_data_frame(data_frame: pd.DataFrame, path: str) -> None:
     if not path.endswith('.feather'):
         frame_path = path + '.feather'
     with open(frame_path, 'wb') as file:
-        write_dataframe(data_frame, file)
+        feather.write_dataframe(data_frame, file)
 
     if data_frame.index.equals(pd.RangeIndex(len(data_frame.index))):
         return
@@ -79,7 +78,7 @@ def write_pandas_data_frame(data_frame: pd.DataFrame, path: str) -> None:
     else:
         index_path = path + '.index.feather'
     with open(index_path, 'wb') as file:
-        write_dataframe(pd.DataFrame(data_frame.index), file)
+        feather.write_dataframe(pd.DataFrame(data_frame.index), file)
 
 
 def read_pandas_data_frame(path: str) -> pd.DataFrame:
@@ -93,7 +92,7 @@ def read_pandas_data_frame(path: str) -> pd.DataFrame:
     if not path.endswith('.feather'):
         frame_path = path + '.feather'
     with open(frame_path, 'rb') as file:
-        data_frame = read_dataframe(file)
+        data_frame = feather.read_dataframe(file)
 
     if path.endswith('.feather'):
         index_path = (path + '.index').replace('.feather.index', '.index.feather')
@@ -103,7 +102,7 @@ def read_pandas_data_frame(path: str) -> pd.DataFrame:
         return data_frame
 
     with open(index_path, 'rb') as file:
-        index_frame = read_dataframe(file)
+        index_frame = feather.read_dataframe(file)
     index_series = index_frame.iloc[:, 0]
     index_series.name = None
     return data_frame.set_index(index_series)

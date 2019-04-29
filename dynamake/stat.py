@@ -3,8 +3,8 @@ Cache stat calls for better performance.
 """
 
 from glob import glob as glob_files
-from prwlock import RWLock
-from sortedcontainers import SortedDict
+from prwlock import RWLock  # type: ignore
+from sortedcontainers import SortedDict  # type: ignore
 from stat import S_ISDIR
 from typing import List
 from typing import Union
