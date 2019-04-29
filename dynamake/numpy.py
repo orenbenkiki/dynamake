@@ -7,7 +7,7 @@ happens to be the problem domain DynaMake was originally developed for.
 
 from typing import Optional
 
-import numpy as np
+import numpy as np  # type: ignore
 
 
 def write_numpy_array(array: np.ndarray, path: str) -> None:

@@ -7,7 +7,7 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
-from typing.re import Pattern  # pylint: disable=import-error
+from typing.re import Pattern  # type: ignore # pylint: disable=import-error
 from uuid import UUID
 
 import os

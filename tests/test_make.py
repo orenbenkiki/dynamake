@@ -32,7 +32,7 @@ from dynamake.make import plan
 from dynamake.make import precious
 from dynamake.make import Step
 from dynamake.make import Wild
-from testfixtures import LogCapture
+from testfixtures import LogCapture  # type: ignore
 from testfixtures import OutputCapture
 from testfixtures import StringComparison
 from tests import TestWithFiles
@@ -45,7 +45,7 @@ from typing import Dict
 from typing import List
 
 import argparse
-import dynamake.bin.dynamake as dm
+import dynamake.bin.main as dm
 import os
 import sys
 import threading

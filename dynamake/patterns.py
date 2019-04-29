@@ -15,7 +15,7 @@ from typing import Optional
 from typing import overload
 from typing import Sequence
 from typing import Union
-from typing.re import Pattern  # pylint: disable=import-error
+from typing.re import Pattern  # type: ignore # pylint: disable=import-error
 from yaml import Loader
 from yaml import Node
 

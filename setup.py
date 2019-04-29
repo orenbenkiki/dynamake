@@ -1,3 +1,4 @@
+from glob import glob
 from setuptools import find_packages
 from setuptools import setup
 
@@ -111,11 +112,13 @@ class IsformattedCommand(SimpleCommand):
 class MypyCommand(SimpleCommand):
     description = 'run MyPy on all Python source files'
     command = ['mypy',
-               '--ignore-missing-imports',
                '--warn-redundant-casts',
                '--disallow-untyped-defs',
                '--warn-unused-ignores',
-               'dynamake', 'tests']
+               '--scripts-are-modules',
+               *glob('dynamake/**/*.py', recursive=True),
+               *glob('tests/**/*.py', recursive=True),
+               *glob('bin/**/*.py', recursive=True)]
 
 
 class NoseCommand(SimpleCommand):
@@ -152,7 +155,9 @@ class PylintCommand(SimpleCommand):
                    'ungrouped-imports',
                    'wrong-import-order',
                ]),
-               'dynamake', 'tests']
+               *glob('dynamake/**/*.py', recursive=True),
+               *glob('tests/**/*.py', recursive=True),
+               *glob('bin/**/*.py', recursive=True)]
 
 
 class ReformatCommand(SimpleCommand):
@@ -196,7 +201,7 @@ setup(name='dynamake',
       license='MIT',
       packages=find_packages(exclude=['tests']),
       entry_points={'console_scripts': [
-          'dynamake=dynamake.bin.dynamake:main',
+          'dynamake=dynamake.bin.main:main',
       ]},
       # TODO: Replicated in tox.ini
       install_requires=INSTALL_REQUIRES,

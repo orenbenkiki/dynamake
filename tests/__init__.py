@@ -6,7 +6,7 @@ from dynamake.application import Prog
 from dynamake.application import reset_application
 from dynamake.make import Make
 from dynamake.make import reset_make
-from testfixtures import StringComparison
+from testfixtures import StringComparison  # type: ignore
 from textwrap import dedent
 from unittest import TestCase
 
