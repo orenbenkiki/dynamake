@@ -59,9 +59,9 @@ class TestConfig(TestWithFiles):
         write_file('unknown_parameter.yaml', '- {when: {step: foo, bar: 1}, then: {}}\n')
         load_config('unknown_parameter.yaml')
         self.assertRaisesRegex(RuntimeError,
-                               'parameter: bar .* step: /foo .* '
+                               'parameter: bar .* step: foo .* '
                                'rule: 0 .* file: unknown_parameter.yaml',
-                               Config.values_for_context, {'stack': '/foo', 'step': 'foo'})
+                               Config.values_for_context, {'step': 'foo'})
 
     def test_load_empty(self) -> None:
         write_file('empty.yaml', '')
@@ -106,8 +106,8 @@ class TestConfig(TestWithFiles):
         self.assertEqual(Config.values_for_context({'a': 1}), {'p': 1})
 
         self.assertRaisesRegex(RuntimeError,
-                               'parameter: a .* step: /foo .* file: config.yaml',
-                               Config.values_for_context, {'stack': '/foo', 'step': 'foo'})
+                               'parameter: a .* step: foo .* file: config.yaml',
+                               Config.values_for_context, {'step': 'foo'})
 
     def test_match_optional_value(self) -> None:
         write_file('config.yaml', """
@@ -170,8 +170,8 @@ class TestConfig(TestWithFiles):
         self.assertEqual(Config.values_for_context({'a': 2}), {'p': 1})
 
         self.assertRaisesRegex(RuntimeError,
-                               'parameter: a .* step: /foo .* file: config.yaml',
-                               Config.values_for_context, {'stack': '/foo', 'step': 'foo'})
+                               'parameter: a .* step: foo .* file: config.yaml',
+                               Config.values_for_context, {'step': 'foo'})
 
     def test_match_optional_lambda(self) -> None:
         write_file('config.yaml', """
@@ -188,7 +188,7 @@ class TestConfig(TestWithFiles):
         self.assertEqual(Config.values_for_context({}), {})
 
     def test_path_for_context(self) -> None:
-        context: Dict[str, Any] = {'stack': '/foo', 'step': 'foo'}
+        context: Dict[str, Any] = {'step': 'foo'}
         empty_path = Config.path_for_context(context)
         context['a'] = 1
         one_path = Config.path_for_context(context)

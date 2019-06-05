@@ -289,6 +289,7 @@ class Param:
     """
 
     def __init__(self, *, name: str, default: Any, parser: Callable[[str], Any], description: str,
+                 group: Optional[str] = None, order: Optional[int] = None,
                  metavar: Optional[str] = None) -> None:
         """
         Create and register a parameter description.
@@ -307,6 +308,12 @@ class Param:
 
         #: Optional name of the command line parameter value (``metavar`` in ``argparse``).
         self.metavar = metavar
+
+        #: Optional group of parameters (for generating a help message)
+        self.group = group or 'optional parameters'
+
+        #: Optional order of parameter (in help message)
+        self.order = order
 
         Prog.add_parameter(self)
 
@@ -439,7 +446,7 @@ class Prog:
         """
         Prog.current._add_commands_to_parser(parser, functions)  # pylint: disable=protected-access
 
-    def _add_commands_to_parser(self, parser: ArgumentParser,
+    def _add_commands_to_parser(self, parser: ArgumentParser,  # pylint: disable=too-many-locals
                                 functions: Optional[List[str]] = None) -> None:
         verify_reachability = functions is None
 
@@ -461,11 +468,20 @@ class Prog:
             command_parser = subparsers.add_parser(configurable.name, help=sentence,
                                                    description=description,
                                                    formatter_class=RawDescriptionHelpFormatter)
-            for name, parameter in self.parameters.items():
-                if name in configurable.indirect_parameter_names:
-                    text = parameter.description.replace('%', '%%') \
-                        + ' (default: %s)' % parameter.default
-                    command_parser.add_argument('--' + name, help=text, metavar=parameter.metavar)
+            keys = [(parameter.group, parameter.order, name)
+                    for name, parameter in self.parameters.items()
+                    if name in configurable.indirect_parameter_names]
+            current_group_name: Optional[str] = None
+            current_group_arguments = None
+            for (group_name, _order, parameter_name) in sorted(keys):
+                if current_group_arguments is None or current_group_name != group_name:
+                    current_group_arguments = command_parser.add_argument_group(group_name)
+                    current_group_name = group_name
+                parameter = self.parameters[parameter_name]
+                text = parameter.description.replace('%', '%%') \
+                    + ' (default: %s)' % parameter.default
+                current_group_arguments.add_argument('--' + parameter_name, help=text,
+                                                     metavar=parameter.metavar)
 
         if not verify_reachability:
             return
