@@ -374,9 +374,10 @@ class Step:  # pylint: disable=too-many-instance-attributes
             if disk_text == config_text:
                 Make.logger.debug('%s: use existing config: %s', self.stack, self.config_path)
             else:
-                if not Stat.exists(Config.DIRECTORY):
-                    os.mkdir(Config.DIRECTORY)
-                    Stat.forget(Config.DIRECTORY)
+                config_dir = os.path.dirname(self.config_path)
+                if not Stat.exists(config_dir):
+                    os.makedirs(config_dir)
+                    Stat.forget(config_dir)
                 if disk_text is None:
                     Make.logger.debug('%s: write new config: %s', self.stack, self.config_path)
                     with open(self.config_path.replace('.yaml', '.for.yaml'), 'w') as file:

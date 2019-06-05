@@ -37,17 +37,17 @@ class Rule:  # pylint: disable=too-few-public-methods
         #: The parameter values provided by the rule.
         self.then = then
 
-    _BUILTINS = ['step', 'stack']
+    _BUILTINS = ['step']
 
     def is_match(self, context: Dict[str, Any]) -> bool:
         """
         Whether the rule is a match for a step invocation.
         """
-        return self._match_step_and_stack(context) \
+        return self._match_step(context) \
             and self._verify_known_parameters(context) \
             and self._match_other_conditions(context)
 
-    def _match_step_and_stack(self, context: Dict[str, Any]) -> bool:
+    def _match_step(self, context: Dict[str, Any]) -> bool:
         for key in Rule._BUILTINS:
             if key in self.when and not self._key_is_match(key, self.when[key], context):
                 return False
@@ -101,7 +101,7 @@ class Rule:  # pylint: disable=too-few-public-methods
                                'for the step: %s '
                                'in the rule: %s '
                                'of the file: %s'
-                               % (parameter_name, context['stack'], self.index, self.path))
+                               % (parameter_name, context['step'], self.index, self.path))
         return None
 
     @staticmethod
@@ -214,7 +214,10 @@ class Config:
         """
         digester = md5()
         digester.update(yaml.dump(context).encode('utf-8'))
-        return os.path.join(Config.DIRECTORY, 'config.%s.yaml' % UUID(bytes=digester.digest()))
+        uuid = str(UUID(bytes=digester.digest())).replace('-', '')
+        uuid_path = [uuid[i:i + 2] for i in range(0, len(uuid), 2)]
+        uuid_path[-1] += '.yaml'
+        return os.path.join(Config.DIRECTORY, *uuid_path)
 
     @staticmethod
     def values_for_context(context: Dict[str, Any]) -> Dict[str, Any]:
