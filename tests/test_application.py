@@ -181,19 +181,27 @@ class TestParameters(TestWithReset):
             return bar
 
         self.assertEqual(foo(), 1)
+        self.assertEqual(foo(bar=2), 2)
 
         with override(bar=2):
             self.assertEqual(foo(), 2)
 
         self.assertEqual(foo(), 1)
 
-        def nested() -> None:
+        @config()
+        def nested(*, bar: int = env()) -> Tuple[int, int]:
+            return bar, foo()
+
+        self.assertEqual(nested(), (1, 1))
+        self.assertEqual(nested(bar=2), (2, 1))
+
+        def unknown() -> None:
             with override(baz=2):
                 self.assertEqual(foo(), 2)
 
         self.assertRaisesRegex(RuntimeError,
                                'Unknown override parameter: baz',
-                               nested)
+                               unknown)
 
     def test_parallel_overrides(self) -> None:
         Prog.logger.setLevel('WARN')
@@ -236,70 +244,69 @@ def define_main_function() -> Callable:
 class TestSimpleMain(TestWithFiles):
 
     def test_defaults(self) -> None:
-        sys.argv = ['test']
         self.assertEqual(define_main_function()(), 2)
 
     def test_empty_config(self) -> None:
         write_file('config.yaml', '')
-        sys.argv = ['test', '--config', 'config.yaml']
+        sys.argv += ['--config', 'config.yaml']
         self.assertEqual(define_main_function()(), 2)
 
     def test_one_config(self) -> None:
         write_file('config.yaml', '{bar: 2}')
-        sys.argv = ['test', '--config', 'config.yaml']
+        sys.argv += ['--config', 'config.yaml']
         self.assertEqual(define_main_function()(), 3)
 
     def test_two_configs(self) -> None:
         write_file('one.yaml', '{bar: 1}')
         write_file('two.yaml', '{bar: 2}')
-        sys.argv = ['test', '--config', 'one.yaml', '--config', 'two.yaml']
+        sys.argv += ['--config', 'one.yaml', '--config', 'two.yaml']
         self.assertEqual(define_main_function()(), 3)
 
     def test_parameter(self) -> None:
         write_file('config.yaml', '{bar: 1}')
-        sys.argv = ['test', '--bar', '2', '--config', 'config.yaml']
+        sys.argv += ['--bar', '2', '--config', 'config.yaml']
         self.assertEqual(define_main_function()(), 3)
 
     def test_top_non_mapping(self) -> None:
         write_file('config.yaml', '[]')
-        sys.argv = ['test', '--config', 'config.yaml']
+        sys.argv += ['--config', 'config.yaml']
         self.assertRaisesRegex(RuntimeError,
                                'file: config.yaml .* top-level mapping',
                                define_main_function())
 
     def test_invalid_parameter_value(self) -> None:
-        sys.argv = ['test', '--bar', 'x']
+        sys.argv += ['--bar', 'x']
         self.assertRaisesRegex(RuntimeError,
                                'value: x .* parameter: bar',
                                define_main_function())
 
     def test_invalid_config_value(self) -> None:
         write_file('config.yaml', '{bar: x}')
-        sys.argv = ['test', '--config', 'config.yaml']
+        sys.argv += ['--config', 'config.yaml']
         self.assertRaisesRegex(RuntimeError,
                                'value: x .* parameter: bar',
                                define_main_function())
 
     def test_conflicting_parameter(self) -> None:
         write_file('config.yaml', '{bar: 1, "bar?": 1}')
-        sys.argv = ['test', '--config', 'config.yaml']
+        sys.argv += ['--config', 'config.yaml']
         self.assertRaisesRegex(RuntimeError,
                                '.* both: bar and: bar\\? .* file: config.yaml',
                                define_main_function())
 
     def test_allowed_known_parameter(self) -> None:
         write_file('config.yaml', '{"bar?": 1}')
-        sys.argv = ['test', '--config', 'config.yaml']
+        sys.argv += ['--config', 'config.yaml']
         self.assertEqual(define_main_function()(), 2)
 
     def test_allowed_unknown_parameter(self) -> None:
         write_file('config.yaml', '{"baz?": x}')
-        sys.argv = ['test', '--config', 'config.yaml']
+        sys.argv += ['--config', 'config.yaml']
         self.assertEqual(define_main_function()(), 2)
 
     def test_forbidden_unknown_parameter(self) -> None:
         write_file('config.yaml', '{baz: x}')
-        sys.argv = ['test', '--config', 'config.yaml']
+        sys.argv += ['--config', 'config.yaml']
         self.assertRaisesRegex(RuntimeError,
                                'parameter: baz .* file: config.yaml',
                                define_main_function())
@@ -338,21 +345,21 @@ def define_main_commands(is_top: bool, extra: Optional[List[str]] = None) -> Cal
 class TestCommandsMain(TestWithFiles):
 
     def test_add_defaults(self) -> None:
-        sys.argv = ['test', 'add']
+        sys.argv += ['add']
         self.assertEqual(define_main_commands(True)(), 2)
 
     def test_add_foo_defaults(self) -> None:
-        sys.argv = ['test', 'add_foo']
+        sys.argv += ['add_foo']
         self.assertEqual(define_main_commands(False)(), 3)
 
     def test_unknown_command(self) -> None:
-        sys.argv = ['test', 'bar']
+        sys.argv += ['bar']
         self.assertRaisesRegex(RuntimeError,
                                'Unknown .* function: bar',
                                define_main_commands(False, ['bar']))
 
     def test_unknown_function(self) -> None:
-        sys.argv = ['test', 'add']
+        sys.argv += ['add']
 
         @config()
         def unreachable() -> None:  # pylint: disable=unused-variable
@@ -367,7 +374,7 @@ class TestCommandsMain(TestWithFiles):
         def bar(foo: int, *, baz: int = env()) -> int:  # pylint: disable=unused-variable
             return foo + baz
 
-        sys.argv = ['test', 'bar']
+        sys.argv += ['bar']
         self.assertRaisesRegex(RuntimeError,
                                'function: .*.test_missing_required.<locals>.bar .* '
                                'required arguments',
@@ -383,7 +390,26 @@ class TestUniversalMain(TestWithFiles):
         def top(*, foo: int = env()) -> None:  # pylint: disable=unused-variable
             print('foo', foo)
 
-        sys.argv = ['test', 'top']
+        sys.argv += ['top']
+        with OutputCapture() as output:
+            da_main(ArgumentParser(description='Test'))
+        output.compare('foo 1')
+
+    def test_module(self) -> None:
+        write_file('top_module.py', """
+            from dynamake.patterns import str2int
+            from dynamake.application import config
+            from dynamake.application import env
+            from dynamake.application import Param
+
+            Param(name='foo', parser=str2int(), default=1, description='The size of a foo.')
+
+            @config(top=True)
+            def top(*, foo: int = env()) -> None:  # pylint: disable=unused-variable
+                print('foo', foo)
+        """)
+
+        sys.argv += ['--module', 'top_module', 'top']
         with OutputCapture() as output:
             da_main(ArgumentParser(description='Test'))
         output.compare('foo 1')

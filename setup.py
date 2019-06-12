@@ -201,7 +201,8 @@ setup(name='dynamake',
       license='MIT',
       packages=find_packages(exclude=['tests']),
       entry_points={'console_scripts': [
-          'dynamake=dynamake.bin.main:main',
+          'dynamain=dynamain.bin.main:main',
+          'dynamake=dynamake.bin.make:make',
       ]},
       # TODO: Replicated in tox.ini
       install_requires=INSTALL_REQUIRES,

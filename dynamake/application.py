@@ -12,6 +12,7 @@ from ast import Name
 from ast import NodeVisitor
 from ast import parse
 from contextlib import contextmanager
+from importlib import import_module
 from inspect import getsource
 from inspect import Parameter
 from inspect import signature
@@ -27,7 +28,6 @@ from typing import List
 from typing import Optional
 from typing import Set
 from typing import Tuple
-from typing import TypeVar
 
 import ctypes
 import dynamake.patterns as dp
@@ -35,9 +35,6 @@ import logging
 import re
 import sys
 import yaml
-
-#: The type of a wrapped function.
-Wrapped = TypeVar('Wrapped', bound=Callable)
 
 
 class Func:  # pylint: disable=too-many-instance-attributes
@@ -48,8 +45,17 @@ class Func:  # pylint: disable=too-many-instance-attributes
     #: The current known functions.
     by_name: Dict[str, 'Func']
 
-    #: The name of one function that uses each configurable parameter.
-    name_by_parameter: Dict[str, str]
+    #: The name the functions that use each configurable parameter.
+    names_by_parameter: Dict[str, List[str]]
+
+    #: Whether to collect indirect invocations and parameters.
+    #:
+    #: This is useful in normal applications, allowing to generate a proper help message for each
+    #: command (top level function).
+    #:
+    #: This does not make sense when we run a make-like program, where there is no easy way to tell
+    #: which function invokes which other function (as this depends on the file name patterns).
+    collect_indirect_invocations: bool
 
     _is_finalized: bool
 
@@ -59,10 +65,11 @@ class Func:  # pylint: disable=too-many-instance-attributes
         Reset all the current state, for tests.
         """
         Func.by_name = {}
-        Func.name_by_parameter = {}
+        Func.names_by_parameter = {}
         Func._is_finalized = False
+        Func.collect_indirect_invocations = True
 
-    def __init__(self, wrapped: Wrapped, is_top: bool) -> None:
+    def __init__(self, wrapped: Callable, is_top: bool) -> None:
         """
         Register a configurable function.
         """
@@ -73,8 +80,8 @@ class Func:  # pylint: disable=too-many-instance-attributes
             raise RuntimeError('Registering the function: %s.%s after Func.finalize'
                                % (function.__module__, function.__qualname__))
 
-        #: The real function that will do the work.
-        self.function = function
+        #: The wrapped real function that will do the work.
+        self.wrapped = function
 
         #: Whether this is a top-level function.
         self.is_top = is_top
@@ -85,7 +92,8 @@ class Func:  # pylint: disable=too-many-instance-attributes
         #: The set of other configurable functions it invokes. This starts by collecting all
         #: potential invoked names, and is later filtered to only include configurable function
         #: names.
-        self.invoked_function_names = _invoked_names(function)
+        self.invoked_function_names = \
+            _invoked_names(function) if Func.collect_indirect_invocations else set()
 
         #: The set of other configurable functions that invoke it. This starts empty and is
         #: later filled.
@@ -94,7 +102,8 @@ class Func:  # pylint: disable=too-many-instance-attributes
         has_required_arguments, parameter_names, \
             env_parameter_names, parameter_defaults = _parameter_names(function)
         for parameter_name in env_parameter_names:
-            Func.name_by_parameter[parameter_name] = self.name
+            Func.names_by_parameter[parameter_name] = \
+                Func.names_by_parameter.get(parameter_name, []) + [self.name]
 
         #: The ordered parameter names.
         self.parameter_names = parameter_names
@@ -114,38 +123,48 @@ class Func:  # pylint: disable=too-many-instance-attributes
         self.indirect_parameter_names = env_parameter_names.copy()
 
         def _wrapper_function(*args: Any, **kwargs: Any) -> Any:
-            assert Prog.current is not None
-            for name, value in zip(self.parameter_names, args):
-                if name not in kwargs:
-                    kwargs[name] = value
-            for name in env_parameter_names:
-                if name in kwargs:
-                    continue
-                if name in self.parameter_defaults \
-                        and name not in Prog.current.explicit_parameters:
-                    kwargs[name] = self.parameter_defaults[name]
-                    continue
-                if name not in Prog.current.values:
-                    raise RuntimeError('Missing value for the required parameter: %s '
-                                       'of the function: %s.%s'
-                                       % (name, function.__module__, function.__qualname__))
-                kwargs[name] = Prog.current.values[name]
+            kwargs = self.invocation_kwargs(*args, **kwargs)
             Prog.logger.log(Prog.TRACE, 'call: %s.%s', function.__module__, function.__qualname__)
             return function(**kwargs)
 
         #: The wrapper we place around the real function.
         self.wrapper = _wrapper_function
 
+    def invocation_kwargs(self, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        """
+        Return the complete named arguments for an invocation based on the configuration parameter
+        values.
+        """
+        assert Prog.current is not None
+
+        for name, value in zip(self.parameter_names, args):
+            if name not in kwargs:
+                kwargs[name] = value
+
+        for name in self.direct_parameter_names:
+            if name in kwargs:
+                continue
+            if name in self.parameter_defaults \
+                    and name not in Prog.current.explicit_parameters:
+                kwargs[name] = self.parameter_defaults[name]
+                continue
+            if name not in Prog.current.parameter_values:
+                raise RuntimeError('Missing value for the required parameter: %s '
+                                   'of the function: %s.%s'
+                                   % (name, self.wrapped.__module__, self.wrapped.__qualname__))
+            kwargs[name] = Prog.current.parameter_values[name]
+        return kwargs
+
     @staticmethod
-    def collect(wrapped: Wrapped, is_top: bool) -> 'Func':
+    def collect(wrapped: Callable, is_top: bool) -> 'Func':
         """
         Collect a configurable function.
         """
         configurable = Func(wrapped, is_top)
 
         if configurable.name in Func.by_name:
-            function = configurable.function
-            conflicting = Func.by_name[configurable.name].function
+            function = configurable.wrapped
+            conflicting = Func.by_name[configurable.name].wrapped
             raise RuntimeError('Conflicting definitions for the function: %s '
                                'in both: %s.%s '
                                'and: %s.%s'
@@ -169,8 +188,9 @@ class Func:  # pylint: disable=too-many-instance-attributes
         if Func._is_finalized:
             return
         Func._is_finalized = True
-        Func._finalize_invoked_functions()
-        Func._finalize_indirect_parameter_names()
+        if Func.collect_indirect_invocations:
+            Func._finalize_invoked_functions()
+            Func._finalize_indirect_parameter_names()
 
     @staticmethod
     def _finalize_invoked_functions() -> None:
@@ -211,7 +231,7 @@ class Func:  # pylint: disable=too-many-instance-attributes
                        if configurable.is_top])
 
 
-def _real_function(wrapped: Wrapped) -> Callable:
+def _real_function(wrapped: Callable) -> Callable:
     if isinstance(wrapped, staticmethod):
         return wrapped.__func__
     return wrapped
@@ -271,31 +291,34 @@ def _invoked_names(function: Callable) -> Set[str]:
     return collector.names()
 
 
-def config(top: bool = False) -> Callable[[Wrapped], Wrapped]:
+def config(top: bool = False) -> Callable[[Callable], Callable]:
     """
     Decorator for configurable functions.
 
     If ``top`` is ``True``, this is a top-level function that can be directly invoked from the main
     function.
     """
-    def _wrap(wrapped: Wrapped) -> Wrapped:
-        return Func.collect(wrapped, top).wrapper  # type: ignore
+    def _wrap(wrapped: Callable) -> Callable:
+        return Func.collect(wrapped, top).wrapper
     return _wrap
 
 
-class Param:
+class Param:  # pylint: disable=too-many-instance-attributes
     """
     Describe a configurable parameter used by one or more computation function.
     """
 
     def __init__(self, *, name: str, default: Any, parser: Callable[[str], Any], description: str,
-                 group: Optional[str] = None, order: Optional[int] = None,
-                 metavar: Optional[str] = None) -> None:
+                 short: Optional[str] = None, group: Optional[str] = None,
+                 order: Optional[int] = None, metavar: Optional[str] = None) -> None:
         """
         Create and register a parameter description.
         """
         #: The unique name of the parameter.
         self.name = name
+
+        #: The unique short name of the parameter.
+        self.short = short
 
         #: The value to use if the parameter is not explicitly configured.
         self.default = default
@@ -309,7 +332,10 @@ class Param:
         #: Optional name of the command line parameter value (``metavar`` in ``argparse``).
         self.metavar = metavar
 
-        #: Optional group of parameters (for generating a help message)
+        #: Optional group of parameters (for generating a help message).
+        #:
+        #: If the group is `global options`, the parameter will be listed in this group
+        #: instead of being associated with specific function(s).
         self.group = group or 'optional parameters'
 
         #: Optional order of parameter (in help message)
@@ -326,11 +352,14 @@ class Prog:
     #: The global arguments currently in effect.
     current: 'Prog'
 
-    #: A configured logger for the progam.
+    #: A configured logger for the program.
     logger: logging.Logger
 
     #: The log level for tracing calls.
     TRACE = (logging.DEBUG + logging.INFO) // 2
+
+    #: Whether we are running in a unit test.
+    is_test: bool
 
     @staticmethod
     def reset() -> None:
@@ -339,6 +368,7 @@ class Prog:
         """
         Prog.current = Prog()
         Prog.logger = logging.getLogger('prog')
+        Prog.is_test = False
 
     def __init__(self) -> None:
         """
@@ -349,7 +379,7 @@ class Prog:
         self.parameters: Dict[str, Param] = {}
 
         #: The value for each parameter.
-        self.values: Dict[str, Any] = {}
+        self.parameter_values: Dict[str, Any] = {}
 
         #: The names of the explicitly set parameters.
         self.explicit_parameters: Set[str] = set()
@@ -358,15 +388,15 @@ class Prog:
         """
         Verify the collection of parameters.
         """
-        for parameter_name, function_name in Func.name_by_parameter.items():
+        for parameter_name, function_names in Func.names_by_parameter.items():
             if parameter_name not in self.parameters:
-                function = Func.by_name[function_name].function
+                function = Func.by_name[function_names[0]].wrapped
                 raise RuntimeError('An unknown parameter: %s '
                                    'is used by the configurable function: %s.%s'
                                    % (parameter_name, function.__module__, function.__qualname__))
 
         for parameter_name in self.parameters:
-            if parameter_name not in Func.name_by_parameter:
+            if parameter_name not in Func.names_by_parameter:
                 raise RuntimeError('The parameter: %s is not used by any configurable function'
                                    % parameter_name)
 
@@ -381,16 +411,29 @@ class Prog:
         if parameter.name in Prog.current.parameters:
             raise RuntimeError('Multiple definitions for the parameter: %s' % parameter.name)
         Prog.current.parameters[parameter.name] = parameter
-        Prog.current.values[parameter.name] = parameter.default
+        Prog.current.parameter_values[parameter.name] = parameter.default
 
     def get(self, name: str, function: Callable) -> Any:
         """
         Access the value of some parameter.
         """
-        if name not in self.values:
+        if name not in self.parameter_values:
             raise RuntimeError('Unknown parameter: %s used by the function: %s.%s'
                                % (name, function.__module__, function.__qualname__))
-        return self.values[name]
+        return self.parameter_values[name]
+
+    @staticmethod
+    def load_modules() -> None:
+        """
+        Load all the modules specified by command line options.
+
+        This needs to be done before we set up the command line options parser, because
+        the options depend on the loaded modules. Catch-22. This therefore employs a
+        brutish option detection which may not be 100% correct.
+        """
+        for option, value in zip(sys.argv, sys.argv[1:]):
+            if option in ['-m', '--module']:
+                import_module(value)
 
     @staticmethod
     def add_parameters_to_parser(parser: ArgumentParser,
@@ -407,7 +450,7 @@ class Prog:
 
     def _add_parameters_to_parser(self, parser: ArgumentParser,
                                   functions: Optional[List[str]] = None) -> None:
-        Prog._add_standard_parameters(parser)
+        self.add_global_parameters(parser)
         if functions is None:
             functions = Func.top_functions()
 
@@ -426,13 +469,17 @@ class Prog:
 
         used_parameters: Set[str] = set()
         for function_name in functions:
-            configurable = Prog._verify_function(function_name, False)
-            used_parameters.update(configurable.indirect_parameter_names)
+            func = Prog._verify_function(function_name, False)
+            used_parameters.update(func.indirect_parameter_names)
 
         for name, parameter in self.parameters.items():
             if name in used_parameters:
                 text = parameter.description + ' (default: %s)' % parameter.default
-                group.add_argument('--' + name, help=text, metavar=parameter.metavar)
+                if parameter.short:
+                    group.add_argument('--' + name, '-' + parameter.short,
+                                       help=text, metavar=parameter.metavar)
+                else:
+                    group.add_argument('--' + name, help=text, metavar=parameter.metavar)
 
     @staticmethod
     def add_commands_to_parser(parser: ArgumentParser,
@@ -448,9 +495,9 @@ class Prog:
 
     def _add_commands_to_parser(self, parser: ArgumentParser,  # pylint: disable=too-many-locals
                                 functions: Optional[List[str]] = None) -> None:
-        verify_reachability = functions is None
+        verify_reachability = Func.collect_indirect_invocations and functions is None
 
-        Prog._add_standard_parameters(parser)
+        self.add_global_parameters(parser)
         if functions is None:
             functions = Func.top_functions()
 
@@ -462,62 +509,96 @@ class Prog:
         subparsers.required = True
 
         for command_name in functions:
-            configurable = Prog._verify_function(command_name, True)
-            description = configurable.function.__doc__
+            func = Prog._verify_function(command_name, True)
+            description = func.wrapped.__doc__
             sentence = dp.first_sentence(description)
-            command_parser = subparsers.add_parser(configurable.name, help=sentence,
+            command_parser = subparsers.add_parser(func.name, help=sentence,
                                                    description=description,
                                                    formatter_class=RawDescriptionHelpFormatter)
-            keys = [(parameter.group, parameter.order, name)
-                    for name, parameter in self.parameters.items()
-                    if name in configurable.indirect_parameter_names]
-            current_group_name: Optional[str] = None
-            current_group_arguments = None
-            for (group_name, _order, parameter_name) in sorted(keys):
-                if current_group_arguments is None or current_group_name != group_name:
-                    current_group_arguments = command_parser.add_argument_group(group_name)
-                    current_group_name = group_name
-                parameter = self.parameters[parameter_name]
-                text = parameter.description.replace('%', '%%') \
-                    + ' (default: %s)' % parameter.default
-                current_group_arguments.add_argument('--' + parameter_name, help=text,
-                                                     metavar=parameter.metavar)
+            self.add_sorted_parameters(command_parser,
+                                       predicate=lambda name, func=func:  # type: ignore
+                                       name in func.indirect_parameter_names)
 
         if not verify_reachability:
             return
 
-        for function_name, configurable in Func.by_name.items():
+        for function_name, func in Func.by_name.items():
             if function_name in functions:
                 continue
-            if not configurable.invoker_function_names:
+            if not func.invoker_function_names:
                 raise RuntimeError('The configurable function: %s.%s '
                                    'is not reachable from the command line'
-                                   % (configurable.function.__module__,
-                                      configurable.function.__qualname__))
+                                   % (func.wrapped.__module__,
+                                      func.wrapped.__qualname__))
 
-    @staticmethod
-    def _add_standard_parameters(parser: ArgumentParser) -> None:
+    def add_sorted_parameters(self, parser: ArgumentParser, *,
+                              predicate: Optional[Callable[[str], bool]] = None,
+                              extra_help: Optional[Callable[[str], str]] = None) -> None:
+        """
+        Add the parameters of the functions that satify the predicate (if any), allowing for
+        additional help string for each one.
+        """
+        keys = [(parameter.group, parameter.order, name)
+                for name, parameter in self.parameters.items()
+                if (predicate is None or predicate(name)) and parameter.group != 'global options']
+        current_group_name: Optional[str] = None
+        current_group_arguments = None
+        for (group_name, _order, parameter_name) in sorted(keys):
+            if current_group_arguments is None or current_group_name != group_name:
+                current_group_arguments = parser.add_argument_group(group_name)
+                current_group_name = group_name
+            parameter = self.parameters[parameter_name]
+            text = parameter.description.replace('%', '%%') \
+                + ' (default: %s)' % parameter.default
+            if extra_help is not None:
+                text += extra_help(parameter_name)
+            if parameter.short:
+                current_group_arguments.add_argument('--' + parameter_name,
+                                                     '-' + parameter.short, help=text,
+                                                     metavar=parameter.metavar)
+            else:
+                current_group_arguments.add_argument('--' + parameter_name, help=text,
+                                                     metavar=parameter.metavar)
+
+    def add_global_parameters(self, parser: ArgumentParser) -> None:
+        """
+        Add the parameters that are not tied to specific functions.
+        """
         Func.finalize()
         Prog.current.verify()
 
-        parser.add_argument('-c', '--config', metavar='FILE', action='append',
-                            help='Load a parameters configuration YAML file')
+        group = parser.add_argument_group('global options')
 
-        parser.add_argument('-m', '--module', metavar='MODULE', action='append',
-                            help='A Python module to load (containing function definitions)')
+        group.add_argument('--config', '-c', metavar='FILE', action='append',
+                           help='Load a parameters configuration YAML file')
 
-        parser.add_argument('-lc', '--log_context', metavar='STR',
-                            help='Context to include in log messages')
+        group.add_argument('--module', '-m', metavar='MODULE', action='append',
+                           help='A Python module to load (containing function definitions)')
 
-        parser.add_argument('-ll', '--log_level', metavar='LEVEL', default='WARN',
-                            help='The log level to use (default: WARN)')
+        group.add_argument('--log_context', '-lc', metavar='STR',
+                           help='Context to include in log messages')
+
+        group.add_argument('--log_level', '-ll', metavar='LEVEL', default='WARN',
+                           help='The log level to use (default: WARN)')
+
+        global_parameters = [(parameter.order, parameter.name)
+                             for parameter in self.parameters.values()
+                             if parameter.group == 'global options']
+        for _, parameter_name in sorted(global_parameters):
+            parameter = self.parameters[parameter_name]
+            text = parameter.description.replace('%', '%%') + ' (default: %s)' % parameter.default
+            if parameter.short:
+                group.add_argument('--' + parameter_name, '-' + parameter.short,
+                                   help=text, metavar=parameter.metavar)
+            else:
+                group.add_argument('--' + parameter_name, help=text, metavar=parameter.metavar)
 
     @staticmethod
     def _verify_function(function_name: str, is_command: bool) -> Func:
         if function_name not in Func.by_name:
             raise RuntimeError('Unknown top function: %s' % function_name)
         configurable = Func.by_name[function_name]
-        function = configurable.function
+        function = configurable.wrapped
         if is_command and configurable.has_required_arguments:
             raise RuntimeError("Can't directly invoke the function: %s.%s "
                                'since it has required arguments'
@@ -539,7 +620,7 @@ class Prog:
             value = vars(args).get(name)
             if value is not None:
                 try:
-                    self.values[name] = parameter.parser(value)
+                    self.parameter_values[name] = parameter.parser(value)
                     self.explicit_parameters.add(name)
                 except BaseException:
                     raise RuntimeError('Invalid value: %s for the parameter: %s'
@@ -548,18 +629,19 @@ class Prog:
         name = sys.argv[0].split('/')[-1]
         if 'command' in vars(args):
             name += ' ' + args.command
-        handler = logging.StreamHandler(sys.stderr)
+        if not Prog.is_test:
+            handler = logging.StreamHandler(sys.stderr)
 
-        context = vars(args).get('log_context')
-        if context:
-            log_format = '%(asctime)s - ' + context + ' - ' + name \
-                + ' - %(threadName)s - %(levelname)s - %(message)s'
-        else:
-            log_format = '%(asctime)s - ' + name \
-                + ' - %(threadName)s - %(levelname)s - %(message)s'
-        formatter = dp.LoggingFormatter(log_format)
-        handler.setFormatter(formatter)
-        Prog.logger.addHandler(handler)
+            context = vars(args).get('log_context')
+            if context:
+                log_format = '%(asctime)s - ' + context + ' - ' + name \
+                    + ' - %(threadName)s - %(levelname)s - %(message)s'
+            else:
+                log_format = '%(asctime)s - ' + name \
+                    + ' - %(threadName)s - %(levelname)s - %(message)s'
+            formatter = dp.LoggingFormatter(log_format)
+            handler.setFormatter(formatter)
+            Prog.logger.addHandler(handler)
         Prog.logger.setLevel(vars(args).get('log_level', 'WARN'))
 
     @staticmethod
@@ -594,7 +676,7 @@ class Prog:
                                        'in the configuration file: %s'
                                        % (name, name, path))
 
-            if name not in self.values:
+            if name not in self.parameter_values:
                 if is_optional:
                     continue
                 raise RuntimeError('Unknown parameter: %s '
@@ -608,7 +690,7 @@ class Prog:
                     raise RuntimeError('Invalid value: %s for the parameter: %s'
                                        % (value, name))
 
-            self.values[name] = value
+            self.parameter_values[name] = value
             self.explicit_parameters.add(name)
 
 
@@ -761,17 +843,17 @@ def override(**values: Any) -> Iterator[None]:
     as if the parameter ``foo`` was configured to have the specified ``value``.
     """
     for name in values:
-        if name not in Prog.current.values and name != 'processes':
+        if name not in Prog.current.parameter_values and name != 'processes':
             raise RuntimeError('Unknown override parameter: %s' % name)
-    old_values = Prog.current.values
+    old_values = Prog.current.parameter_values
     old_explicit_parameters = Prog.current.explicit_parameters.copy()
-    Prog.current.values = Prog.current.values.copy()
-    Prog.current.values.update(values)
+    Prog.current.parameter_values = Prog.current.parameter_values.copy()
+    Prog.current.parameter_values.update(values)
     Prog.current.explicit_parameters.update(values.keys())
     try:
         yield None
     finally:
-        Prog.current.values = old_values
+        Prog.current.parameter_values = old_values
         Prog.current.explicit_parameters = old_explicit_parameters
 
 
@@ -792,6 +874,7 @@ def main(parser: ArgumentParser, functions: Optional[List[str]] = None,
     The optional ``adapter`` may perform additional adaptation of the execution environment based on
     the parsed command-line arguments before the actual function(s) are invoked.
     """
+    Prog.load_modules()
     Prog.add_commands_to_parser(parser, functions)
     args = parser.parse_args()
     Prog.parse_args(args)

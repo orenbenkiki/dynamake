@@ -4,12 +4,14 @@ Common utilities for tests.
 
 from dynamake.application import Prog
 from dynamake.application import reset_application
-from dynamake.make import Make
 from dynamake.make import reset_make
+from dynamake.make import reset_test_dates
 from testfixtures import StringComparison  # type: ignore
 from textwrap import dedent
 from unittest import TestCase
 
+import asyncio
+import logging
 import os
 import shutil
 import sys
@@ -40,16 +42,19 @@ def _exit(status: int) -> None:
 class TestWithReset(TestCase):
 
     def setUp(self) -> None:
+        reset_test_dates()
         reset_application()
         reset_make()
-        Make.logger.setLevel('DEBUG')
+        Prog.is_test = True
         Prog.logger.setLevel('DEBUG')
+        logging.getLogger('asyncio').setLevel('WARN')
 
 
 class TestWithFiles(TestWithReset):
 
     def setUp(self) -> None:
         super().setUp()
+        sys.argv = ['dynamake']
         self.maxDiff = None  # pylint: disable=invalid-name
         if sys.path[0] != os.getcwd():
             sys.path.insert(0, os.getcwd())
@@ -61,6 +66,8 @@ class TestWithFiles(TestWithReset):
         sys.exit = _exit  # type: ignore
 
     def tearDown(self) -> None:
+        pending = asyncio.Task.all_tasks()
+        asyncio.get_event_loop().run_until_complete(asyncio.gather(*pending))
         os.chdir(self.previous_directory)
         shutil.rmtree(self.temporary_directory)
         sys.exit = self.exit
