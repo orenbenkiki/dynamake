@@ -7,9 +7,11 @@ from prwlock import RWLock  # type: ignore
 from sortedcontainers import SortedDict  # type: ignore
 from stat import S_ISDIR
 from typing import List
+from typing import Optional
 from typing import Union
 
 import os
+import shutil
 
 #: Internal cached stat result.
 StatResult = Union[BaseException, os.stat_result]
@@ -35,6 +37,16 @@ class Stat:
         Return the ``stat`` data for a file.
         """
         return Stat._result(path, throw=True)  # type: ignore
+
+    @staticmethod
+    def try_stat(path: str) -> Optional[os.stat_result]:
+        """
+        Return the ``stat`` data for a file.
+        """
+        result = Stat._result(path, throw=False)
+        if isinstance(result, BaseException):
+            return None
+        return result
 
     @staticmethod
     def exists(path: str) -> bool:
@@ -120,6 +132,33 @@ class Stat:
             if os.path.commonpath([path, index_path]) != path:
                 return
             Stat._cache.popitem(index)
+
+    @staticmethod
+    def remove(path: str) -> None:
+        """
+        Force remove of a file or a directory.
+        """
+        if Stat.isfile(path):
+            os.remove(path)
+        elif Stat.exists(path):
+            shutil.rmtree(path)
+        Stat.forget(path)
+
+    @staticmethod
+    def touch(path: str) -> None:
+        """
+        Set the last modified time of a file (or a directory) to now.
+        """
+        os.utime(path)
+        Stat.forget(path)
+
+    @staticmethod
+    def rmdir(path: str) -> None:
+        """
+        Remove an empty directory.
+        """
+        os.rmdir(path)
+        Stat.forget(path)
 
 
 Stat.reset()

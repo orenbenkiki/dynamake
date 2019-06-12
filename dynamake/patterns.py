@@ -2,6 +2,8 @@
 Allow simple loading of regular expressions in configuration YAML files.
 """
 
+# pylint: disable=too-many-lines
+
 from .stat import Stat
 from curses.ascii import isalnum
 from datetime import datetime
@@ -194,6 +196,9 @@ class AnnotatedStr(str):
     #: Whether this was annotated by :py:func:`dynamake.patterns.optional`.
     optional = False
 
+    #: Whether this was annotated by :py:func:`dynamake.patterns.phony`.
+    phony = False
+
     #: Whether this was annotated by :py:func:`dynamake.patterns.exists`.
     exists = False
 
@@ -277,6 +282,41 @@ def exists(*patterns: Any) -> Any:  # type: ignore
         if not isinstance(pattern, AnnotatedStr):
             pattern = AnnotatedStr(pattern)
         pattern.exists = True
+        strings.append(pattern)
+    if len(patterns) == 1 and isinstance(patterns[0], str):
+        assert len(strings) == 1
+        return strings[0]
+    return strings
+
+
+# pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+@overload
+def phony(pattern: str) -> str: ...
+
+
+@overload
+def phony(not_string: NotString) -> List[str]: ...
+
+
+@overload
+def phony(first: Strings, second: Strings, *patterns: Strings) -> List[str]: ...
+
+
+# pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+def phony(*patterns: Any) -> Any:  # type: ignore
+    """
+    Annotate patterns as phony (for use in action ``input`` and/or ``output``).
+
+    A phony target does not exist as a disk file. When required as an input, its producer
+    step is always executed, and the dependent step always executes its sub-processes.
+    """
+    strings: List[str] = []
+    for pattern in each_string(*patterns):
+        if not isinstance(pattern, AnnotatedStr):
+            pattern = AnnotatedStr(pattern)
+        pattern.phony = True
         strings.append(pattern)
     if len(patterns) == 1 and isinstance(patterns[0], str):
         assert len(strings) == 1
@@ -371,6 +411,13 @@ def is_exists(string: str) -> bool:
     return isinstance(string, AnnotatedStr) and string.exists
 
 
+def is_phony(string: str) -> bool:
+    """
+    Whether a string has been annotated as :py:func:`dynamake.patterns.phony`.
+    """
+    return isinstance(string, AnnotatedStr) and string.phony
+
+
 def is_precious(string: str) -> bool:
     """
     Whether a string has been annotated as :py:func:`dynamake.patterns.precious`.
@@ -410,6 +457,7 @@ def copy_annotations(source: str, target: str) -> str:
             target = AnnotatedStr(target)
         target.optional = source.optional
         target.exists = source.exists
+        target.phony = source.phony
         target.precious = source.precious
         target.emphasized = source.emphasized
     return target
@@ -451,8 +499,8 @@ def capture_globs(wildcards: Dict[str, Any], *patterns: Strings) -> Captured:
     Captured
         The list of existing file paths that match the patterns, and the list of dictionaries with
         the captured values for each such path. The annotations
-        (:py:func:`dynamake.patterns.optional` and/or :py:func:`dynamake.patterns.exists`) of the
-        pattern are copied to the paths expanded from the pattern.
+        (:py:class:`dynamake.patterns.AnnotatedStr`) of the pattern are copied to the paths expanded
+        from the pattern.
     """
     captured = Captured()
     for capture in each_string(*patterns):

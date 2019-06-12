@@ -3,7 +3,7 @@ Test the configuration classes.
 """
 
 from dynamake.config import Config
-from dynamake.make import load_config
+from dynamake.config import load_config
 from tests import TestWithFiles
 from tests import write_file
 from typing import Any

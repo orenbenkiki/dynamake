@@ -1,25 +1,23 @@
 """
-Universal main function for invoking DynaMake steps.
+Universal main function for invoking configurable functions.
 """
 
 from textwrap import dedent
 
 import argparse
-import dynamake.make as dm
+import dynamake.application as da
 
 
 def main() -> None:
     """
-    Universal main function for invoking DynaMake steps.
+    Universal main function for invoking configurable functions.
     """
-    dm.main(argparse.ArgumentParser(description=dedent("""
-        Execute some DynaMake step(s).
+    da.main(argparse.ArgumentParser(description=dedent("""
+        Execute some configurable Python functions.
 
-        This can be used to execute arbitrary DynaMake build scripts. It requires you
-        either specify one or more Python '-m module' to load the actual build script
-        steps, or specify a 'modules' configuration parameter for the '/' step in the
-        YAML configuration file (by default, %s).
-    """ % dm.Make.FILE)))
+        This can be used to execute arbitrary configurable functions. It requires you
+        to specify one or more Python '-m module' to load the functions.
+    """)))
 
 
 if __name__ == '__main__':
