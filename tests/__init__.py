@@ -3,9 +3,8 @@ Common utilities for tests.
 """
 
 from dynamake.application import Prog
-from dynamake.application import reset_application
+from dynamake.make import _reset_test_dates
 from dynamake.make import reset_make
-from dynamake.make import reset_test_dates
 from testfixtures import StringComparison  # type: ignore
 from textwrap import dedent
 from unittest import TestCase
@@ -42,8 +41,7 @@ def _exit(status: int) -> None:
 class TestWithReset(TestCase):
 
     def setUp(self) -> None:
-        reset_test_dates()
-        reset_application()
+        _reset_test_dates()
         reset_make()
         Prog.is_test = True
         Prog.logger.setLevel('DEBUG')
