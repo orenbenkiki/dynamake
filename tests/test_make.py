@@ -42,7 +42,7 @@ class TestMake(TestWithReset):
 
     def test_normal_function(self) -> None:
         def define() -> None:
-            @step(output=None)
+            @step(output='all')
             def function() -> None:  # pylint: disable=unused-variable
                 pass
 
@@ -51,10 +51,21 @@ class TestMake(TestWithReset):
                                'is not a coroutine',
                                define)
 
+    def test_no_output(self) -> None:
+        def define() -> None:
+            @step(output=None)
+            async def function() -> None:  # pylint: disable=unused-variable
+                pass
+
+        self.assertRaisesRegex(RuntimeError,
+                               'test_no_output.<locals>.define.<locals>.function '
+                               'specifies no output',
+                               define)
+
     def test_call_step(self) -> None:
         called_function = False
 
-        @step(output=None)
+        @step(output='none')
         async def function() -> None:
             nonlocal called_function
             called_function = True
@@ -66,7 +77,7 @@ class TestMake(TestWithReset):
         class Klass:
             called_static_method = False
 
-            @step(output=None)
+            @step(output='none')
             @staticmethod
             async def static_method() -> None:
                 Klass.called_static_method = True
@@ -75,12 +86,12 @@ class TestMake(TestWithReset):
         self.assertTrue(Klass.called_static_method)
 
     def test_conflicting_steps(self) -> None:
-        @step(output=None)
+        @step(output='none')
         async def function() -> None:  # pylint: disable=unused-variable
             pass
 
         def _register() -> None:
-            @step(output=None)
+            @step(output='none')
             def function() -> None:  # pylint: disable=unused-variable
                 pass
 
@@ -95,13 +106,13 @@ class TestMake(TestWithReset):
         Param(name='bar', default=0, parser=int, description='bar')
         Param(name='baz', default=0, parser=int, description='baz')
 
-        @step(output=None)
+        @step(output='use')
         async def use_env(foo: int = env(), bar: int = env(), baz: int = env()) -> None:
             self.assertEqual(foo, 0)
             self.assertEqual(bar, 2)
             self.assertEqual(baz, 3)
 
-        @step(output=None)
+        @step(output='set')
         async def set_env(foo: int = env()) -> None:  # pylint: disable=unused-argument
             self.assertEqual(foo, 1)
             with override(baz=3):
@@ -110,11 +121,11 @@ class TestMake(TestWithReset):
         run(set_env(1))
 
     def test_missing_env_parameters(self) -> None:
-        @step(output=None)
+        @step(output='use')
         async def use_env(foo: int = env()) -> None:  # pylint: disable=unused-argument
             pass
 
-        @step(output=None)
+        @step(output='none')
         async def no_env() -> None:
             use_env()
 
@@ -133,13 +144,18 @@ class TestMain(TestWithFiles):
                 pass
 
         self.check(_register, log=[
-            ('dynamake', 'TRACE', '[.] make: call with: all'),
+            ('dynamake', 'TRACE', '[.] make: all'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] no_op'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] no_op: call'),
+            ('dynamake', 'DEBUG',
+             '[.1] no_op: must run actions because missing the persistent actions: '
+             '.dynamake/no_op.actions.yaml'),
             ('dynamake', 'DEBUG', '[.1] no_op: synced'),
+            ('dynamake', 'DEBUG',
+             '[.1] no_op: write the persistent actions: .dynamake/no_op.actions.yaml'),
             ('dynamake', 'TRACE', '[.1] no_op: done'),
             ('dynamake', 'DEBUG', '[.] make: synced'),
             ('dynamake', 'DEBUG', '[.] make: has the required: all'),
@@ -176,51 +192,177 @@ class TestMain(TestWithFiles):
         sys.argv += ['--foo', '2']
 
         self.check(_register, log=[
-            ('dynamake', 'TRACE', '[.] make: call with: all'),
+            ('dynamake', 'TRACE', '[.] make: all'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: must run actions because missing the persistent actions: '
+             '.dynamake/make_all.actions.yaml'),
             ('dynamake', 'DEBUG', '[.1] make_all: build the required: foo.1.1'),
             ('dynamake', 'DEBUG',
-             '[.1] make_all: the required: foo.1.1 will be produced '
-             'by the spawned: [.1.1] make_foos'),
+             '[.1] make_all: the required: foo.1.1 will be produced by '
+             'the spawned: [.1.1] make_foos/major=1'),
             ('dynamake', 'DEBUG', '[.1] make_all: sync'),
-            ('dynamake', 'TRACE', "[.1.1] make_foos: call with: major=1"),
-            ('dynamake', 'DEBUG', '[.1.1] make_foos: missing output(s): foo.{*major}.{*_minor}'),
-            ('dynamake', 'DEBUG', '[.1.1] make_foos: synced'),
-            ('dynamake', 'WHY',
-             '[.1.1] make_foos: must run processes '
-             'to create missing output(s): foo.{*major}.{*_minor}'),
-            ('dynamake', 'INFO', '[.1.1] make_foos: run: touch foo.1.0'),
-            ('dynamake', 'TRACE', '[.1.1] make_foos: success: touch foo.1.0'),
-            ('dynamake', 'DEBUG', '[.1.1] make_foos: synced'),
-            ('dynamake', 'WHY',
-             '[.1.1] make_foos: must run processes '
-             'to create missing output(s): foo.{*major}.{*_minor}'),
-            ('dynamake', 'INFO', '[.1.1] make_foos: run: touch foo.1.1'),
-            ('dynamake', 'TRACE', '[.1.1] make_foos: success: touch foo.1.1'),
-            ('dynamake', 'DEBUG', '[.1.1] make_foos: synced'),
+            ('dynamake', 'TRACE', '[.1.1] make_foos/major=1: call'),
             ('dynamake', 'DEBUG',
-             '[.1.1] make_foos: has output: foo.{*major}.{*_minor} -> foo.1.0 time: 1'),
+             '[.1.1] make_foos/major=1: must run actions '
+             'because missing the persistent actions: .dynamake/make_foos/major=1.actions.yaml'),
             ('dynamake', 'DEBUG',
-             '[.1.1] make_foos: has output: foo.{*major}.{*_minor} -> foo.1.1 time: 2'),
-            ('dynamake', 'TRACE', '[.1.1] make_foos: done'),
+             '[.1.1] make_foos/major=1: missing the output(s): foo.{*major}.{*_minor}'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: synced'),
+            ('dynamake', 'INFO', '[.1.1] make_foos/major=1: run: touch foo.1.0'),
+            ('dynamake', 'TRACE', '[.1.1] make_foos/major=1: success: touch foo.1.0'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: synced'),
+            ('dynamake', 'INFO', '[.1.1] make_foos/major=1: run: touch foo.1.1'),
+            ('dynamake', 'TRACE', '[.1.1] make_foos/major=1: success: touch foo.1.1'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: synced'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: has '
+             'the output: foo.{*major}.{*_minor} -> foo.1.0 time: 1'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: has '
+             'the output: foo.{*major}.{*_minor} -> foo.1.1 time: 2'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: write '
+             'the persistent actions: .dynamake/make_foos/major=1.actions.yaml'),
+            ('dynamake', 'TRACE', '[.1.1] make_foos/major=1: done'),
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
             ('dynamake', 'DEBUG', '[.1] make_all: has the required: foo.1.1'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: write the persistent actions: .dynamake/make_all.actions.yaml'),
             ('dynamake', 'TRACE', '[.1] make_all: done'),
             ('dynamake', 'DEBUG', '[.] make: synced'),
             ('dynamake', 'DEBUG', '[.] make: has the required: all'),
             ('dynamake', 'TRACE', '[.] make: done'),
         ])
 
-        # Rebuild when all outputs exist.
+        # Do not rebuild without reason.
 
         sys.argv += ['--log_skipped_actions', 'true']
 
         self.check(_register, log=[
-            ('dynamake', 'TRACE', '[.] make: call with: all'),
+            ('dynamake', 'TRACE', '[.] make: all'),
+            ('dynamake', 'DEBUG', '[.] make: build the required: all'),
+            ('dynamake', 'DEBUG',
+             '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
+            ('dynamake', 'DEBUG', '[.] make: sync'),
+            ('dynamake', 'TRACE', '[.1] make_all: call'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: read the persistent actions: .dynamake/make_all.actions.yaml'),
+            ('dynamake', 'DEBUG', '[.1] make_all: build the required: foo.1.1'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: the required: foo.1.1 will be produced by '
+             'the spawned: [.1.1] make_foos/major=1'),
+            ('dynamake', 'DEBUG', '[.1] make_all: sync'),
+            ('dynamake', 'TRACE', '[.1.1] make_foos/major=1: call'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: read '
+             'the persistent actions: .dynamake/make_foos/major=1.actions.yaml'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: exists output: foo.{*major}.{*_minor} -> foo.1.0'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: exists output: foo.{*major}.{*_minor} -> foo.1.1'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: oldest output: foo.1.0 time: 1'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: synced'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: newest input: None time: 1'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: can skip actions '
+             'because all the outputs exist and there are no inputs'),
+            ('dynamake', 'INFO', '[.1.1] make_foos/major=1: skip: touch foo.1.0'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: synced'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: newest input: None time: 1'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: can skip actions '
+             'because all the outputs exist and there are no inputs'),
+            ('dynamake', 'INFO', '[.1.1] make_foos/major=1: skip: touch foo.1.1'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: synced'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: newest input: None time: 1'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: has '
+             'the output: foo.{*major}.{*_minor} -> foo.1.0 time: 1'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: has '
+             'the output: foo.{*major}.{*_minor} -> foo.1.1 time: 2'),
+            ('dynamake', 'TRACE', '[.1.1] make_foos/major=1: done'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'DEBUG', '[.1] make_all: has the required: foo.1.1'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: write the persistent actions: .dynamake/make_all.actions.yaml'),
+            ('dynamake', 'TRACE', '[.1] make_all: done'),
+            ('dynamake', 'DEBUG', '[.] make: synced'),
+            ('dynamake', 'DEBUG', '[.] make: has the required: all'),
+            ('dynamake', 'TRACE', '[.] make: done'),
+        ])
+
+        # Rebuild when some outputs are missing.
+
+        os.remove('foo.1.0')
+
+        self.check(_register, log=[
+            ('dynamake', 'TRACE', '[.] make: all'),
+            ('dynamake', 'DEBUG', '[.] make: build the required: all'),
+            ('dynamake', 'DEBUG',
+             '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
+            ('dynamake', 'DEBUG', '[.] make: sync'),
+            ('dynamake', 'TRACE', '[.1] make_all: call'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: read the persistent actions: .dynamake/make_all.actions.yaml'),
+            ('dynamake', 'DEBUG', '[.1] make_all: build the required: foo.1.1'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: the required: foo.1.1 will be produced by '
+             'the spawned: [.1.1] make_foos/major=1'),
+            ('dynamake', 'DEBUG', '[.1] make_all: sync'),
+            ('dynamake', 'TRACE', '[.1.1] make_foos/major=1: call'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: read '
+             'the persistent actions: .dynamake/make_foos/major=1.actions.yaml'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: exists output: foo.{*major}.{*_minor} -> foo.1.1'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: missing the old built output: foo.1.0'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: synced'),
+            ('dynamake', 'WHY',
+             '[.1.1] make_foos/major=1: must run actions to create '
+             'the missing output(s): foo.1.0'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: remove the stale output: foo.1.1'),
+            ('dynamake', 'INFO', '[.1.1] make_foos/major=1: run: touch foo.1.0'),
+            ('dynamake', 'TRACE', '[.1.1] make_foos/major=1: success: touch foo.1.0'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: synced'),
+            ('dynamake', 'INFO', '[.1.1] make_foos/major=1: run: touch foo.1.1'),
+            ('dynamake', 'TRACE', '[.1.1] make_foos/major=1: success: touch foo.1.1'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: synced'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: has '
+             'the output: foo.{*major}.{*_minor} -> foo.1.0 time: 3'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: has '
+             'the output: foo.{*major}.{*_minor} -> foo.1.1 time: 4'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: write '
+             'the persistent actions: .dynamake/make_foos/major=1.actions.yaml'),
+            ('dynamake', 'TRACE', '[.1.1] make_foos/major=1: done'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'DEBUG', '[.1] make_all: has the required: foo.1.1'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: write the persistent actions: .dynamake/make_all.actions.yaml'),
+            ('dynamake', 'TRACE', '[.1] make_all: done'),
+            ('dynamake', 'DEBUG', '[.] make: synced'),
+            ('dynamake', 'DEBUG', '[.] make: has the required: all'),
+            ('dynamake', 'TRACE', '[.] make: done'),
+        ])
+
+        os.remove('foo.1.0')
+
+        # But do not rebuild if not using persistent state.
+
+        sys.argv += ['--rebuild_changed_actions', 'false']
+
+        self.check(_register, log=[
+            ('dynamake', 'TRACE', '[.] make: all'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
@@ -228,35 +370,31 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '[.1] make_all: call'),
             ('dynamake', 'DEBUG', '[.1] make_all: build the required: foo.1.1'),
             ('dynamake', 'DEBUG',
-             '[.1] make_all: the required: foo.1.1 will be produced '
-             'by the spawned: [.1.1] make_foos'),
+             '[.1] make_all: the required: foo.1.1 will be produced by '
+             'the spawned: [.1.1] make_foos/major=1'),
             ('dynamake', 'DEBUG', '[.1] make_all: sync'),
-            ('dynamake', 'TRACE', '[.1.1] make_foos: call with: major=1'),
+            ('dynamake', 'TRACE', '[.1.1] make_foos/major=1: call'),
             ('dynamake', 'DEBUG',
-             '[.1.1] make_foos: exists output: foo.{*major}.{*_minor} -> foo.1.0'),
-            ('dynamake',
-             'DEBUG',
-             '[.1.1] make_foos: exists output: foo.{*major}.{*_minor} -> foo.1.1'),
-            ('dynamake', 'DEBUG', '[.1.1] make_foos: oldest output: foo.1.0 time: 1'),
-            ('dynamake', 'DEBUG', '[.1.1] make_foos: synced'),
-            ('dynamake', 'DEBUG', '[.1.1] make_foos: newest input: None time: 1'),
+             '[.1.1] make_foos/major=1: exists output: foo.{*major}.{*_minor} -> foo.1.1'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: oldest output: foo.1.1 time: 4'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: synced'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: newest input: None time: 1'),
             ('dynamake', 'DEBUG',
-             '[.1.1] make_foos: can skip processes '
-             'because all outputs exist and there are no inputs'),
-            ('dynamake', 'INFO', '[.1.1] make_foos: skip: touch foo.1.0'),
-            ('dynamake', 'DEBUG', '[.1.1] make_foos: synced'),
-            ('dynamake', 'DEBUG', '[.1.1] make_foos: newest input: None time: 1'),
+             '[.1.1] make_foos/major=1: can skip actions '
+             'because all the outputs exist and there are no inputs'),
+            ('dynamake', 'INFO', '[.1.1] make_foos/major=1: skip: touch foo.1.0'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: synced'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: newest input: None time: 1'),
             ('dynamake', 'DEBUG',
-             '[.1.1] make_foos: can skip processes '
-             'because all outputs exist and there are no inputs'),
-            ('dynamake', 'INFO', '[.1.1] make_foos: skip: touch foo.1.1'),
-            ('dynamake', 'DEBUG', '[.1.1] make_foos: synced'),
-            ('dynamake', 'DEBUG', '[.1.1] make_foos: newest input: None time: 1'),
+             '[.1.1] make_foos/major=1: can skip actions '
+             'because all the outputs exist and there are no inputs'),
+            ('dynamake', 'INFO', '[.1.1] make_foos/major=1: skip: touch foo.1.1'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: synced'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: newest input: None time: 1'),
             ('dynamake', 'DEBUG',
-             '[.1.1] make_foos: has output: foo.{*major}.{*_minor} -> foo.1.0 time: 1'),
-            ('dynamake', 'DEBUG',
-             '[.1.1] make_foos: has output: foo.{*major}.{*_minor} -> foo.1.1 time: 2'),
-            ('dynamake', 'TRACE', '[.1.1] make_foos: done'),
+             '[.1.1] make_foos/major=1: has '
+             'the output: foo.{*major}.{*_minor} -> foo.1.1 time: 4'),
+            ('dynamake', 'TRACE', '[.1.1] make_foos/major=1: done'),
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
             ('dynamake', 'DEBUG', '[.1] make_all: has the required: foo.1.1'),
             ('dynamake', 'TRACE', '[.1] make_all: done'),
@@ -265,7 +403,51 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '[.] make: done'),
         ])
 
-        # TODO: Rebuild when some outputs are missing.
+        # This can cause a build to fail:
+
+        os.remove('foo.1.1')
+        write_file('foo.1.0', '!\n')
+
+        self.check(_register, error='make_all: failed to build the required target.s.', log=[
+            ('dynamake', 'TRACE', '[.] make: all'),
+            ('dynamake', 'DEBUG', '[.] make: build the required: all'),
+            ('dynamake', 'DEBUG',
+             '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
+            ('dynamake', 'DEBUG', '[.] make: sync'),
+            ('dynamake', 'TRACE', '[.1] make_all: call'),
+            ('dynamake', 'DEBUG', '[.1] make_all: build the required: foo.1.1'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: the required: foo.1.1 will be produced by '
+             'the spawned: [.1.1] make_foos/major=1'),
+            ('dynamake', 'DEBUG', '[.1] make_all: sync'),
+            ('dynamake', 'TRACE', '[.1.1] make_foos/major=1: call'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: exists output: foo.{*major}.{*_minor} -> foo.1.0'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: oldest output: foo.1.0 time: 5'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: synced'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: newest input: None time: 1'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: can skip actions '
+             'because all the outputs exist and there are no inputs'),
+            ('dynamake', 'INFO', '[.1.1] make_foos/major=1: skip: touch foo.1.0'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: synced'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: newest input: None time: 1'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: can skip actions '
+             'because all the outputs exist and there are no inputs'),
+            ('dynamake', 'INFO', '[.1.1] make_foos/major=1: skip: touch foo.1.1'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: synced'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foos/major=1: newest input: None time: 1'),
+            ('dynamake', 'DEBUG',
+             '[.1.1] make_foos/major=1: has the output: foo.{*major}.{*_minor} -> foo.1.0 time: 5'),
+            ('dynamake', 'TRACE', '[.1.1] make_foos/major=1: done'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'ERROR',
+             '[.1] make_all: the required: foo.1.1 has failed to build'),
+            ('dynamake', 'TRACE', '[.1] make_all: fail'),
+            ('dynamake', 'TRACE', '[.] make: fail'),
+        ])
 
     def test_copy(self) -> None:
         def _register() -> None:
@@ -274,31 +456,33 @@ class TestMain(TestWithFiles):
                 require('foo')
                 await spawn('cp', 'foo', 'bar')
 
-        sys.argv += ['bar']
-
-        # Build missing output.
+        sys.argv += ['--rebuild_changed_actions', 'false', 'bar']
 
         write_file('foo', '!\n')
 
+        # Build due to missing output.
+
         self.check(_register, log=[
-            ('dynamake', 'TRACE', '[.] make: call with: bar'),
+            ('dynamake', 'TRACE', '[.] make: bar'),
             ('dynamake', 'DEBUG', '[.] make: build the required: bar'),
             ('dynamake', 'DEBUG',
-             '[.] make: the required: bar will be produced by the spawned: [.1] copy_foo_to_bar'),
+             '[.] make: the required: bar will be produced by '
+             'the spawned: [.1] copy_foo_to_bar'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] copy_foo_to_bar: call'),
-            ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: missing output(s): bar'),
+            ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: missing the output(s): bar'),
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: build the required: foo'),
-            ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: the required: foo is a source file'),
+            ('dynamake', 'DEBUG',
+             '[.1] copy_foo_to_bar: the required: foo is a source file'),
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: synced'),
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: has the required: foo'),
             ('dynamake', 'WHY',
-             '[.1] copy_foo_to_bar: must run processes to create missing output(s): bar'),
+             '[.1] copy_foo_to_bar: must run actions to create the missing output(s): bar'),
             ('dynamake', 'INFO', '[.1] copy_foo_to_bar: run: cp foo bar'),
             ('dynamake', 'TRACE', '[.1] copy_foo_to_bar: success: cp foo bar'),
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: synced'),
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: has the required: foo'),
-            ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: has output: bar time: 1'),
+            ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: has the output: bar time: 1'),
             ('dynamake', 'TRACE', '[.1] copy_foo_to_bar: done'),
             ('dynamake', 'DEBUG', '[.] make: synced'),
             ('dynamake', 'DEBUG', '[.] make: has the required: bar'),
@@ -310,7 +494,7 @@ class TestMain(TestWithFiles):
         # Skip existing up-to-date output.
 
         self.check(_register, log=[
-            ('dynamake', 'TRACE', '[.] make: call with: bar'),
+            ('dynamake', 'TRACE', '[.] make: bar'),
             ('dynamake', 'DEBUG', '[.] make: build the required: bar'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: bar will be produced by the spawned: [.1] copy_foo_to_bar'),
@@ -324,13 +508,13 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: has the required: foo'),
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: newest input: foo time: 0'),
             ('dynamake', 'DEBUG',
-             '[.1] copy_foo_to_bar: skip processes '
-             'because all outputs exist and are newer than all inputs'),
+             '[.1] copy_foo_to_bar: can skip actions '
+             'because all the outputs exist and are newer than all the inputs'),
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: skip: cp foo bar'),
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: synced'),
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: has the required: foo'),
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: newest input: foo time: 0'),
-            ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: has output: bar time: 1'),
+            ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: has the output: bar time: 1'),
             ('dynamake', 'TRACE', '[.1] copy_foo_to_bar: done'),
             ('dynamake', 'DEBUG', '[.] make: synced'),
             ('dynamake', 'DEBUG', '[.] make: has the required: bar'),
@@ -341,13 +525,14 @@ class TestMain(TestWithFiles):
 
         write_file('foo', '?\n')
 
-        # Build out-of-date output.
+        # Rebuild out-of-date output.
 
         self.check(_register, log=[
-            ('dynamake', 'TRACE', '[.] make: call with: bar'),
+            ('dynamake', 'TRACE', '[.] make: bar'),
             ('dynamake', 'DEBUG', '[.] make: build the required: bar'),
             ('dynamake', 'DEBUG',
-             '[.] make: the required: bar will be produced by the spawned: [.1] copy_foo_to_bar'),
+             '[.] make: the required: bar will be produced by '
+             'the spawned: [.1] copy_foo_to_bar'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] copy_foo_to_bar: call'),
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: exists output: bar'),
@@ -359,15 +544,14 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: has the required: foo'),
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: newest input: foo time: 2'),
             ('dynamake', 'WHY',
-             '[.1] copy_foo_to_bar: must run processes '
+             '[.1] copy_foo_to_bar: must run actions '
              'because the output: bar is not newer than the input: foo'),
-            ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: remove stale output: bar'),
+            ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: remove the stale output: bar'),
             ('dynamake', 'INFO', '[.1] copy_foo_to_bar: run: cp foo bar'),
             ('dynamake', 'TRACE', '[.1] copy_foo_to_bar: success: cp foo bar'),
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: synced'),
             ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: has the required: foo'),
-            ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: newest input: foo time: 2'),
-            ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: has output: bar time: 3'),
+            ('dynamake', 'DEBUG', '[.1] copy_foo_to_bar: has the output: bar time: 3'),
             ('dynamake', 'TRACE', '[.1] copy_foo_to_bar: done'),
             ('dynamake', 'DEBUG', '[.] make: synced'),
             ('dynamake', 'DEBUG', '[.] make: has the required: bar'),
@@ -415,21 +599,23 @@ class TestMain(TestWithFiles):
             async def no_op() -> None:  # pylint: disable=unused-variable
                 pass
 
-        self.check(_register, error='no_op: missing output.s.', log=[
-            ('dynamake', 'TRACE', '[.] make: call with: all'),
+        sys.argv += ['--rebuild_changed_actions', 'false']
+
+        self.check(_register, error='no_op: missing some output.s.', log=[
+            ('dynamake', 'TRACE', '[.] make: all'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] no_op'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] no_op: call'),
-            ('dynamake', 'DEBUG', '[.1] no_op: missing output(s): all'),
+            ('dynamake', 'DEBUG', '[.1] no_op: missing the output(s): all'),
             ('dynamake', 'DEBUG', '[.1] no_op: synced'),
-            ('dynamake', 'ERROR', '[.1] no_op: missing output(s): all'),
+            ('dynamake', 'ERROR', '[.1] no_op: missing the output(s): all'),
             ('dynamake', 'TRACE', '[.1] no_op: fail'),
             ('dynamake', 'TRACE', '[.] make: fail'),
         ])
 
-    def test_delete_empty_directories(self) -> None:
+    def test_remove_empty_directories(self) -> None:
         def _register() -> None:
             @step(output=['foo/bar', 'foo/baz'])
             async def make_foo() -> None:  # pylint: disable=unused-variable
@@ -439,39 +625,39 @@ class TestMain(TestWithFiles):
         os.makedirs('foo')
         write_file('foo/baz', 'z')
 
-        sys.argv += ['--delete_empty_directories', 'true', 'foo/bar']
+        sys.argv += ['--rebuild_changed_actions', 'false']
+        sys.argv += ['--remove_empty_directories', 'true', 'foo/bar']
 
-        self.check(_register, error='make_foo: missing output.s.', log=[
-            ('dynamake', 'TRACE', '[.] make: call with: foo/bar'),
+        self.check(_register, error='make_foo: missing some output.s.', log=[
+            ('dynamake', 'TRACE', '[.] make: foo/bar'),
             ('dynamake', 'DEBUG', '[.] make: build the required: foo/bar'),
             ('dynamake', 'DEBUG',
-             '[.] make: the required: foo/bar will be produced by the spawned: [.1] make_foo'),
+             '[.] make: the required: foo/bar will be produced by '
+             'the spawned: [.1] make_foo'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_foo: call'),
-            ('dynamake', 'DEBUG', '[.1] make_foo: missing output(s): foo/bar'),
+            ('dynamake', 'DEBUG', '[.1] make_foo: missing the output(s): foo/bar'),
             ('dynamake', 'DEBUG', '[.1] make_foo: exists output: foo/baz'),
             ('dynamake', 'DEBUG', '[.1] make_foo: synced'),
             ('dynamake', 'WHY',
-             '[.1] make_foo: must run processes to create missing output(s): foo/bar'),
-            ('dynamake', 'DEBUG', '[.1] make_foo: remove stale output: foo/baz'),
-            ('dynamake', 'DEBUG', '[.1] make_foo: remove empty directory: foo'),
+             '[.1] make_foo: must run actions to create the missing output(s): foo/bar'),
+            ('dynamake', 'DEBUG', '[.1] make_foo: remove the stale output: foo/baz'),
+            ('dynamake', 'DEBUG', '[.1] make_foo: remove the empty directory: foo'),
             ('dynamake', 'INFO', '[.1] make_foo: run: mkdir -p foo'),
             ('dynamake', 'TRACE', '[.1] make_foo: success: mkdir -p foo'),
             ('dynamake', 'DEBUG', '[.1] make_foo: synced'),
-            ('dynamake', 'WHY',
-             '[.1] make_foo: must run processes to create missing output(s): foo/bar'),
             ('dynamake', 'INFO', '[.1] make_foo: run: touch foo/bar'),
             ('dynamake', 'TRACE', '[.1] make_foo: success: touch foo/bar'),
             ('dynamake', 'DEBUG', '[.1] make_foo: synced'),
-            ('dynamake', 'DEBUG', '[.1] make_foo: has output: foo/bar time: 1'),
-            ('dynamake', 'ERROR', '[.1] make_foo: missing output(s): foo/baz'),
-            ('dynamake', 'DEBUG', '[.1] make_foo: remove failed output: foo/bar'),
-            ('dynamake', 'DEBUG', '[.1] make_foo: remove empty directory: foo'),
+            ('dynamake', 'DEBUG', '[.1] make_foo: has the output: foo/bar time: 1'),
+            ('dynamake', 'ERROR', '[.1] make_foo: missing the output(s): foo/baz'),
+            ('dynamake', 'DEBUG', '[.1] make_foo: remove the failed output: foo/bar'),
+            ('dynamake', 'DEBUG', '[.1] make_foo: remove the empty directory: foo'),
             ('dynamake', 'TRACE', '[.1] make_foo: fail'),
             ('dynamake', 'TRACE', '[.] make: fail'),
         ])
 
-    def test_delete_stale_outputs(self) -> None:
+    def test_remove_stale_outputs(self) -> None:
         def _register() -> None:
             @step(output=['foo', phony('all')])
             async def make_foo() -> None:  # pylint: disable=unused-variable
@@ -479,8 +665,10 @@ class TestMain(TestWithFiles):
 
         write_file('foo', '!\n')
 
+        sys.argv += ['--rebuild_changed_actions', 'false']
+
         self.check(_register, log=[
-            ('dynamake', 'TRACE', '[.] make: call with: all'),
+            ('dynamake', 'TRACE', '[.] make: all'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] make_foo'),
@@ -489,42 +677,43 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '[.1] make_foo: exists output: foo'),
             ('dynamake', 'DEBUG', '[.1] make_foo: synced'),
             ('dynamake', 'WHY',
-             '[.1] make_foo: must run processes to ensure phony output: all'),
-            ('dynamake', 'DEBUG', '[.1] make_foo: remove stale output: foo'),
+             '[.1] make_foo: must run actions to satisfy the phony output: all'),
+            ('dynamake', 'DEBUG', '[.1] make_foo: remove the stale output: foo'),
             ('dynamake', 'INFO', '[.1] make_foo: run: echo @ > foo'),
             ('dynamake', 'TRACE', '[.1] make_foo: success: echo @ > foo'),
             ('dynamake', 'DEBUG', '[.1] make_foo: synced'),
-            ('dynamake', 'DEBUG', '[.1] make_foo: has output: foo time: 1'),
+            ('dynamake', 'DEBUG', '[.1] make_foo: has the output: foo time: 1'),
             ('dynamake', 'TRACE', '[.1] make_foo: done'),
             ('dynamake', 'DEBUG', '[.] make: synced'),
             ('dynamake', 'DEBUG', '[.] make: has the required: all'),
             ('dynamake', 'TRACE', '[.] make: done'),
         ])
 
-        sys.argv += ['--delete_stale_outputs', 'false']
+        sys.argv += ['--remove_stale_outputs', 'false']
 
         self.check(_register, log=[
-            ('dynamake', 'TRACE', '[.] make: call with: all'),
+            ('dynamake', 'TRACE', '[.] make: all'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
-             '[.] make: the required: all will be produced by the spawned: [.1] make_foo'),
+             '[.] make: the required: all will be produced by '
+             'the spawned: [.1] make_foo'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_foo: call'),
             ('dynamake', 'DEBUG', '[.1] make_foo: exists output: foo'),
             ('dynamake', 'DEBUG', '[.1] make_foo: synced'),
             ('dynamake', 'WHY',
-             '[.1] make_foo: must run processes to ensure phony output: all'),
+             '[.1] make_foo: must run actions to satisfy the phony output: all'),
             ('dynamake', 'INFO', '[.1] make_foo: run: echo @ > foo'),
             ('dynamake', 'TRACE', '[.1] make_foo: success: echo @ > foo'),
             ('dynamake', 'DEBUG', '[.1] make_foo: synced'),
-            ('dynamake', 'DEBUG', '[.1] make_foo: has output: foo time: 2'),
+            ('dynamake', 'DEBUG', '[.1] make_foo: has the output: foo time: 2'),
             ('dynamake', 'TRACE', '[.1] make_foo: done'),
             ('dynamake', 'DEBUG', '[.] make: synced'),
             ('dynamake', 'DEBUG', '[.] make: has the required: all'),
             ('dynamake', 'TRACE', '[.] make: done'),
         ])
 
-    def test_phony_depenencies(self) -> None:
+    def test_phony_dependencies(self) -> None:
         def _register() -> None:
             @step(output='all')
             async def make_all() -> None:  # pylint: disable=unused-variable
@@ -535,21 +724,25 @@ class TestMain(TestWithFiles):
             async def make_foo() -> None:  # pylint: disable=unused-variable
                 await shell('true')
 
+        sys.argv += ['--rebuild_changed_actions', 'false']
+
         self.check(_register, log=[
-            ('dynamake', 'TRACE', '[.] make: call with: all'),
+            ('dynamake', 'TRACE', '[.] make: all'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
-            ('dynamake', 'DEBUG', '[.1] make_all: missing output(s): all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
             ('dynamake', 'DEBUG', '[.1] make_all: build the required: foo'),
             ('dynamake', 'DEBUG',
-             '[.1] make_all: the required: foo will be produced by the spawned: [.1.1] make_foo'),
+             '[.1] make_all: the required: foo will be produced by the spawned: [.1.1] '
+             'make_foo'),
             ('dynamake', 'DEBUG', '[.1] make_all: sync'),
             ('dynamake', 'TRACE', '[.1.1] make_foo: call'),
             ('dynamake', 'DEBUG', '[.1.1] make_foo: synced'),
-            ('dynamake', 'WHY', '[.1.1] make_foo: must run processes to ensure phony output: foo'),
+            ('dynamake', 'WHY',
+             '[.1.1] make_foo: must run actions to satisfy the phony output: foo'),
             ('dynamake', 'INFO', '[.1.1] make_foo: run: true'),
             ('dynamake', 'TRACE', '[.1.1] make_foo: success: true'),
             ('dynamake', 'DEBUG', '[.1.1] make_foo: synced'),
@@ -557,12 +750,13 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
             ('dynamake', 'DEBUG', '[.1] make_all: has the required: foo'),
             ('dynamake', 'WHY',
-             '[.1] make_all: must run processes because rebuilt the required phony: foo'),
+             '[.1] make_all: must run actions '
+             'because has rebuilt the required phony: foo'),
             ('dynamake', 'INFO', '[.1] make_all: run: touch all'),
             ('dynamake', 'TRACE', '[.1] make_all: success: touch all'),
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
             ('dynamake', 'DEBUG', '[.1] make_all: has the required: foo'),
-            ('dynamake', 'DEBUG', '[.1] make_all: has output: all time: 1'),
+            ('dynamake', 'DEBUG', '[.1] make_all: has the output: all time: 1'),
             ('dynamake', 'TRACE', '[.1] make_all: done'),
             ('dynamake', 'DEBUG', '[.] make: synced'),
             ('dynamake', 'DEBUG', '[.] make: has the required: all'),
@@ -575,17 +769,19 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 await shell('false')
 
+        sys.argv += ['--rebuild_changed_actions', 'false']
+
         self.check(_register, error='make_all: failure: false', log=[
-            ('dynamake', 'TRACE', '[.] make: call with: all'),
+            ('dynamake', 'TRACE', '[.] make: all'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
-            ('dynamake', 'DEBUG', '[.1] make_all: missing output(s): all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
             ('dynamake', 'WHY',
-             '[.1] make_all: must run processes to create missing output(s): all'),
+             '[.1] make_all: must run actions to create the missing output(s): all'),
             ('dynamake', 'INFO', '[.1] make_all: run: false'),
             ('dynamake', 'ERROR', '[.1] make_all: failure: false'),
             ('dynamake', 'TRACE', '[.1] make_all: fail'),
@@ -616,10 +812,11 @@ class TestMain(TestWithFiles):
                 await shell('touch baz')
                 await shell('false')
 
+        sys.argv += ['--rebuild_changed_actions', 'false']
         sys.argv += ['--failure_aborts_build', 'false']
 
         self.check(_register, log=[
-            ('dynamake', 'TRACE', '[.] make: call with: all'),
+            ('dynamake', 'TRACE', '[.] make: all'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
@@ -630,27 +827,25 @@ class TestMain(TestWithFiles):
              '[.1] make_all: the required: foo will be produced by the spawned: [.1.1] make_foo'),
             ('dynamake', 'DEBUG', '[.1] make_all: sync'),
             ('dynamake', 'TRACE', '[.1.1] make_foo: call'),
-            ('dynamake', 'DEBUG', '[.1.1] make_foo: missing output(s): foo'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foo: missing the output(s): foo'),
             ('dynamake', 'DEBUG', '[.1.1] make_foo: build the required: baz'),
             ('dynamake', 'DEBUG',
              '[.1.1] make_foo: the required: baz will be produced '
              'by the spawned: [.1.1.1] make_baz'),
             ('dynamake', 'DEBUG', '[.1.1] make_foo: sync'),
             ('dynamake', 'TRACE', '[.1.1.1] make_baz: call'),
-            ('dynamake', 'DEBUG', '[.1.1.1] make_baz: missing output(s): baz'),
+            ('dynamake', 'DEBUG', '[.1.1.1] make_baz: missing the output(s): baz'),
             ('dynamake', 'DEBUG', '[.1.1.1] make_baz: synced'),
             ('dynamake', 'WHY',
-             '[.1.1.1] make_baz: must run processes to create missing output(s): baz'),
+             '[.1.1.1] make_baz: must run actions to create the missing output(s): baz'),
             ('dynamake', 'INFO', '[.1.1.1] make_baz: run: touch baz'),
             ('dynamake', 'TRACE', '[.1.1.1] make_baz: success: touch baz'),
             ('dynamake', 'DEBUG', '[.1.1.1] make_baz: synced'),
-            ('dynamake', 'WHY',
-             '[.1.1.1] make_baz: must run processes to create missing output(s): baz'),
             ('dynamake', 'INFO', '[.1.1.1] make_baz: run: false'),
             ('dynamake', 'ERROR', '[.1.1.1] make_baz: failure: false'),
             ('dynamake', 'DEBUG', '[.1.1.1] make_baz: synced'),
-            ('dynamake', 'DEBUG', '[.1.1.1] make_baz: has output: baz time: 1'),
-            ('dynamake', 'DEBUG', '[.1.1.1] make_baz: remove failed output: baz'),
+            ('dynamake', 'DEBUG', '[.1.1.1] make_baz: has the output: baz time: 1'),
+            ('dynamake', 'DEBUG', '[.1.1.1] make_baz: remove the failed output: baz'),
             ('dynamake', 'TRACE', '[.1.1.1] make_baz: fail'),
             ('dynamake', 'DEBUG', '[.1.1] make_foo: synced'),
             ('dynamake', 'DEBUG', '[.1.1] make_foo: the required: baz has failed to build'),
@@ -664,7 +859,7 @@ class TestMain(TestWithFiles):
              'by the spawned: [.1.2] make_bar'),
             ('dynamake', 'DEBUG', '[.1] make_all: sync'),
             ('dynamake', 'TRACE', '[.1.2] make_bar: call'),
-            ('dynamake', 'DEBUG', '[.1.2] make_bar: missing output(s): bar'),
+            ('dynamake', 'DEBUG', '[.1.2] make_bar: missing the output(s): bar'),
             ('dynamake', 'DEBUG', '[.1.2] make_bar: build the required: baz'),
             ('dynamake', 'DEBUG', '[.1.2] make_bar: synced'),
             ('dynamake', 'DEBUG', '[.1.2] make_bar: the required: baz has failed to build'),
@@ -680,7 +875,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '[.] make: done'),
         ])
 
-    def test_delete_failed_outputs(self) -> None:
+    def test_remove_failed_outputs(self) -> None:
         def _register() -> None:
             @step(output='all')
             async def make_all() -> None:  # pylint: disable=unused-variable
@@ -689,35 +884,37 @@ class TestMain(TestWithFiles):
 
         write_file('foo', '!\n')
 
+        sys.argv += ['--rebuild_changed_actions', 'false']
+
         self.check(_register, error='make_all: failure: echo @ > all ; false', log=[
-            ('dynamake', 'TRACE', '[.] make: call with: all'),
+            ('dynamake', 'TRACE', '[.] make: all'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
-            ('dynamake', 'DEBUG', '[.1] make_all: missing output(s): all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
             ('dynamake', 'DEBUG', '[.1] make_all: build the required: foo'),
             ('dynamake', 'DEBUG', '[.1] make_all: the required: foo is a source file'),
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
             ('dynamake', 'DEBUG', '[.1] make_all: has the required: foo'),
             ('dynamake', 'WHY',
-             '[.1] make_all: must run processes to create missing output(s): all'),
+             '[.1] make_all: must run actions to create the missing output(s): all'),
             ('dynamake', 'INFO', '[.1] make_all: run: echo @ > all ; false'),
             ('dynamake', 'ERROR', '[.1] make_all: failure: echo @ > all ; false'),
-            ('dynamake', 'DEBUG', '[.1] make_all: remove failed output: all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: remove the failed output: all'),
             ('dynamake', 'TRACE', '[.1] make_all: fail'),
             ('dynamake', 'TRACE', '[.] make: fail'),
         ])
 
-        sys.argv += ['--delete_failed_outputs', 'false']
+        sys.argv += ['--remove_failed_outputs', 'false']
 
         write_file('all', '?\n')
         sleep(0.1)
         write_file('foo', '!\n')
 
         self.check(_register, error='make_all: failure: echo @ > all ; false', log=[
-            ('dynamake', 'TRACE', '[.] make: call with: all'),
+            ('dynamake', 'TRACE', '[.] make: all'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
@@ -731,9 +928,9 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '[.1] make_all: has the required: foo'),
             ('dynamake', 'DEBUG', '[.1] make_all: newest input: foo time: 2'),
             ('dynamake', 'WHY',
-             '[.1] make_all: must run processes '
+             '[.1] make_all: must run actions '
              'because the output: all is not newer than the input: foo'),
-            ('dynamake', 'DEBUG', '[.1] make_all: remove stale output: all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: remove the stale output: all'),
             ('dynamake', 'INFO', '[.1] make_all: run: echo @ > all ; false'),
             ('dynamake', 'ERROR', '[.1] make_all: failure: echo @ > all ; false'),
             ('dynamake', 'TRACE', '[.1] make_all: fail'),
@@ -748,24 +945,25 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 await shell('touch all')
 
+        sys.argv += ['--rebuild_changed_actions', 'false']
         sys.argv += ['--touch_success_outputs', 'true']
 
         self.check(_register, log=[
-            ('dynamake', 'TRACE', '[.] make: call with: all'),
+            ('dynamake', 'TRACE', '[.] make: all'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
-            ('dynamake', 'DEBUG', '[.1] make_all: missing output(s): all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
             ('dynamake', 'WHY',
-             '[.1] make_all: must run processes to create missing output(s): all'),
+             '[.1] make_all: must run actions to create the missing output(s): all'),
             ('dynamake', 'INFO', '[.1] make_all: run: touch all'),
             ('dynamake', 'TRACE', '[.1] make_all: success: touch all'),
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
-            ('dynamake', 'DEBUG', '[.1] make_all: touch output: all'),
-            ('dynamake', 'DEBUG', '[.1] make_all: has output: all time: 1'),
+            ('dynamake', 'DEBUG', '[.1] make_all: touch the output: all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: has the output: all time: 1'),
             ('dynamake', 'TRACE', '[.1] make_all: done'),
             ('dynamake', 'DEBUG', '[.] make: synced'),
             ('dynamake', 'DEBUG', '[.] make: has the required: all'),
@@ -789,8 +987,10 @@ class TestMain(TestWithFiles):
                 require('foo')
                 await shell('touch bar')
 
+        sys.argv += ['--rebuild_changed_actions', 'false']
+
         self.check(_register, log=[
-            ('dynamake', 'TRACE', '[.] make: call with: all'),
+            ('dynamake', 'TRACE', '[.] make: all'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
@@ -802,14 +1002,14 @@ class TestMain(TestWithFiles):
              'make_foo'),
             ('dynamake', 'DEBUG', '[.1] make_all: sync'),
             ('dynamake', 'TRACE', '[.1.1] make_foo: call'),
-            ('dynamake', 'DEBUG', '[.1.1] make_foo: missing output(s): foo'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foo: missing the output(s): foo'),
             ('dynamake', 'DEBUG', '[.1.1] make_foo: synced'),
             ('dynamake', 'WHY',
-             '[.1.1] make_foo: must run processes to create missing output(s): foo'),
+             '[.1.1] make_foo: must run actions to create the missing output(s): foo'),
             ('dynamake', 'INFO', '[.1.1] make_foo: run: touch foo'),
             ('dynamake', 'TRACE', '[.1.1] make_foo: success: touch foo'),
             ('dynamake', 'DEBUG', '[.1.1] make_foo: synced'),
-            ('dynamake', 'DEBUG', '[.1.1] make_foo: has output: foo time: 1'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foo: has the output: foo time: 1'),
             ('dynamake', 'TRACE', '[.1.1] make_foo: done'),
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
             ('dynamake', 'DEBUG', '[.1] make_all: has the required: foo'),
@@ -819,18 +1019,18 @@ class TestMain(TestWithFiles):
              'make_bar'),
             ('dynamake', 'DEBUG', '[.1] make_all: sync'),
             ('dynamake', 'TRACE', '[.1.2] make_bar: call'),
-            ('dynamake', 'DEBUG', '[.1.2] make_bar: missing output(s): bar'),
+            ('dynamake', 'DEBUG', '[.1.2] make_bar: missing the output(s): bar'),
             ('dynamake', 'DEBUG', '[.1.2] make_bar: build the required: foo'),
             ('dynamake', 'DEBUG', '[.1.2] make_bar: the required: foo was built'),
             ('dynamake', 'DEBUG', '[.1.2] make_bar: synced'),
             ('dynamake', 'DEBUG', '[.1.2] make_bar: has the required: foo'),
             ('dynamake', 'WHY',
-             '[.1.2] make_bar: must run processes to create missing output(s): bar'),
+             '[.1.2] make_bar: must run actions to create the missing output(s): bar'),
             ('dynamake', 'INFO', '[.1.2] make_bar: run: touch bar'),
             ('dynamake', 'TRACE', '[.1.2] make_bar: success: touch bar'),
             ('dynamake', 'DEBUG', '[.1.2] make_bar: synced'),
             ('dynamake', 'DEBUG', '[.1.2] make_bar: has the required: foo'),
-            ('dynamake', 'DEBUG', '[.1.2] make_bar: has output: bar time: 2'),
+            ('dynamake', 'DEBUG', '[.1.2] make_bar: has the output: bar time: 2'),
             ('dynamake', 'TRACE', '[.1.2] make_bar: done'),
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
             ('dynamake', 'DEBUG', '[.1] make_all: has the required: bar'),
@@ -847,16 +1047,19 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
 
+        sys.argv += ['--rebuild_changed_actions', 'false']
+
         self.check(_register, error="don't know how to make the required: foo", log=[
-            ('dynamake', 'TRACE', '[.] make: call with: all'),
+            ('dynamake', 'TRACE', '[.] make: all'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
-            ('dynamake', 'DEBUG', '[.1] make_all: missing output(s): all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
             ('dynamake', 'DEBUG', '[.1] make_all: build the required: foo'),
-            ('dynamake', 'ERROR', "[.1] make_all: don't know how to make the required: foo"),
+            ('dynamake', 'ERROR',
+             "[.1] make_all: don't know how to make the required: foo"),
             ('dynamake', 'TRACE', '[.1] make_all: fail'),
             ('dynamake', 'TRACE', '[.] make: fail'),
         ])
@@ -864,7 +1067,7 @@ class TestMain(TestWithFiles):
         sys.argv += ['foo']
 
         self.check(_register, error="don't know how to make the required: foo", log=[
-            ('dynamake', 'TRACE', '[.] make: call with: foo'),
+            ('dynamake', 'TRACE', '[.] make: foo'),
             ('dynamake', 'DEBUG', '[.] make: build the required: foo'),
             ('dynamake', 'ERROR', "[.] make: don't know how to make the required: foo"),
         ])
@@ -875,24 +1078,26 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 await shell('(sleep 1 ; touch all) &')
 
+        sys.argv += ['--rebuild_changed_actions', 'false']
         sys.argv += ['--wait_nfs_outputs', 'true']
 
         self.check(_register, log=[
-            ('dynamake', 'TRACE', '[.] make: call with: all'),
+            ('dynamake', 'TRACE', '[.] make: all'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
-            ('dynamake', 'DEBUG', '[.1] make_all: missing output(s): all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
             ('dynamake', 'WHY',
-             '[.1] make_all: must run processes to create missing output(s): all'),
+             '[.1] make_all: must run actions to create the missing output(s): all'),
             ('dynamake', 'INFO', '[.1] make_all: run: (sleep 1 ; touch all) &'),
             ('dynamake', 'TRACE', '[.1] make_all: success: (sleep 1 ; touch all) &'),
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
-            ('dynamake', 'WARNING', '[.1] make_all: waited: 1.5 seconds for the output: all'),
-            ('dynamake', 'DEBUG', '[.1] make_all: has output: all time: 1'),
+            ('dynamake', 'WARNING',
+             '[.1] make_all: waited: 1.5 seconds for the output: all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: has the output: all time: 1'),
             ('dynamake', 'TRACE', '[.1] make_all: done'),
             ('dynamake', 'DEBUG', '[.] make: synced'),
             ('dynamake', 'DEBUG', '[.] make: has the required: all'),

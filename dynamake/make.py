@@ -24,7 +24,6 @@ from .stat import Stat
 from argparse import ArgumentParser
 from argparse import Namespace
 from datetime import datetime
-from hashlib import md5
 from inspect import iscoroutinefunction
 from typing import Any
 from typing import Awaitable
@@ -37,7 +36,6 @@ from typing import Set
 from typing import Tuple
 from typing.re import Pattern  # type: ignore # pylint: disable=import-error
 from urllib.parse import quote_plus
-from uuid import UUID
 
 import asyncio
 import dynamake.patterns as dp
@@ -58,11 +56,14 @@ class Make:
     """
     Global build configuration and state.
     """
-    #: The default configuration file path.
-    FILE: str
+    #: The directory to keep persistent state in.
+    PERSISTENT_DIRECTORY: str
 
     #: The log level for logging the reasons for sub-process invocations.
     WHY = (Prog.TRACE + logging.INFO) // 2
+
+    #: Whether to rebuild outputs if the actions have changed (by default, ``True``).
+    rebuild_changed_actions: bool
 
     #: Whether to stop the script if any action fails (by default, ``True``).
     #:
@@ -70,10 +71,10 @@ class Make:
     #: In all cases, actions that have already been submitted will be allowed to end normally.
     failure_aborts_build: bool
 
-    #: Whether to delete old output files before executing an action (by default, ``True``).
+    #: Whether to remove old output files before executing an action (by default, ``True``).
     #:
     #: It is possible to override this on a per-action basis.
-    delete_stale_outputs: bool
+    remove_stale_outputs: bool
 
     #: Whether to wait before assuming an output file does not exist (by default, ``False``).
     #:
@@ -98,25 +99,26 @@ class Make:
     #: Whether to touch output files on a successful action to ensure they are newer than
     #: the input file(s) (by default, ``False``).
     #:
-    #: In these modern times, this is mostly unneeded as aw use the nano-second modification time,
+    #: In these modern times, this is mostly unneeded as we use the nanosecond modification time,
     #: which pretty much guarantees that output files will be newer than input files. In the "bad
     #: old days", files created within a second of each other had the same modification time.
     #:
-    #: This might still be needed if an output is a directory and
-    #: :py:attr:`dynamake.make.Make.delete_stale_outputs` is ``False``, since otherwise the
-    #: ``mtime`` of the directory will not necessarily be updated to reflect the fact the action was
-    #: executed. In general it is ill advised to depend on the ``mtime`` of directories; it is
-    #: better to specify a glob matching the expected files inside them.
+    #: This might still be needed if an output is a directory (not a file) and
+    #: :py:attr:`dynamake.make.Make.remove_stale_outputs` is ``False``, since otherwise the
+    #: ``mtime`` of an existing directory will not necessarily be updated to reflect the fact the
+    #: action was executed. In general it is not advised to depend on the ``mtime`` of
+    #: directories; it is better to specify a glob matching the expected files inside them, or use
+    #: an explicit timestamp file.
     touch_success_outputs: bool
 
-    #: Whether to delete output files on a failing action (by default, ``True``).
+    #: Whether to remove output files on a failing action (by default, ``True``).
     #:
     #: It is possible to override this on a per-action basis.
-    delete_failed_outputs: bool
+    remove_failed_outputs: bool
 
-    #: Whether to (try to) delete empty directories when deleting the last file in them (by default,
+    #: Whether to (try to) remove empty directories when deleting the last file in them (by default,
     #: ``False``).
-    delete_empty_directories: bool
+    remove_empty_directories: bool
 
     #: Whether to log (level INFO) skipped actions (by default, ``False``).
     log_skipped_actions: bool
@@ -126,15 +128,16 @@ class Make:
         """
         Reset all the current state, for tests.
         """
-        Make.FILE = os.getenv('DYNAMAKE_CONFIG_FILE', 'Config.yaml')
+        Make.PERSISTENT_DIRECTORY = '.dynamake'
         Make.failure_aborts_build = True
-        Make.delete_stale_outputs = True
+        Make.remove_stale_outputs = True
         Make.wait_nfs_outputs = False
         Make.nfs_outputs_timeout = 60
         Make.touch_success_outputs = True
-        Make.delete_failed_outputs = True
-        Make.delete_empty_directories = False
+        Make.remove_failed_outputs = True
+        Make.remove_empty_directories = False
         Make.log_skipped_actions = False
+        Make.rebuild_changed_actions = True
 
 
 class Step:
@@ -170,6 +173,10 @@ class Step:
             self.output.append(capture)
             Step.by_regexp.append((capture2re(capture), self))
 
+        if not self.output:
+            raise RuntimeError('The step function: %s.%s specifies no output'
+                               % (func.wrapped.__module__, func.wrapped.__qualname__))
+
         Step.by_name[self.name()] = self
 
     @staticmethod
@@ -179,7 +186,7 @@ class Step:
         """
         func = Func.collect(wrapped, is_top=False)
         if not iscoroutinefunction(func.wrapped):
-            raise RuntimeError('Step function: %s.%s is not a coroutine'
+            raise RuntimeError('The step function: %s.%s is not a coroutine'
                                % (func.wrapped.__module__, func.wrapped.__qualname__))
         return Step(func, output)
 
@@ -190,13 +197,120 @@ class Step:
         return self.func.name
 
 
+class PersistentAction:
+    """
+    An action taken during step execution.
+
+    We can persist this to ensure the actions taken in a future invocation is identical,
+    to trigger rebuild if the list of actions changes.
+    """
+
+    def __init__(self, previous: Optional['PersistentAction'] = None) -> None:
+        #: The kind of command ('phony', 'shell' or 'spawn').
+        self.kind: str = 'phony'
+
+        #: The executed command.
+        self.command: Optional[List[str]] = None
+
+        #: The time the command started execution.
+        self.start: Optional[datetime] = None
+
+        #: The time the command ended execution.
+        self.end: Optional[datetime] = None
+
+        #: The called step (with parameters) for each required input of the command.
+        self.required: Dict[str, str] = {}
+
+        #: The previous action of the step, if any.
+        self.previous = previous
+
+    def require(self, path: str, origin: str) -> None:
+        """
+        Add a required input to the action.
+
+        The origin is empty for source files. Otherwise, it is the name of the step, with any
+        parameters.
+        """
+        self.required[path] = origin
+
+    def run_sub_process(self, kind: str, command: List[str]) -> None:
+        """
+        Set the executed command of the action.
+        """
+        self.command = command
+        self.kind = kind
+        self.start = datetime.now()
+
+    def done_sub_process(self) -> None:
+        """
+        Record the end time of the command.
+        """
+        self.end = datetime.now()
+
+    def is_empty(self) -> bool:
+        """
+        Whether this action has any additional information over its predecessor.
+        """
+        return self.kind == 'phony' and not self.required
+
+    def into_data(self) -> List[Dict[str, Any]]:
+        """
+        Serialize for dumping to YAML.
+        """
+        if self.previous:
+            data = self.previous.into_data()
+        else:
+            data = []
+
+        datum: Dict[str, Any] = dict(required=self.required)
+        if self.kind != 'phony':
+            datum[self.kind] = self.command
+            datum['start'] = str(self.start)
+            datum['end'] = str(self.end)
+
+        data.append(datum)
+        return data
+
+    @staticmethod
+    def from_data(data: List[Dict[str, Any]]) -> List['PersistentAction']:
+        """
+        Construct the data from loaded YAML.
+        """
+        if not data:
+            return [PersistentAction()]
+
+        datum = data[-1]
+        data = data[:-1]
+
+        if data:
+            actions = PersistentAction.from_data(data)
+            action = PersistentAction(actions[-1])
+            actions.append(action)
+        else:
+            action = PersistentAction()
+            actions = [action]
+
+        action.required = datum['required']
+
+        for kind in ['shell', 'spawn']:
+            if kind in datum:
+                action.kind = kind
+
+        if action.kind != 'phony':
+            action.command = datum[action.kind]
+            action.start = datetime.strptime(datum['start'], '%Y-%m-%d %H:%M:%S.%f')
+            action.end = datetime.strptime(datum['end'], '%Y-%m-%d %H:%M:%S.%f')
+
+        return actions
+
+
 class Invocation:  # pylint: disable=too-many-instance-attributes
     """
     An active invocation of a build step.
     """
 
     #: The active invocations.
-    active: Dict[UUID, 'Invocation']
+    active: Dict[str, 'Invocation']
 
     #: The current invocation.
     current: 'Invocation'
@@ -204,8 +318,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
     #: The paths for phony targets.
     phony: Set[str]
 
-    #: The targets that were built or otherwise proved to be up-to-date so far.
-    up_to_date: Set[str]
+    #: The origin of targets that were built or otherwise proved to be up-to-date so far.
+    up_to_date: Dict[str, str]
 
     #: The files that failed to build and must not be used by other steps.
     poisoned: Set[str]
@@ -218,7 +332,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         Invocation.active = {}
         Invocation.current = None  # type: ignore
         Invocation.current = Invocation(None)
-        Invocation.up_to_date = set()
+        Invocation.up_to_date = {}
         Invocation.phony = set()
         Invocation.poisoned = set()
 
@@ -231,6 +345,21 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
 
         #: The step being invoked.
         self.step = step
+
+        #: The arguments to the invocation.
+        self.kwargs = kwargs
+        if step is not None:
+            self.kwargs = step.func.invocation_kwargs(**kwargs)
+
+        #: The full name (including parameters) of the invocation.
+        self.name = 'make'
+        if self.step is not None:
+            self.name = self.step.name()
+        args_string = ','.join(['%s=%s' % (quote_plus(name), quote_plus(str(value)))
+                                for name, value in sorted(kwargs.items())])
+        if args_string:
+            self.name += '/'
+            self.name += args_string
 
         assert (self.parent is None) == (step is None)
 
@@ -247,19 +376,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
             else:
                 self.stack = '%s.%s' % (self.parent.stack, self.parent.sub_count)
 
-        #: The arguments to the invocation.
-        self.kwargs = kwargs
-        if step is not None:
-            self.kwargs = step.func.invocation_kwargs(**kwargs)
-
-        #: The arguments in HTTP query format (for logging, file names, etc.).
-        self.args_string = _args_string(kwargs)
-
-        digester = md5()
-        digester.update(yaml.dump(dict(step=self.name(), kwargs=kwargs)).encode('utf-8'))
-
-        #: A stable (across program executions) unique identifier of the invocation.
-        self.uuid = UUID(bytes=digester.digest())
+        #: The prefix for log messages.
+        self.log_prefix = '[%s] %s:' % (self.stack, self.name)
 
         #: A condition variable to wait on for this invocation.
         self.condition: Optional[asyncio.Condition] = None
@@ -277,7 +395,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         self.newest_input_mtime_ns = 0
 
         #: The queued async actions for creating the input files.
-        self.actions: List[Coroutine] = []
+        self.async_actions: List[Coroutine] = []
 
         #: The output files that existed prior to the invocation.
         self.initial_outputs: List[str] = []
@@ -285,8 +403,14 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         #: The phony outputs, if any.
         self.phony_outputs: List[str] = []
 
+        #: The (non-phony) built outputs, if any.
+        self.built_outputs: List[str] = []
+
         #: A pattern for some missing output file(s), if any.
         self.missing_output: Optional[str] = None
+
+        #: A path for some missing old built output file, if any.
+        self.abandoned_output: Optional[str] = None
 
         #: The oldest existing output file path, or None if some output files are missing.
         self.oldest_output_path: Optional[str] = None
@@ -294,11 +418,80 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         #: The modification time of the oldest existing output path.
         self.oldest_output_mtime_ns = 0
 
-        #: Whether to delete all existing output files before executing the next sub-process.
-        self.should_delete_stale_outputs = Make.delete_stale_outputs
-
         #: The reason to abort this invocation, if any.
         self.exception: Optional[StepException] = None
+
+        #: The old persistent actions (from the disk) for ensuring rebuild when actions change.
+        self.old_persistent_actions: List[PersistentAction] = []
+
+        #: The old list of outputs (from the disk) for ensuring complete dynamic outputs.
+        self.old_persistent_outputs: List[str] = []
+
+        #: The new persistent actions (from the code) for ensuring rebuild when actions change.
+        self.new_persistent_actions: List[PersistentAction] = []
+
+        #: Whether we already decided to run sub-processes.
+        self.must_run_sub_process = False
+
+        #: Whether we run all sub-processes.
+        self.did_run_all_sub_processes = True
+
+        #: Whether we should remove stale outputs before running the next sub-process.
+        self.should_remove_stale_outputs = Make.remove_stale_outputs
+
+    def read_old_persistent_data(self) -> None:
+        """
+        Read the old persistent data from the disk file.
+
+        These describe the last successful build of the outputs.
+        """
+        path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.actions.yaml')
+        if not os.path.exists(path):
+            Prog.logger.debug('%s must run actions because missing the persistent actions: %s',
+                              self.log_prefix, path)
+            self.must_run_sub_process = True
+            return
+
+        try:
+            with open(path, 'r') as file:
+                data = yaml.full_load(file.read())
+            self.old_persistent_actions = PersistentAction.from_data(data['actions'])
+            self.old_persistent_outputs = data['outputs']
+            Prog.logger.debug('%s read the persistent actions: %s', self.log_prefix, path)
+
+        except BaseException:  # pylint: disable=broad-except
+            Prog.logger.warn('%s must run actions because read invalid persistent actions: %s',
+                             self.log_prefix, path)
+            self.must_run_sub_process = True
+
+    def remove_old_persistent_data(self) -> None:
+        """
+        Remove the persistent data from the disk in case the build failed.
+        """
+        path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.actions.yaml')
+        if os.path.exists(path):
+            Prog.logger.debug('%s remove the persistent actions: %s', self.log_prefix, path)
+            os.remove(path)
+        if '/' not in self.name:
+            return
+        try:
+            os.rmdir(os.path.dirname(path))
+        except OSError:
+            pass
+
+    def write_new_persistent_data(self) -> None:
+        """
+        Write the new persistent data from the disk file.
+
+        This is only done on a successful build.
+        """
+        path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.actions.yaml')
+        Prog.logger.debug('%s write the persistent actions: %s', self.log_prefix, path)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w') as file:
+            data = dict(actions=self.new_persistent_actions[-1].into_data(),
+                        outputs=self.built_outputs)
+            file.write(yaml.dump(data))
 
     def log_and_abort(self, reason: str) -> None:
         """
@@ -315,14 +508,6 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         if Make.failure_aborts_build:
             raise self.exception
 
-    def name(self) -> str:
-        """
-        The name of the function implementing the step.
-        """
-        if self.step is None:
-            return "make"
-        return self.step.name()
-
     def require(self, path: str) -> None:
         """
         Require a file to be up-to-date before executing any sub-processes or completing the current
@@ -330,19 +515,19 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         """
         assert id(Invocation.current) == id(self)
 
-        Prog.logger.debug('[%s] %s: build the required: %s',
-                          self.stack, self.name(), path)
+        Prog.logger.debug('%s build the required: %s', self.log_prefix, path)
 
         self.all_inputs.append(path)
 
         if path in Invocation.poisoned:
-            self.abort('[%s] %s: the required: %s has failed to build'
-                       % (self.stack, self.name(), path))
+            self.abort('%s the required: %s has failed to build' % (self.log_prefix, path))
             return
 
-        if path in Invocation.up_to_date:
-            Prog.logger.debug('[%s] %s: the required: %s was built',
-                              self.stack, self.name(), path)
+        origin = Invocation.up_to_date.get(path)
+        if origin is not None:
+            Prog.logger.debug('%s the required: %s was built', self.log_prefix, path)
+            if self.new_persistent_actions:
+                self.new_persistent_actions[-1].require(path, origin)
             return
 
         step, kwargs = self.producer_of(path)  # pylint: disable=redefined-outer-name
@@ -352,19 +537,22 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         if step is None:
             stat = Stat.try_stat(path)
             if stat is None:
-                self.log_and_abort("[%s] %s: don't know how to make the required: %s"
-                                   % (self.stack, self.name(), path))
+                self.log_and_abort("%s don't know how to make the required: %s"
+                                   % (self.log_prefix, path))
                 return
-            Prog.logger.debug('[%s] %s: the required: %s is a source file',
-                              self.stack, self.name(), path)
-            Invocation.up_to_date.add(path)
+            Prog.logger.debug('%s the required: %s is a source file', self.log_prefix, path)
+            Invocation.up_to_date[path] = ''
+            if self.new_persistent_actions:
+                self.new_persistent_actions[-1].require(path, '')
             return
 
         invocation = Invocation(step, **kwargs)
-        Prog.logger.debug('[%s] %s: the required: %s '
-                          'will be produced by the spawned: [%s] %s',
-                          self.stack, self.name(), path, invocation.stack, invocation.name())
-        self.actions.append(invocation.run())
+        if self.new_persistent_actions:
+            self.new_persistent_actions[-1].require(path, invocation.name)
+        Prog.logger.debug('%s the required: %s '
+                          'will be produced by the spawned: %s',
+                          self.log_prefix, path, invocation.log_prefix[:-1])
+        self.async_actions.append(invocation.run())
         Invocation.current = self
 
     def producer_of(self, path: str) -> Tuple[Optional[Step], Optional[Dict[str, Any]]]:
@@ -400,20 +588,19 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         """
         Actually run the invocation.
         """
-        active = Invocation.active.get(self.uuid)
+        active = Invocation.active.get(self.name)
         if active is not None:
             return await self.wait_for(active)
 
         Invocation.current = self
+        Prog.logger.log(Prog.TRACE, '%s call', self.log_prefix)
 
-        if self.kwargs:
-            Prog.logger.log(Prog.TRACE, '[%s] %s: call with: %s',
-                            self.stack, self.name(), self.args_string)
-        else:
-            Prog.logger.log(Prog.TRACE, '[%s] %s: call', self.stack, self.name())
+        if Make.rebuild_changed_actions:
+            self.new_persistent_actions.append(PersistentAction())
+            self.read_old_persistent_data()
 
-        assert self.uuid not in Invocation.active
-        Invocation.active[self.uuid] = self
+        assert self.name not in Invocation.active
+        Invocation.active[self.name] = self
         self.collect_initial_outputs()
 
         try:
@@ -430,12 +617,27 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
             self.exception = exception
 
         if self.exception is None:
-            Prog.logger.log(Prog.TRACE, '[%s] %s: done', self.stack, self.name())
+            if self.new_persistent_actions:
+                if len(self.new_persistent_actions) > 1 \
+                        and self.new_persistent_actions[-1].is_empty():
+                    self.new_persistent_actions.pop()
+
+                if self.did_run_all_sub_processes:
+                    self.write_new_persistent_data()
+                elif len(self.new_persistent_actions) < len(self.old_persistent_actions):
+                    Prog.logger.warn('%s skipped some action(s) '
+                                     'even though it has changed to remove some final action(s)',
+                                     self.log_prefix)
+
+            Prog.logger.log(Prog.TRACE, '%s done', self.log_prefix)
+
         else:
             self.poison_all_outputs()
-            Prog.logger.log(Prog.TRACE, '[%s] %s: fail', self.stack, self.name())
+            if self.new_persistent_actions:
+                self.remove_old_persistent_data()
+            Prog.logger.log(Prog.TRACE, '%s fail', self.log_prefix)
 
-        del Invocation.active[self.uuid]
+        del Invocation.active[self.name]
         if self.condition is not None:
             await self.condition.acquire()
             Invocation.current = self
@@ -453,9 +655,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
 
         This is used by other invocations that use this invocation's output(s) as their input(s).
         """
-        Prog.logger.debug('[%s] %s: paused by waiting for [%s] %s',
-                          self.stack, self.name(),
-                          active.stack, active.name())
+        Prog.logger.debug('%s paused by waiting for: %s', self.log_prefix, active.log_prefix[:-1])
 
         if active.condition is None:
             active.condition = asyncio.Condition()
@@ -468,18 +668,18 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
 
         active.condition.release()
 
-        Prog.logger.debug('[%s] %s: resumed by completion of [%s] %s',
-                          self.stack, self.name(),
-                          active.stack, active.name())
+        Prog.logger.debug('%s resumed by completion of: %s',
+                          self.log_prefix, active.log_prefix[:-1])
 
         return active.exception
 
-    def collect_initial_outputs(self) -> None:
+    def collect_initial_outputs(self) -> None:  # pylint: disable=too-many-branches
         """
         Check which of the outputs already exist and what their modification times are, to be able
         to decide whether sub-processes need to be run to create or update them.
         """
         assert self.step is not None
+        missing_outputs = []
         for pattern in sorted(self.step.output):
             if dp.is_phony(pattern):
                 path = dp.capture2glob(pattern).format(**self.kwargs)
@@ -490,17 +690,42 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
                 for path in sorted(dp.glob_strings(self.kwargs, pattern)):
                     self.initial_outputs.append(path)
                     if path == pattern:
-                        Prog.logger.debug('[%s] %s: exists output: %s',
-                                          self.stack, self.name(), path)
+                        Prog.logger.debug('%s exists output: %s', self.log_prefix, path)
                     else:
-                        Prog.logger.debug('[%s] %s: exists output: %s -> %s',
-                                          self.stack, self.name(), pattern, path)
+                        Prog.logger.debug('%s exists output: %s -> %s',
+                                          self.log_prefix, pattern, path)
             except dp.NonOptionalException:
-                Prog.logger.debug('[%s] %s: missing output(s): %s',
-                                  self.stack, self.name(), pattern)
+                Prog.logger.debug('%s missing the output(s): %s', self.log_prefix, pattern)
                 self.missing_output = pattern
+                missing_outputs.append(dp.capture2re(pattern))
 
-        if self.phony_outputs or self.missing_output is not None:
+        if self.new_persistent_actions:
+            for path in self.old_persistent_outputs:
+                if path in self.initial_outputs:
+                    continue
+
+                was_reported = False
+                for regexp in missing_outputs:
+                    if re.fullmatch(regexp, path):
+                        was_reported = True
+                        break
+
+                if was_reported:
+                    continue
+
+                if Stat.exists(path):
+                    Prog.logger.debug('%s changed to abandon the output: %s', self.log_prefix, path)
+                    self.abandoned_output = path
+                else:
+                    Prog.logger.debug('%s missing the old built output: %s', self.log_prefix, path)
+                    self.missing_output = path
+
+                Stat.forget(path)
+
+        if self.must_run_sub_process \
+                or self.phony_outputs \
+                or self.missing_output is not None \
+                or self.abandoned_output is not None:
             return
 
         for output_path in sorted(self.initial_outputs):
@@ -510,8 +735,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
                 self.oldest_output_mtime_ns = output_mtime_ns
 
         if Prog.logger.isEnabledFor(logging.DEBUG) and self.oldest_output_path is not None:
-            Prog.logger.debug('[%s] %s: oldest output: %s time: %s',
-                              self.stack, self.name(), self.oldest_output_path,
+            Prog.logger.debug('%s oldest output: %s time: %s',
+                              self.log_prefix, self.oldest_output_path,
                               _datetime_from_nanoseconds(self.oldest_output_mtime_ns))
 
     async def collect_final_outputs(self) -> None:  # pylint: disable=too-many-branches
@@ -526,7 +751,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         missing_outputs = False
         assert self.step is not None
         for path in self.phony_outputs:
-            Invocation.up_to_date.add(path)
+            Invocation.up_to_date[path] = self.name
 
         did_sleep = False
         waited = 0.0
@@ -540,28 +765,33 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
             while True:
                 try:
                     for path in sorted(dp.glob_strings(self.kwargs, pattern)):
+                        self.built_outputs.append(path)
+
                         if did_wait:
-                            Prog.logger.warn('[%s] %s: waited: %s seconds for the output: %s',
-                                             self.stack, self.name(), round(waited, 2), path)
+                            Prog.logger.warn('%s waited: %s seconds for the output: %s',
+                                             self.log_prefix, round(waited, 2), path)
+
                         if Make.touch_success_outputs:
                             if not did_sleep:
                                 await asyncio.sleep(0.01)
                                 Invocation.current = self
                                 did_sleep = True
-                            Prog.logger.debug('[%s] %s: touch output: %s',
-                                              self.stack, self.name(), path)
+                            Prog.logger.debug('%s touch the output: %s', self.log_prefix, path)
                             Stat.touch(path)
-                        Invocation.up_to_date.add(path)
+
+                        Invocation.up_to_date[path] = self.name
                         mtime_ns = Stat.stat(path).st_mtime_ns
+
                         if Prog.logger.isEnabledFor(logging.DEBUG):
                             if path == pattern:
-                                Prog.logger.debug('[%s] %s: has output: %s time: %s',
-                                                  self.stack, self.name(), path,
+                                Prog.logger.debug('%s has the output: %s time: %s',
+                                                  self.log_prefix, path,
                                                   _datetime_from_nanoseconds(mtime_ns))
                             else:
-                                Prog.logger.debug('[%s] %s: has output: %s -> %s time: %s',
-                                                  self.stack, self.name(), pattern, path,
+                                Prog.logger.debug('%s has the output: %s -> %s time: %s',
+                                                  self.log_prefix, pattern, path,
                                                   _datetime_from_nanoseconds(mtime_ns))
+
                     break
 
                 except dp.NonOptionalException:
@@ -574,41 +804,37 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
                         did_wait = True
                         continue
 
-                    Prog.logger.error('[%s] %s: missing output(s): %s',
-                                      self.stack, self.name(), pattern)
+                    Prog.logger.error('%s missing the output(s): %s', self.log_prefix, pattern)
                     missing_outputs = True
                     break
 
         if missing_outputs:
-            self.abort('[%s] %s: missing output(s)' % (self.stack, self.name()))
+            self.abort('%s missing some output(s)' % self.log_prefix)
 
-    def delete_stale_outputs(self) -> None:
+    def remove_stale_outputs(self) -> None:
         """
         Delete stale outputs before running a sub-process.
 
         This is only done before running the first sub-process of a step.
         """
         for path in sorted(self.initial_outputs):
-            if self.should_delete_stale_outputs and not is_precious(path):
-                Prog.logger.debug('[%s] %s: remove stale output: %s',
-                                  self.stack, self.name(), path)
+            if self.should_remove_stale_outputs and not is_precious(path):
+                Prog.logger.debug('%s remove the stale output: %s', self.log_prefix, path)
                 self.remove_output(path)
-            else:
-                Stat.forget(path)
+            Stat.forget(path)
 
-        self.should_delete_stale_outputs = False
+        self.should_remove_stale_outputs = False
 
     def remove_output(self, path: str) -> None:
         """
         Remove an output file, and possibly the directories that became empty as a result.
         """
         Stat.remove(path)
-        while Make.delete_empty_directories:
+        while Make.remove_empty_directories:
             path = os.path.dirname(path)
             try:
                 Stat.rmdir(path)
-                Prog.logger.debug('[%s] %s: remove empty directory: %s',
-                                  self.stack, self.name(), path)
+                Prog.logger.debug('%s remove the empty directory: %s', self.log_prefix, path)
             except OSError:
                 return
 
@@ -616,7 +842,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         """
         Mark all outputs as poisoned for a failed step.
 
-        Typically also deletes them.
+        Typically also removes them.
         """
         assert self.step is not None
 
@@ -628,61 +854,133 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
                 continue
             for path in sorted(dp.glob_strings(self.kwargs, dp.optional(pattern))):
                 Invocation.poisoned.add(path)
-                if Make.delete_failed_outputs and not is_precious(path):
-                    Prog.logger.debug('[%s] %s: remove failed output: %s',
-                                      self.stack, self.name(), path)
+                if Make.remove_failed_outputs and not is_precious(path):
+                    Prog.logger.debug('%s remove the failed output: %s', self.log_prefix, path)
                     self.remove_output(path)
 
-    def should_run_sub_process(self) -> bool:
+    def should_run_sub_process(self) -> bool:  # pylint: disable=too-many-return-statements
         """
         Test whether all (required) outputs already exist, and are newer than all input files
         specified so far.
         """
-        # Either no output files (pure action) or missing output files.
+        if self.must_run_sub_process:
+            return True
+
         if self.phony_outputs:
-            Prog.logger.log(Make.WHY, '[%s] %s: must run processes to ensure phony output: %s',
-                            self.stack, self.name(), self.phony_outputs[0])
+            # Either no output files (pure action) or missing output files.
+            Prog.logger.log(Make.WHY, '%s must run actions to satisfy the phony output: %s',
+                            self.log_prefix, self.phony_outputs[0])
             return True
 
         if self.phony_inputs:
-            Prog.logger.log(Make.WHY, '[%s] %s: must run processes '
-                            'because rebuilt the required phony: %s',
-                            self.stack, self.name(), self.phony_inputs[0])
+            Prog.logger.log(Make.WHY, '%s must run actions '
+                            'because has rebuilt the required phony: %s',
+                            self.log_prefix, self.phony_inputs[0])
             return True
 
         if self.missing_output is not None:
             Prog.logger.log(Make.WHY,
-                            '[%s] %s: must run processes to create missing output(s): %s',
-                            self.stack, self.name(), self.missing_output)
+                            '%s must run actions to create the missing output(s): %s',
+                            self.log_prefix, self.missing_output)
             return True
 
-        # All output files exist.
+        if self.abandoned_output is not None:
+            Prog.logger.log(Make.WHY,
+                            '%s must run actions since it has changed to abandon the output: %s',
+                            self.log_prefix, self.abandoned_output)
+            return True
 
-        # No input files (pure computation).
+        if self.new_persistent_actions:
+            # Compare with last successful build action.
+            index = len(self.new_persistent_actions) - 1
+            if index >= len(self.old_persistent_actions):
+                Prog.logger.log(Make.WHY,
+                                '%s must run actions since it has changed to add actions',
+                                self.log_prefix)
+                return True
+            new_action = self.new_persistent_actions[index]
+            old_action = self.old_persistent_actions[index]
+            if self.different_actions(old_action, new_action):
+                return True
+
+        # All output files exist:
+
         if self.newest_input_path is None:
-            Prog.logger.debug('[%s] %s: can skip processes '
-                              'because all outputs exist and there are no inputs',
-                              self.stack, self.name())
+            # No input files (pure computation).
+            Prog.logger.debug('%s can skip actions '
+                              'because all the outputs exist and there are no inputs',
+                              self.log_prefix)
             return False
 
-        # There are input files.
+        # There are input files:
 
-        #: Some output file is not newer than some input file.
         if self.oldest_output_mtime_ns <= self.newest_input_mtime_ns:
-            Prog.logger.log(Make.WHY, '[%s] %s: must run processes '
+            # Some output file is not newer than some input file.
+            Prog.logger.log(Make.WHY,
+                            '%s must run actions '
                             'because the output: %s '
                             'is not newer than the input: %s',
-                            self.stack, self.name(), self.oldest_output_path,
+                            self.log_prefix, self.oldest_output_path,
                             self.newest_input_path)
             return True
 
-        # All output files are newer than all input files:
-        Prog.logger.debug('[%s] %s: skip processes '
-                          'because all outputs exist and are newer than all inputs',
-                          self.stack, self.name())
+        # All output files are newer than all input files.
+        Prog.logger.debug('%s can skip actions '
+                          'because all the outputs exist and are newer than all the inputs',
+                          self.log_prefix)
         return False
 
-    async def run_sub_process(self, runner: Callable, *command: Strings) -> None:
+    def different_actions(self, old_action: PersistentAction, new_action: PersistentAction) -> bool:
+        """
+        Check whether the new action is different from the last build action.
+        """
+        if self.different_required(old_action.required, new_action.required):
+            return True
+        if old_action.kind != new_action.kind \
+                or old_action.command != new_action.command:
+            Prog.logger.log(Make.WHY,
+                            '%s must run actions '
+                            'because it has changed the %s command: %s into the %s command: %s',
+                            self.log_prefix,
+                            old_action.kind, ' '.join(old_action.command or 'none'),
+                            new_action.kind, ' '.join(new_action.command or 'none'))
+            return True
+        return False
+
+    def different_required(self, old_required: Dict[str, str],
+                           new_required: Dict[str, str]) -> bool:
+        """
+        Check whether the required inputs of the new action are different from the required inputs
+        of the last build action.
+        """
+        for new_path in sorted(new_required.keys()):
+            if new_path not in old_required:
+                Prog.logger.log(Make.WHY,
+                                '%s must run actions because it has changed to require: %s',
+                                self.log_prefix, new_path)
+                return True
+
+        for old_path in sorted(old_required.keys()):
+            if old_path not in new_required:
+                Prog.logger.log(Make.WHY,
+                                '%s must run actions because it has changed to not require: %s',
+                                self.log_prefix, old_path)
+                return True
+
+        for path in sorted(new_required.keys()):
+            old_invocation = old_required[path]
+            new_invocation = new_required[path]
+            if old_invocation != new_invocation:
+                Prog.logger.log(Make.WHY,
+                                '%s must run actions '
+                                'because the producer of the required: %s '
+                                'has changed from: %s into: %s',
+                                self.log_prefix, path, old_invocation, new_invocation)
+                return True
+
+        return False
+
+    async def run_sub_process(self, kind: str, runner: Callable, *command: Strings) -> None:
         """
         Spawn a sub-process to actually create some files.
         """
@@ -699,31 +997,44 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         log_command = ' '.join(log_words)
 
         if self.exception is not None:
-            Prog.logger.debug("[%s] %s: can't run: %s", self.stack, self.name(), log_command)
+            Prog.logger.debug("%s can't run: %s", self.log_prefix, log_command)
             raise self.exception
+
+        if self.new_persistent_actions:
+            self.new_persistent_actions[-1].run_sub_process(kind, run_words)
 
         if not self.should_run_sub_process():
             if Make.log_skipped_actions:
-                Prog.logger.info('[%s] %s: skip: %s', self.stack, self.name(), log_command)
+                Prog.logger.info('%s skip: %s', self.log_prefix, log_command)
             else:
-                Prog.logger.debug('[%s] %s: skip: %s', self.stack, self.name(), log_command)
+                Prog.logger.debug('%s skip: %s', self.log_prefix, log_command)
+            self.did_run_all_sub_processes = False
+            if self.new_persistent_actions:
+                self.new_persistent_actions.append(  #
+                    PersistentAction(self.new_persistent_actions[-1]))
             return
 
-        self.delete_stale_outputs()
+        self.must_run_sub_process = True
+        self.oldest_output_path = None
+        self.remove_stale_outputs()
 
-        Prog.logger.info('[%s] %s: run: %s', self.stack, self.name(), log_command)
+        Prog.logger.info('%s run: %s', self.log_prefix, log_command)
+
         process = await runner(*run_words)
         Invocation.current = self
 
         exit_status = await process.wait()
         Invocation.current = self
 
+        if self.new_persistent_actions:
+            self.new_persistent_actions[-1].done_sub_process()
+            self.new_persistent_actions.append(PersistentAction(self.new_persistent_actions[-1]))
+
         if exit_status != 0:
-            self.log_and_abort('[%s] %s: failure: %s'
-                               % (self.stack, self.name(), ' '.join(run_words)))
+            self.log_and_abort('%s failure: %s' % (self.log_prefix, ' '.join(run_words)))
             return
 
-        Prog.logger.log(Prog.TRACE, '[%s] %s: success: %s', self.stack, self.name(), log_command)
+        Prog.logger.log(Prog.TRACE, '%s success: %s', self.log_prefix, log_command)
 
     async def sync(self) -> None:
         """
@@ -733,30 +1044,34 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         """
         assert id(Invocation.current) == id(self)
 
-        if self.actions:
-            Prog.logger.debug('[%s] %s: sync', self.stack, self.name())
-            results: List[Optional[StepException]] = await asyncio.gather(*self.actions)
+        if self.async_actions:
+            Prog.logger.debug('%s sync', self.log_prefix)
+            results: List[Optional[StepException]] = await asyncio.gather(*self.async_actions)
             Invocation.current = self
             if self.exception is None:
                 for exception in results:
                     if exception is not None:
                         self.exception = exception
                         break
-            self.actions = []
+            self.async_actions = []
 
-        Prog.logger.debug('[%s] %s: synced', self.stack, self.name())
+        Prog.logger.debug('%s synced', self.log_prefix)
 
         failed_inputs = False
         self.phony_inputs = []
         for path in sorted(self.all_inputs):
             if path in Invocation.poisoned or path not in Invocation.up_to_date:
-                Prog.logger.debug('[%s] %s: the required: %s has failed to build',
-                                  self.stack, self.name(), path)
+                if self.exception is None:
+                    level = logging.ERROR
+                else:
+                    level = logging.DEBUG
+                Prog.logger.log(level, '%s the required: %s has failed to build',
+                                self.log_prefix, path)
                 Invocation.poisoned.add(path)
                 failed_inputs = True
                 continue
 
-            Prog.logger.debug('[%s] %s: has the required: %s', self.stack, self.name(), path)
+            Prog.logger.debug('%s has the required: %s', self.log_prefix, path)
 
             if path in Invocation.phony:
                 self.phony_inputs.append(path)
@@ -768,16 +1083,14 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
                 self.newest_input_mtime_ns = result.st_mtime_ns
 
         if failed_inputs:
-            assert self.exception is not None
-            self.abort('[%s] %s: failed to build required target(s)'
-                       % (self.stack, self.name()))
+            self.abort('%s failed to build the required target(s)' % self.log_prefix)
             return
 
         if self.exception is None \
                 and Prog.logger.isEnabledFor(logging.DEBUG) \
                 and self.oldest_output_path is not None:
-            Prog.logger.debug('[%s] %s: newest input: %s time: %s',
-                              self.stack, self.name(), self.newest_input_path,
+            Prog.logger.debug('%s newest input: %s time: %s',
+                              self.log_prefix, self.newest_input_path,
                               _datetime_from_nanoseconds(self.newest_input_mtime_ns))
 
 
@@ -824,15 +1137,7 @@ def _datetime_from_nanoseconds(nanoseconds: int) -> str:
     return str(stamp)
 
 
-def _args_string(kwargs: Dict[str, Any]) -> str:
-    return ','.join(['%s=%s' % (quote_plus(name), quote_plus(str(value)))
-                     for name, value in sorted(kwargs.items())])
-
-
-def reset_test_dates() -> None:
-    """
-    Reset the cached dates used for deterministic test logs.
-    """
+def _reset_test_dates() -> None:
     global _OLD_DATES
     _OLD_DATES = {}
 
@@ -879,7 +1184,7 @@ async def shell(*command: Strings) -> None:
     This first waits until all input files requested so far are ready.
     """
     current = Invocation.current
-    await current.run_sub_process(asyncio.create_subprocess_shell, *command)
+    await current.run_sub_process('shell', asyncio.create_subprocess_shell, *command)
     Invocation.current = current
 
 
@@ -890,7 +1195,7 @@ async def spawn(*command: Strings) -> None:
     This first waits until all input files requested so far are ready.
     """
     current = Invocation.current
-    await current.run_sub_process(asyncio.create_subprocess_exec, *command)
+    await current.run_sub_process('spawn', asyncio.create_subprocess_exec, *command)
     Invocation.current = current
 
 
@@ -899,9 +1204,9 @@ def _define_parameters() -> None:
           parser=dp.str2bool, group='global options',
           description='Whether to stop the script if any action fails')
 
-    Param(name='delete_stale_outputs', short='dso', metavar='BOOL', default=True,
+    Param(name='remove_stale_outputs', short='dso', metavar='BOOL', default=True,
           parser=dp.str2bool, group='global options',
-          description='Whether to delete old output files before executing an action')
+          description='Whether to remove old output files before executing an action')
 
     Param(name='wait_nfs_outputs', short='wno', metavar='BOOL', default=False,
           parser=dp.str2bool, group='global options',
@@ -916,42 +1221,48 @@ def _define_parameters() -> None:
           description='Whether to touch output files on a successful action '
           'to ensure they are newer than the input file(s)')
 
-    Param(name='delete_failed_outputs', short='dfo', metavar='BOOL', default=True,
+    Param(name='remove_failed_outputs', short='dfo', metavar='BOOL', default=True,
           parser=dp.str2bool, group='global options',
-          description='Whether to delete output files on a failing action')
+          description='Whether to remove output files on a failing action')
 
-    Param(name='delete_empty_directories', short='ded', metavar='BOOL', default=False,
+    Param(name='remove_empty_directories', short='ded', metavar='BOOL', default=False,
           parser=dp.str2bool, group='global options',
-          description='Whether to delete empty directories when deleting the last file in them')
+          description='Whether to remove empty directories when deleting the last file in them')
 
     Param(name='log_skipped_actions', short='lsa', metavar='BOOL', default=False,
           parser=dp.str2bool, group='global options',
           description='Whether to log (level INFO) skipped actions')
 
+    Param(name='rebuild_changed_actions', short='rca', metavar='BOOL', default=True,
+          parser=dp.str2bool, group='global options',
+          description='Whether to rebuild outputs if the actions have changed')
+
     @config(top=True)
     def _use_parameters(  # pylint: disable=unused-argument
         *,
         failure_aborts_build: bool = env(),
-        delete_stale_outputs: bool = env(),
+        remove_stale_outputs: bool = env(),
         wait_nfs_outputs: bool = env(),
         nfs_outputs_timeout: int = env(),
         touch_success_outputs: bool = env(),
-        delete_failed_outputs: bool = env(),
-        delete_empty_directories: bool = env(),
+        remove_failed_outputs: bool = env(),
+        remove_empty_directories: bool = env(),
         log_skipped_actions: bool = env(),
+        rebuild_changed_actions: bool = env(),
     ) -> None:
         pass
 
 
 def _collect_parameters() -> None:
     Make.failure_aborts_build = Prog.current.get('failure_aborts_build', make)
-    Make.delete_stale_outputs = Prog.current.get('delete_stale_outputs', make)
+    Make.remove_stale_outputs = Prog.current.get('remove_stale_outputs', make)
     Make.wait_nfs_outputs = Prog.current.get('wait_nfs_outputs', make)
     Make.nfs_outputs_timeout = Prog.current.get('nfs_outputs_timeout', make)
     Make.touch_success_outputs = Prog.current.get('touch_success_outputs', make)
-    Make.delete_failed_outputs = Prog.current.get('delete_failed_outputs', make)
-    Make.delete_empty_directories = Prog.current.get('delete_empty_directories', make)
+    Make.remove_failed_outputs = Prog.current.get('remove_failed_outputs', make)
+    Make.remove_empty_directories = Prog.current.get('remove_empty_directories', make)
     Make.log_skipped_actions = Prog.current.get('log_skipped_actions', make)
+    Make.rebuild_changed_actions = Prog.current.get('rebuild_changed_actions', make)
 
 
 def make(parser: ArgumentParser, *,
@@ -979,7 +1290,7 @@ def make(parser: ArgumentParser, *,
     targets = [path for path in args.TARGET if path is not None] \
         or list(dp.each_string(default_targets))
 
-    Prog.logger.log(Prog.TRACE, '[.] make: call with: %s', ' '.join(targets))
+    Prog.logger.log(Prog.TRACE, '[.] make: %s', ' '.join(targets))
     # TODO: Switch to `asyncio.run(sync())` in Python 3.7.
     for target in targets:
         require(target)
@@ -1022,6 +1333,7 @@ def reset_make() -> None:
     Reset all the current state, for tests.
     """
     reset_application()
+    Prog.DEFAULT_MODULE = 'DynaMake'
     Make.reset()
     Config.reset()
     Invocation.reset()

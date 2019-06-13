@@ -396,7 +396,7 @@ class TestUniversalMain(TestWithFiles):
         output.compare('foo 1')
 
     def test_module(self) -> None:
-        write_file('top_module.py', """
+        write_file(Prog.DEFAULT_MODULE + '.py', """
             from dynamake.patterns import str2int
             from dynamake.application import config
             from dynamake.application import env
@@ -409,7 +409,7 @@ class TestUniversalMain(TestWithFiles):
                 print('foo', foo)
         """)
 
-        sys.argv += ['--module', 'top_module', 'top']
+        sys.argv += ['top']
         with OutputCapture() as output:
             da_main(ArgumentParser(description='Test'))
         output.compare('foo 1')

@@ -32,6 +32,7 @@ from typing import Tuple
 import ctypes
 import dynamake.patterns as dp
 import logging
+import os
 import re
 import sys
 import yaml
@@ -349,6 +350,9 @@ class Prog:
     Hold all the configurable parameters for a (hopefully small) program execution.
     """
 
+    #: The default module to load.
+    DEFAULT_MODULE: str
+
     #: The global arguments currently in effect.
     current: 'Prog'
 
@@ -366,6 +370,7 @@ class Prog:
         """
         Reset all the current state, for tests.
         """
+        Prog.DEFAULT_MODULE = 'DynaMods'
         Prog.current = Prog()
         Prog.logger = logging.getLogger('prog')
         Prog.is_test = False
@@ -431,9 +436,13 @@ class Prog:
         the options depend on the loaded modules. Catch-22. This therefore employs a
         brutish option detection which may not be 100% correct.
         """
+        did_import = False
         for option, value in zip(sys.argv, sys.argv[1:]):
             if option in ['-m', '--module']:
+                did_import = True
                 import_module(value)
+        if not did_import and os.path.exists(Prog.DEFAULT_MODULE + '.py'):
+            import_module(Prog.DEFAULT_MODULE)
 
     @staticmethod
     def add_parameters_to_parser(parser: ArgumentParser,
