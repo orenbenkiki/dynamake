@@ -420,6 +420,13 @@ option which is then handled by the provided ``make`` main function.
 * ``--remove_stale_outputs`` controls whether DynaMake removes all (non-``precious``) outputs
   before executing the first action of a step. By default this is ``True``.
 
+.. note::
+
+    If DynaMake skips running the first action, but later discovers it needs to run a following
+    action of the same step, then it will not remove the stale output file(s), as it has no way of
+    telling which of these files are created by which of the actions. In general it is recommended
+    that each step will contain exactly one action.
+
 * ``--wait_nfs_outputs`` controls whether DynaMake will wait before pronouncing that an output
   file has not been created by the step action(s). This may be needed if the action executes on a
   server in a cluster using an NFS shared file system, as NFS clients are typically caching ``stat``
