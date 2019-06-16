@@ -24,13 +24,17 @@ context of scientific computation pipelines, but should be applicable in wider p
 Dynamic Build Graphs
 ....................
 
-This is a fancy way of saying that the following is supported:
+This is a fancy way of saying that the following are supported:
 
 **Dynamic inputs**: The full set of inputs of a build step may depend on a subset of its inputs.
 
 An example of dynamic inputs is compiling a C source file, which actually depends on all the
-included header files. This is supported in various ways by most build tools - some of these ways
-being more convoluted than others.
+included header files. For a more complex example, consider data analysis where the input data is
+classified into one of several categories. The actual analysis results are obtained by a
+category-specific algorithm, which generates different input files for the final consolidation step.
+
+Dynamic inputs are supported in various ways by most build tools - some of these ways being more
+convoluted than others. DynaMake provides natural first-class support for such cases.
 
 **Dynamic outputs**: The set of outputs of a build step may depend on its inputs.
 
@@ -42,11 +46,11 @@ Dynamic outputs are sufficiently common in scientific computation pipelines that
 source of pain. There are workarounds, for sure. But almost no existing tool has direct support for
 them, and of the few tools that do, most do it as an afterthought. Since this issue has wide-ranging
 implications on the build tool, this means they typically don't do it well. A notable exception is
-`Shake <https://shakebuild.com/>`_, which DynaMake is inspired by.
+`Shake <https://shakebuild.com/>`_, which DynaMake is heavily inspired by.
 
 The problem with dynamic outputs (and, to a lesser extent, dynamic inputs) is that they make other
-build tool features really hard. Therefore, retrofitting them into an existing build tool causes
-some features to break. In the worst case this leads to silent broken builds.
+build tool features really hard to implement. Therefore, retrofitting them into an existing build
+tool causes some features to break. In the worst case this leads to silent broken builds.
 
 Some examples of features that become very difficult in the presence of a dynamic build graph are:
 
@@ -63,32 +67,53 @@ Configuration Control
 .....................
 
 This is a fancy way of saying that you can tweak the parameters of arbitrary steps of a complex
-pipeline, and only execute the affected parts of the pipeline, either all the way to the final
+pipeline, and then only execute the affected parts of the pipeline, either all the way to the final
 results or just to obtain some intermediate results to examine. This use case occurs *a lot* in
 scientific computation pipelines.
 
-Most build tools allow some form of configuration. Fewer also allow some (typically inconvenient)
-way to provide external per-step configuration. Even fewer also track the configuration so that if
-it changes, they know to re-run the affected step.
+Configuration parameters can be either specified as explicit command line options for executed
+actions, or inside configuration files(s). A few build tools will trigger a rebuild if the command
+line options have changed. All build tools will allow adding a configuration file as a dependency;
+however, this requires setting up a per-invocation configuration file which can become very unwieldy
+for a large pipeline - especially when the "same" pattern step needs to be invoked with different
+configurations depending on the exact files (e.g., different compilation flags for different source
+files).
 
-DynaMake was designed from the start to make it easy to provide such external per-step configuration
-and to ensure it is considered as part of the build dependencies.
+DynaMake automates the generation of a per-invocation configuration file, based on a single central
+configuration file, so that on modification, only the affected actions are invoked. In addition,
+DynaMake tracks the list of inputs, outputs, actions and their command line options, so that any
+change in the pipeline itself will trigger the invocation of the affected actions.
+
+This functionality requires keeping additional persistent state between invocation. This state is
+stored as human-readable (YAML) files in a special directory (by default, ``.dynamake``). The file
+names are legible (based on the step name and its parameters, if any), so it is easy to examine them
+after the fact to understand exactly which parameter values were used where.
+
+In rare cases, there are good reasons to avoid any such additional persistent state. DynaMake allows
+disabling these features, switching to relying only on the modification times of the input files.
+This of course results in less reliable rebuilds.
 
 Python
 ......
 
-As mentioned above, DynaMake is heavily inspired by `Shake <https://shakebuild.com/>`_. However,
-Shake is implemented in `Haskell <https://www.haskell.org/>`_, which isn't as popular as it should
-be.
-
-DynaMake was created to address the needs to automating scientific computation pipelines
+DynaMake was initially created to address the needs to automating scientific computation pipelines
 (specifically in bio-informatics, specifically in single-cell RNA sequencing, not that it matters).
-It is much more likely for the typical scientist (or the typical programmer for that matter) to have
-at least a passing familiarity with Python. Most haven't even heard of Haskell.
+However, it is a general-purpose build tool, which may be useful for a wide range of users.
 
-In addition, Python is much more likely to be already installed. It is trivial to just type ``pip
-install --user dynamake`` (or ``sudo pip install dynamake`` if you are lucky enough to have ``sudo``
-privileges, which most "working stiffs" don't). Installing Shake, well... "not so much".
+DynaMake is heavily inspired by `Shake <https://shakebuild.com/>`_. However, ``shake`` is
+implemented in `Haskell <https://www.haskell.org/>`_. Haskell is unlikely to be pre-installed on a
+typical machine, and installing it (and ``shake``) is far from trivial, especially when one has no
+``sudo`` privileges. Also, writing ``shake`` rules uses Haskell syntax which, while being simple and
+at times superior, is pretty different from that of most popular programming languages.
+
+In contrast, Python is much more likely to already be installed on a typical machine. It is trivial
+to just type ``pip install --user dynamake`` (or ``sudo pip install dynamake`` if you have ``sudo``
+privileges). The build rules are simple Python scripts, which means most people are already familiar
+with the language, or are in the process of becoming so for other reasons.
+
+Using a proven and familiar language is also preferable to coming up with a whole new build-oriented
+language, especially when creating a general-purpose build tool. The GNU ``make`` syntax is a
+warning for how such specialized languages inevitably evolve into a general-purpose mess.
 
 WHY NOT
 -------
@@ -96,8 +121,9 @@ WHY NOT
 DynaMake's unique blend of features comes at some costs:
 
 * It is a new, immature tool. As such, it lacks some features it could/should provide,
-  is less efficient than it could be, and you may encounter the occasional bug. Hopefully
-  this will improve with time.
+  is less efficient than it could be, and you may encounter the occasional bug. Hopefully this will
+  improve with time. If you want DynaMake-like features with a proven track record, you should
+  consider ``shake``.
 
 * The provided goals, as described above, may be a poor fit for your use case.
 
@@ -106,424 +132,469 @@ DynaMake's unique blend of features comes at some costs:
   It is almost the opposite of DynaMake in this respect.
 
   If your build graph is only "mostly static" (e.g., just needs a restricted form of dynamic inputs,
-  such as included header files), then you have (too) many other options to list here.
+  such as included header files), then you have (too) many other options to list here. Using the
+  classical ``make`` is a good default choice.
+
+* It is a low-level build tool, on par with ``make`` and ``ninja``.
+
+  If you are looking for a tool that comes with a lot of built-in rules for dealing with specific
+  computer languages (say, C/C++), and will automatically deal with cross-platform issues,
+  consider using `CMake <https://cmake.org/>`_ or `XMake <https://xmake.io/>`_ instead.
 
 WHAT
 ----
 
-DynaMake is primarily a Python library. There is a ``dynamake`` universal executable script provided
-with the package, similar to `SCons <https://scons.org/>`_, but you still need to write your build
-script in Python, using the library's utilities, and you might as well also invoke the provided main
-function. Otherwise, the user will need to explicitly specify ``-m some.build.script.module`` in the
-command line. You can even directly invoke the build functionality from your own custom main
-function.
+DynaMake is essentially a Python library. There is a ``dynamake`` universal executable script
+provided with the package, similar to `SCons <https://scons.org/>`_, but you still need to write
+your build script in Python, using the library's utilities, and you can easily also invoke the
+provided ``make`` main function from your code. You can even directly invoke the build functionality
+from your own custom main function.
 
 DynaMake build steps may invoke applications written in any language, which are configured in any
-way (command line flags, configuration files, etc.). As a convenience, DynaMake also provides
-utilities for writing Python "configurable applications" which make heavy use of DynaMake's
-automated configuration control.
+way (command line flags, configuration files, etc.).
+
+As a convenience, DynaMake also provides utilities for writing Python "configurable applications"
+which make heavy use of DynaMake's automated configuration control. A ``dynamain`` universal
+executable script removes the need to wrap each Python function in its own executable script, and
+you can easily invoke the provided ``main`` function from your code. You can even directly invoke
+the configurable application functions from your own custom main function.
 
 Build Scripts
 .............
 
-Here is a DynaMake build script which copies the file ``foo`` to the file ``bar``,
-if ``bar`` does not exist, or if ``foo`` is newer than ``bar``:
+A typical build script consists of a set of step functions, which are functions decorated with
+:py:func:`dynamake.make.step`. This requires an explicit ``output=...`` parameter listing the
+file(s) created by the step.
+
+Here is a DynaMake build script which copies the file ``foo`` to the file ``bar``, if ``bar`` does
+not exist, or if ``foo`` is newer than ``bar``:
 
 .. code-block:: python
 
     import dynamake.make as dm
 
-    @dm.action()
-    def copy_file(input_path: str, output_path: str) -> dm.Action:
-        return dm.Action(input=input_path,
-                         output=output_path,
-                         run=['cp', input_path, output_path])
+    @dm.step(output='foo')
+    async def copy_bar_to_foo() -> None:
+        dm.require('bar')
+        await dm.shell('cp foo bar')
 
-    @dm.plan()
-    def all() -> None:
-        copy_file(input_path='foo', output_path='bar')
+This is essentially equivalent to the ``make`` rule:
 
-    dm.main(argparse.ArgumentParser(description='...'), all)
+.. code-block:: make
 
-A build script consists of:
+    foo: bar
+            cp foo bar
 
-* **Actions**: One or more actions, which are Python functions decorated with
-  :py:func:`dynamake.make.action`. These must return a :py:class:`.dynamake.make.Action` which
-  requires:
+The Python version is more verbose, so if this was all there was to it, ``make`` would have been
+preferable. However, DynaMake allows one to specify scripts that are impossible in ``make``,
+justifying the additional syntax.
 
-  * ``run``: The shell command to execute. This can be a list of strings, or a list of lists of
-    strings if multiple commands are needed.
+For example, inside each step, you can do the following:
 
-  * ``input``: Either a single string, or a list of strings, detailing the files which will be
-    read by the command.
+* Invoke :py:func:`dynamake.make.require` to ensure the specified path exists and is and up-to-date.
+  Building of required input files is done asynchronously (concurrently).
 
-  * ``output``: Either a single string, or a list of strings, detailing the files which will be
-    created by the command.
+* Invoke ``await`` of :py:func:`dynamake.make.sync` to ensure all required input files specified so
+  far have completed to build.
 
-  This is almost exactly a simple ``make``, and is the "ground" level of the flow. When all is said
-  and done, the goal of the system is to run the needed actions, just the needed actions, and all
-  the needed actions, in correct order, to achieve some goal.
+* Invoke ``await`` of :py:func:`dynamake.make.shell` or :py:func:`dynamake.make.spawn` to trigger
+  the execution of a shell command or an external program. This will automatically ``sync`` first
+  to ensure all required input files have completed to build.
 
-  Similarly to ``make``, the input files already exist and are up-to-date when the function is
-  called. Unlike in simple ``make``, the function may use arbitrary code to compute the action. In
-  particular, it is allowed to:
-
-  * Query the filesystem to see which files exist.
-
-  * Examine the content of existing files.
-
-  * Contain flow control statements, though this is typically reserved for plan functions.
-
-* **Plans**: Zero or more plans, which are Python functions that invoke "steps" (either actions, or
-  sub-plans). These are decorated by :py:func:`dynamake.make.plan`. Plan steps are different from
-  action steps in that they may return an arbitrary value, but *not* an
-  :py:class:`.dynamake.make.Action`.
-
-  It is the responsibility of the plan step to ensure all the necessary sub-steps are invoked in
-  order, such that the inputs for each step exist and are up-to-date before it is called. This
-  is in contrast to tools like ``make`` where each rule lists its inputs, and the tool
-  searches for the proper rules to invoke to prepare these inputs.
-
-  For dynamic build graphs, "explicit is better than implicit":
-
-  * Explicit plans enable efficient implementation of dynamic build graphs. Locating the proper rule
-    for creating an input file is trivial when each rule just lists its inputs (e.g., in ``ninja``),
-    but becomes nightmarish if the list of rule outputs is dynamic.
-
-  * For similar reasons, explicit plans make it much easier to understand and debug complex flows.
-    Complex, dynamic(-ish) ``make`` files are notoriously difficult to debug, because one has to
-    run the rule discovery algorithm in one's head for every input of every rule. When the plans
-    are explicit, one just needs to read the list of steps.
-
-* **Main**: Some main function that invokes the build, such as :py:func:`dynamake.make.main`.
-
-An example of a slightly more dynamic build script is:
-
-.. code-block:: python
-
-    import dynamake.make as dm
-    from c_source_files import scan_included_files  # Assume this for simplicity.
-
-    @dm.action()
-    def compile_file(*, source_path: str, object_path: str) -> dm.Action:
-        return dm.Action(input=scan_included_files(source_path),
-                         output=object_path,
-                         run=['cc', '-o', object_path, source_path])
-
-    @dm.plan()
-    def compile_objects(*, source_dir: str = dm.env(), object_dir: str = dm.env()) -> dm.Strings:
-       sources = dm.capture('{source_dir}/{*name}.c')
-       return [compiled.output
-               for compiled
-               in dm.foreach(sources.wildcards,
-                             compile_file,
-                             source_path='{source_dir}/{name}.c',
-                             object_path='{object_dir}/{name}.o')]
-
-    @dm.action()
-    def link_objects(objects: dm.Strings, executable_path: str = dm.env()) -> dm.Action:
-        return dm.Action(input=objects,
-                         output=executable_path,
-                         run=['ld', objects, '-o', executable_path])
-
-    @dm.plan()
-    def build_executable(source_dir: str, object_dir: str, executable_path: str) -> None:
-        link_objects(compile_objects())
-
-    dm.main(argparse.ArgumentParser(description='...'), build_executable)
-
-This demonstrates some additional concepts:
-
-* If the default value of a step parameter is :py:func:`dynamake.make.env`, and it is not explicitly
-  specified for an invocation, then the value will be that of the nearest parent using this
-  parameter. This reduces a lot of boilerplate passing of "general" parameters (such as key
-  directory paths).
-
-* All DynaMake functions will automatically expand ``{name}`` inside strings.
-  The ``name`` can be the name of a function parameter, or the name of a wildcard.
-
-* The :py:func:`dynamake.make.capture` function acts similarly to ``glob.glob``, but will
-  return both a list of paths and also a list of dictionaries, where each one assigns a value to
-  each ``{*name}`` given in the pattern.
-
-  Wildcards lists-of-dictionaries can be used to generate file lists, and/or to invoke multiple
-  steps with different parameters.
-
-  Captures allows steps to have dynamic outputs in a controlled way. By specifying a glob pattern
-  for the outputs of an action, DynaMake can still detect when it needs to be executed, even if the
-  set of these files is dynamic: run the action if any of the input files is newer than any of the
-  existing files that match the output glob pattern. Either way, the actual list of outputs is
-  available in the returned action object, available to be used by additional steps.
-
-  DynaMake scripts make heavy use of captures, and of course the implementation needs to ``stat`` a
-  lot of files. Therefore, the results of ``stat`` calls are cached, and all captures and/or
-  ``glob`` calls (that do not actually use any wildcards) are handled by this cache. This speeds up
-  execution a lot. Of course, this isn't anywhere as fast as Ninja and similar tools, but speed
-  should be comparable to simple ``make`` and similar tools.
+* Use Python code to examine the file system (it is recommended to use
+  :py:class:`dynamake.stat.Stat` for cached ``stat`` operations), analyze the content of
+  required input files (following a ``sync``), perform control flow operations (branches, loops),
+  invoke Python functions which do any of these things, etc.
 
 .. note::
 
     The correctness of the ``stat`` cache depends on accurate listing of each action's inputs and
     outputs. In general DynaMake needs these lists to be accurate for correct operation.
 
-Universal Build Script
-.......................
+The ability to mix general Python code together with ``make`` functionality is what gives DynaMake
+its additional power over static build tools like ``make`` or ``ninja``. The following examples
+will demonstrate some common idioms using this power.
 
-Installing DynaMake provides a universal executable build script called ``dynamake`` which invokes
-the above main function. In order for this script to be aware of the build steps, it needs to
-``import`` the Python modules defining the build steps. This can be done by providing the script
-with explicit ``-m module`` command line flags, and/or by listing them in the ``modules``
-configuration parameter for the ``/`` build step in the configuration file (such as
-``Config.yaml``).
+Pattern Steps
+.............
 
-It is also possible to create your own build script which simply loads the relevant Python modules
-and then invokes the :py:func:`dynamake.make.main` function as described above. Such pre-loaded
-scripts still allow users to further extend them by loading additional modules.
+A more generic script might be:
+
+.. code-block:: python
+
+    import dynamake.make as dm
+    from c_source_files import scan_included_files  # Assume this for simplicity.
+
+    # Naive: does not handle files including each other,
+    # or allows for missing include files (e.g. in #ifdef),
+    # doesn't cache results, etc.
+    def require_included_files(paths: *Strings) -> None:
+        dm.require(*paths)
+        sync()
+        for included_path in dm.each_string(*paths):
+            require_included_files(scan_included_files(included_path))
+
+    @dm.step(output='obj/{*name}.o')
+    async def make_object(**kwargs: str) -> None:
+        source_path = 'src/{name}.c'.format(**kwargs)
+        require_included_files(source_path)
+        await spawn('cc', '-o', dm.output(), source_path)
+
+    @dm.step(output='bin/main')
+    async def make_executable() -> None:
+        object_paths = dm.glob_expand('src/{*name}.c', 'obj/{name}.o')
+        dm.require(object_paths)
+        await dm.spawn('ld', '-o', dm.output(), object_paths)
+
+This demonstrates some additional concepts:
+
+* If the ``output`` of a step contains a :py:func:`dynamake.patterns.capture` pattern, then the
+  extracted values are passed to the function as string arguments. These can be used inside the
+  function to generate file names (in the above, the source file names).
+
+  This is similar to ``make`` pattern rules, but is more powerful, as you can specify multiple parts
+  of the file name to be captured. A pattern such as ``foo/{*phase}/{*part}/bar`` is essentially
+  impossible to express in ``make``.
+
+  When a target is ``require``-d, it is matched against these patterns, and the unique step that
+  matches the target is triggered, with the appropriate (extracted) arguments. It is an error for
+  more than one step to match. If no step matches, the target is assumed to be a source file, and
+  must exist on the disk. Otherwise, DynaMake complains it doesn't know how to make this target.
+
+* DynaMake provides many functions to deal with ``glob``-ing, capturing, and formatting lists
+  of strings, listed in the :py:func:`dynamake.patterns` module. These make it convenient
+  to perform common operations (for example, using a ``glob`` to obtain a list of file names,
+  then ``capture`` to extract some part(s) of each, then ``expand`` some other pattern
+  using these parts).
+
+* Most DynaMake functions accept :py:class:`Strings`, that is, either a single string, or a list of
+  strings, or a list of list of strings, etc.; but they return either a single string or a flat list
+  of strings. This makes it easy to pass the output of one function to another. You can also use
+  this in your own functions, for example in ``require_included_files``.
+
+* The ``output`` of a step is also ``Strings``, that is, may be a list of files that are created
+  by the actions in the step. You can access the expanded list of outputs using
+  :py:func:`dynamake.make.output`. In contrast, many tools (most notably, ``make``) can't handle the
+  notion of multiple outputs from a single step.
+
+* The ``require_included_files`` is an example of how a step can examine the content of some
+  required input file(s) to determine whether it needs additional required input file(s), or, in
+  general, to make any decisions on how to proceed further. Note that it tries to ``require`` as
+  many files as possible concurrently before invoking ``sync``. Actual processing
+  (``scan_included_files``) is done serially.
+
+Dynamic Outputs
+...............
+
+When a step may produce a dynamic set of outputs, it must specify an ``output`` pattern
+which includes some non captured parts (whose name starts with ``_``). For example:
+
+.. code-block:: python
+
+    import dynamake.make as dm
+
+    @dm.step(output=['unzipped_messages/{*id}/{*_part}.txt',
+                     'unzipped_messages/{*id}/.all.done')
+    async def unzip_message(**kwargs: str) -> None:
+        dm.require('zipped_messages/{id}.zip'.format(**kwargs))
+        await dm.shell('unzip ...')
+        await dm.shell('touch unzipped_messages/{id}/.all.done'.format(**kwargs))
+
+Note that only ``id`` will be set in ``kwargs``. DynaMake assumes that the same invocation will
+generate all ``_part`` values in one call. This demonstrates another point: if a step specifies
+multiple ``output`` patterns, each must capture the same named argument(s) (in this case ``name``),
+but may include different (or no) non-captured path parts.
+
+Requiring *any* of the specific output files will cause the step to be invoked and ensure *all*
+outputs are up-to-date. A common trick, demonstrated above, it to have an additional final file
+serve as a convenient way to require all the files. This allows to query the filesystem for the full
+list of files. For example, assume each part needs to be processed:
+
+.. code-block:: python
+
+    @dm.step(output='processed_messages/{*id}/{*part}.txt')
+    async def process_part(**kwargs) -> None:
+        dm.require('unzipped_messages/{id}/{part}.txt'.format(**kwargs))
+        ...
+
+And that all parts need to be collected together:
+
+.. code-block:: python
+
+    @dm.step(output='collected_messages/{*id}.txt')
+    async def collect_parts(**kwargs) -> None:
+        dm.require('unzipped_messages/{id}/.all.done'.format(**kwargs))
+        await dm.sync()
+        all_parts = dm.Stat.glob('unzipped_messages/{id}/*.txt'.format(**kwargs))
+        await dm.shell('cat', sorted(all_parts), '>', dm.output())
+
+This sort of flow can only be (badly) approximated using static build tools.
+
+Universal Main Program
+......................
+
+Installing DynaMake provides a universal executable build script called ``dynamake``, which is a
+thin wrapper around the generic :py:func:`dynamake.make.make` main function. The easiest way to
+invoke DynaMake is to place your steps inside ``DynaMake.py`` (or modules included by
+``DynaMake.py``) and invoke this ``dynamake`` script. You can also specify explicit ``--module``
+options in the command line to directly import your step functions from other Python modules.
+
+You can write your own executable script:
+
+.. code-block:: python
+
+    import argparse
+    import dynamake.make as dm
+    import my_steps
+
+    dm.make(argparse.ArgumentParser(description='...'))
+
+Which will come pre-loaded with your own steps, and allow you to tweak the program's help message
+and other aspects, if needed. This is especially useful if you are writing a package that wants to
+provide pre-canned steps for performing some complex operation (such as a scientific computation
+pipeline).
+
+Finally, you can directly invoke the lower-level API to use build steps as part of your code.
+See the implementation of the ``make`` function and the API documentation for details.
 
 Annotations
 ...........
 
-You can annotate the input and/or outputs of an action to modify how they are processed:
+DynaMake allows attaching annotations (:py:class:`dynamake.patterns.AnnotatedStr`) to strings (and
+patterns). Multiple annotations may be applied to the same string. The provided string processing
+functions preserve these (that is, pass the annotations from the input(s) to the output(s)). These
+annotations are used by DynaMake to modify the handling of required and output files, and in some
+cases, control formatting.
 
-* :py:func:`dynamake.patterns.optional` allows the input to not exist before an action is executed,
-  or an output to not exist after the action is executed.
+* :py:func:`dynamake.patterns.optional` indicates that an output need not exist at the end of the
+  step, or a required file need not exist for the following actions to succeed. That is,
+  invoking ``require(optional('foo'))`` will invoke the step that provides ``foo``. If this step
+  does not in fact create ``foo``, but specifies ``output=optional('foo')``, then DynaMake will
+  accept this and continue. If either of the steps did not special the ``optional`` annotation, then
+  DynaMake will complain and abort the build.
 
 * :py:func:`dynamake.patterns.exists` ignores the modification time of an input or an output,
-  instead just considering whether it exists.
+  instead just considering whether it exists. That is, invoking ``require(exists('foo'))``
+  will attempt to build ``foo`` but will ignore its timestamp when deciding whether to
+  skip the execution of following actions in this step. Specifying ``output=exists('foo')``
+  will disable touching the output file to ensure it is newer than the required input file(s)
+  (regardless of the setting of ``--touch_success_outputs``).
 
-* :py:func:`dynamake.patterns.precious` ensures that the action output will not be deleted,
-  either before it is executed ("stale" outputs) or if the action has failed.
+* :py:func:`dynamake.patterns.precious` prevents output file(s) from being removed
+  (regardless of the setting of ``--remove_stale_outputs`` and ``--remove_failed_outputs``).
 
-* :py:func:`dynamake.patterns.emphasized` is used in the ``run`` parameter of
-  :py:class:`dynamake.make.Action`. Annotated string(s) are printed in **bold** in the log file.
-  This makes it easier to see the important bits of long command lines.
+* :py:func:`dynamake.patterns.phony` marks an output as a non-file target. Typically the
+  default top-level ``all`` target is ``phony``, as well as similar top-level targets such as
+  ``clean``. When a step has any ``phony`` output(s), its actions are always executed. Similarly, if
+  a step has any ``phony`` required input(s), its actions are also always executed.
 
-These functions can be imported directly from the :py:mod:`dynamake.make` module.
+* :py:func:`dynamake.patterns.emphasized` is used by ``shell`` and ``spawn``. Arguments
+  so annotated are printed in **bold** in the log file. This makes it easier to see the important
+  bits of long command lines.
 
-The :py:class:`dynamake.make.Make` class also contains some static flags that modify
-how inputs and outputs are treated:
+Control Flags
+.............
 
-* :py:attr:`dynamake.make.Make.delete_stale_outputs` controls whether (non-``precious``) action
-  outputs are deleted before the action is executed (by default, they are).
+The behavior of DynaMake can be tweaked by modifying the options specified in
+:py:func:`dynamake.make.Make`. This is typically done by specifying the appropriate command line
+option which is then handled by the provided ``make`` main function.
 
-* :py:attr:`dynamake.make.Make.delete_failed_outputs` controls whether (non-``precious``) action
-  outputs are deleted if the action failed (by default, they are).
+* ``--persistent_directory`` overrides the location of the directory where persistent state is kept.
+  By default this is ``.dynamake``.
 
-* :py:attr:`dynamake.make.Make.delete_empty_directories` controls whether to delete any directory
-  which becomes empty as a result of deleting output files in it (by default, they are not).
+* ``--rebuild_changed_actions`` controls whether DynaMake uses the persistent state to track
+  the list of outputs, inputs, invoked sub-steps, and actions with their command line options. This
+  ensures that builds are repeatable (barring changes to the environment, such as compiler versions
+  etc.). By default this is ``True``.
 
-* :py:attr:`dynamake.make.Make.touch_success_outputs` controls whether (non-``exists``) action
-  outputs are touched after the action is executed (by default, they are not).
+  Persistent state is kept in YAML files named ``.dynamake/step_name.actions.yaml`` or, for
+  parameterized steps, ``.dynamake/step_name/param=value&...&param=value.actions.yaml``. As a
+  convenience, this state also includes the start and end time of each of the invoked actions. This
+  allows post-processing tools to analyze the behavior of the build script (as an alternative to
+  analyzing the log messages).
 
-You can also override these flags on a per-:py:class:`dynamake.make.Action` basis.
+* ``--failure_aborts_build`` controls whether DynaMake stops the build process on the first
+  failure. Otherwise, it attempts to continue to build as many unaffected targets as possible.
+  By default this is ``True``.
 
-Parallel Actions
-................
+* ``--remove_stale_outputs`` controls whether DynaMake removes all (non-``precious``) outputs
+  before executing the first action of a step. By default this is ``True``.
 
-A plan may explicitly execute sub-steps in :py:func:`dynamake.make.parallel`.
+* ``--wait_nfs_outputs`` controls whether DynaMake will wait before pronouncing that an output
+  file has not been created by the step action(s). This may be needed if the action executes on a
+  server in a cluster using an NFS shared file system, as NFS clients are typically caching ``stat``
+  results (for performance).
 
-.. note::
+* ``--nfs_outputs_timeout`` controls the amount of time DynaMake will wait for output files
+  to appear after the last step action is done. By default this is 60 seconds, which is the
+  default NFS stat cache timeout. However, heavily loaded NFS servers have been known to
+  lag for longer of periods of time.
 
-    Be *very* careful not to modify shared variables in parallel step functions. This includes
-    shared parameters, class data members, and global variables. In general step functions should be
-    simple enough so this isn't an issue.
+* ``--touch_success_outputs`` controls whether DynaMake should touch (non-``exists``) output
+  file(s) to ensure their modification time is later than that of (non-``exists``) required input
+  files(s). By default this is ``False`` because DynaMake uses the nanosecond modification time,
+  which is supported on most modern file systems. The modification times on old file systems used a
+  1-second resolution, which could result in the output having the same modification time as the
+  input for a fast operation.
+
+  This option might still be needed if an output is a directory (not a file) and is ``precious`` or
+  ``--remove_stale_outputs`` is ``False``. In this case, the modification time of a pre-existing
+  directory will not necessarily be updated to reflect the fact that output file(s) in it were
+  created or modified by the action(s). In general it is not advised to depend on the modification
+  time of directories; it is better to specify a glob matching the expected files inside them, or
+  use an explicit timestamp file.
+
+* ``--remove_failed_outputs`` controls whether DynaMake should remove (non-``precious``) output
+  files when a step action has failed. This prevents corrupt output file(s) from remaining on
+  the disk and being used in later invocations or by other programs. By default this is ``True``.
+
+* ``-remove_empty_directories`` controls whether DynaMake will remove empty directories resulting
+  from removing any output file(s). By default this is ``False``.
+
+* ``--maximal_parallel_processes`` controls the maximal number of ``shell`` or ``spawn`` actions
+  that are invoked at the same time. By default this is the number of (logical) processors in the
+  system (``nproc``). A value of ``1`` will force executing one action at a time. A value of ``0``
+  will allow for unlimited number of parallel actions. This is useful if actions are to be be
+  executed on a cluster of servers instead of on the local machine, or if some other resource(s) are
+  used to restrict the number of parallel actions (see below).
+
+  Note that the DynaMake python code itself is *not* parallel. It always runs on a single process.
+  Parallelism is the result of the code executing an external action, and instead of waiting for it
+  to complete, switching over to a different step and processing it until it also executes an
+  external action, and so on. Thus actions may execute in parallel, while the Python code is still
+  doing only one thing at a time. This greatly simplifies reasoning about the code. Specifically, if
+  a piece of code contains no ``await`` calls, then it is guaranteed to execute to completion
+  "atomically", so there is no need for a lock or a mutex to synchronize between the steps, even
+  when they share some data.
+
+Build Configuration
+...................
+
+The above control flags are an example of global build configuration parameters. In general, such
+parameters have a default, can be overridden by some command line option, and may be used by any
+(possibly nested) function of the program.
+
+The use of global configuration parameters isn't unique to DynaMake scripts. Therefore, it has been
+factored out and is provided on its own via the :py:mod:`dynamake.application` module, described
+below.
+
+A quick example of how such parameters can be used is:
 
 .. code-block:: python
 
-    @dm.action()
-    def compile_two_files() -> None:
-        a_future = dm.parallel(compile_file, source_path='a.c', object_path='a.o')
-        b_future = dm.parallel(compile_file, source_path='b.c', object_path='b.o')
-        wait([a_future, b_future])
+    import dynamake.application as da
+    import dynamake.make as dm
 
-This allows executing any arbitrary combination of sub-steps in parallel. However, it requires
-manual boilerplate code to deal with the resulting future objects.
+    da.Param('mode', ...)
 
-It is possible to avoid dealing with futures when using :py:func:`dynamake.make.parcall`:
+    MODE_FLAGS = {
+        'debug': [ ... ],
+        'release': [ ... ],
+    }
 
-.. code-block:: python
+    @dm.step(output='obj/{*name}.o')
+    async def make_object(mode: str = da.env(), **kwargs: str) -> None:
+        dm.require('src/{name}.c'.format(**kwargs))
+        await spawn('cc', '-o', dm.output(), MODE_FLAGS[mode], source_path)
 
-    @dm.action()
-    def compile_two_files() -> None:
-        dm.parcall((compile_file, [], {'source_path': 'a.c', 'object_path': 'a.o'}),
-                   (compile_file, ['b.f', 'b.o']))
+That is, constructing a new :py:class:`dynamake.application.Param` specifies the default value and
+command line option(s) for the parameter, and using :py:func:`dynamake.application.env` as the
+parameter's default value will ensure the proper value is passed to the step invocation.
 
-However this forces one to use an unnatural syntax for the sub-step invocation (giving an explicit
-list of positional arguments and an explicit dictionary of named arguments).
-
-In the common use case of invoking the same function multiple times, with the same set of
-parameters, with different values in each call, the most convenient way is
-:py:func:`dynamake.make.pareach`, which is a parallel version of :py:func:`dynamake.make.foreach`:
-
-.. code-block:: python
-
-    @dm.action()
-    def compile_two_files() -> None:
-        dm.pareach([{'name': 'a'}, {'name': 'b'}],
-                    compile_file, '{name}.c', object_path='{name}.o')
-
-Using :py:func:`dynamake.make.pareach` is especially convenient in combination with
-:py:func:`dynamake.make.capture` or :py:func:`dynamake.make.extract`:
-
-.. code-block:: python
-
-    @dm.action()
-    def compile_all_files() -> None:
-        names = dm.extract('{*name}.c')
-        dm.pareach(names, compile_file, '{name}.c', object_path='{name}.o')
+The provided ``make`` main function will also load the parameter values specified in the file
+``DynaMake.yaml``, if it exists, or any files specified using the ``--config`` command line option.
 
 Parallel Resources
 ..................
 
-When executing in parallel, it is useful to be able to restrict the maximal number of simultaneous
-actions. By default, the :py:attr:`dynamake.make.Make.executor` is a `ThreadPoolExecutor` which
-allows a large number of action to be invoked at the same time. You can simply reduce the maximal
-number of workers in this pool, but that would still provide only a coarse-grained control over
-parallel actions.
+As mentioned above, DynaMake will perform all ``require`` operations concurrently, up to the next
+``sync`` call of the step (which automatically happens before any ``shell`` or ``spawn`` action). As
+a result, by default DynaMake will execute several actions in parallel, subject to the setting of
+``--maximal_parallel_processes``.
 
-the recommended way to control parallel actions is by declaring some
-:py:func:`dynamake.make.available_resources`, and then specifying the amount of resources needed by
-each :py:class:`dynamake.make.Action`. This allows for fine-grained control over the parallel
-actions. For example, it makes it easy to restrict the number of actions executed locally (using a
-``threads`` resource), while allowing a larger number of actions to be executed remotely (using
-``qsub`` and a ``jobs`` resource):
+It is possible to define some additional resources using :py:func:`dynamake.make.resources` to
+restrict parallel execution. For example, specifying ``resources('ram', 'io')`` will create
+two new resources, ``ram`` and ``io``, which must have been previously defined using
+configuration ``Param`` calls.
 
-.. code-block:: python
+Then, when invoking ``shell`` or ``spawn``, it is possible to add ``ram=...`` and/or ``io=...``
+named arguments to the call, to specify the expected resource consumption of the action. DynaMake
+will ensure that the sum of these expected consumptions will never exceed the established limit.
 
-    @dm.action()
-    def local(...) -> None:
-        ...
-        return Action(..., run=[...], resources={'threads': 1})
-
-    @dm.action()
-    def remote(...) -> None:
-        ...
-        return Action(..., run=['qsub', ...], resources={'jobs': 1})
-
-    dm.available_resources(threads=10, jobs=100)
-
-You can also specify resources for expected memory usage, I/O, network bandwidth - anything which
-may be relevant for restricting the number of actions executed at the same time.
-
-Configuration Control
-.....................
+Action Configuration
+....................
 
 A major use case of DynaMake is fine-grained control over configuration parameters
-for controlling step behavior.
+for controlling step actions.
 
-Let's allow configuring the compilation flags in the above example:
+For example, let's allow configuring the compilation flags in the above example(s):
 
 .. code-block:: python
 
-    @dm.action()
-    def compile_file(source_path: str, object_path: str) -> dm.Action
-        return dm.Action(input=scan_included_files(source_path),
-                         output: object_path,
-                         run=['cc', dm.config_param('flags', ''), '-o', object_path, source_path])
+    import dynamake.make as dm
+
+    @dm.step(output='obj/{*name}.o')
+    async def make_object(**kwargs: str) -> None:
+        dm.require('src/{name}.c'.format(**kwargs))
+        await spawn('cc', '-o', dm.output(), dm.config_param('flags', ''), source_path)
 
 And create a YAML configuration file as follows:
 
 .. code-block:: yaml
 
    - when:
-       step: compile_file
+       step: make_object
      then:
        flags: [-g, -O2]
 
    - when:
-       step: compile_file
-       source_file: src/main.c
+       step: make_object
+       name: src/main.c
      then:
        flags: [-g, -O3]
 
-This configuration file needs to be loaded using :py:func:`dynamake.make.load_config`, which
-can be done using a command-line argument if using the provided :py:func:`dynamake.make.main`
-function. If we do this, all source files will be compiled with ``-g -O2``, except for
-``src/main.c`` which will be compiled with ``-g -O3``.
+This configuration file needs to be loaded using :py:func:`dynamake.config.load_config`. The
+provided ``make`` main function will automatically load the file ``DynaConf.yaml``, if it exists,
+followed by any file specified using the ``--load_config`` command line option(s), if any.
 
-It is common to manually load a default configuration file before invoking
-:py:func:`dynamake.make.main`. By default this is ``Config.yaml``, which can be overriden
-by setting the ``DYNAMAKE_CONFIG_FILE`` environment variable, or by specifying
-an explicit ``--config`` command line flag.
+.. note::
 
-In general the last matching rule wins, so any user-specified
-configuration using command-line arguments will take precedence over this default configuration.
+    These configuration file(s) are different from ``DynaMake.yaml`` and any file(s) specified using
+    the ``--config`` command line option. The latter will control the build configuration flags and
+    not the step configuration flags!
 
-Generated Configuration Files
-.............................
-
-To ensure that changing the configuration of a action will trigger re-computation, if either
-:py:func:`dynamake.make.config_file` is invoked in the action step, then DynaMake wll generate a
-configuration file for the specific action step invocation (depending on the step name as well as
-the values of its function arguments).
-
-For action steps, this file is automatically considered as a dependency. That is, if its content
-changes, the action will re-execute. However the configuration file is not added to
-:py:attr:`dynamake.make.Action.input`, to make it easier for plan steps to use it as the "real"
-inputs file list. Plan steps are always executed so there is no question of dependencies.
-
-The step code can pass the path of the generated file as an action command line argument (e.g., if
-the action is implemented using DynaMake's utilities for writing configurable applications).
-
-The step code may also
-access the parameter values using :py:func:`dynamake.make.config_param`,
-regardless of whether a configuration file is generated. It may directly use these values or
-pass them as per-parameter command line arguments to an action command.
-
-If :py:func:`dynamake.make.config_file` was not invoked, then when the step completes, DynaMake will
-complain about unused parameters, whose name was not suffixed by a ``?``. This will detect most
-typos and "useless" parameters which have no effect on the build.
-
-If :py:func:`dynamake.make.config_file` was invoked, then DynaMake will assume the file is processed
-by (some) action, which will take responsibility over detecting unrecognized parameters. To enable
-this, the generated YAML configurable file contains a mapping using the same convention as the
-``then`` section of a configuration rule; that is, if the name of an unrecognized parameter ends
-with a ``?``, then it will be silently ignored, otherwise it will be an error.
-
-This allows specifying default parameters for a large set of steps in a generic rule without
-complaints about unrecognized configuration parameters. The generated redundant parameters are
-somewhat reduced by the fact that a ``when`` clause is automatically false if it examines an
-argument which does not exist for the step.
-
-The generated configuration file is created in a special directory. By default, this is
-``.dynamake``, but this can be overriden using :py:func:`dynamake.make.set_config_dir`, or, if using
-the provided :py:func:`dynamake.make.main` function, by setting an environment variable
-``DYNAMAKE_CONFIG_DIR`` or providing explicit command line flag.
-
-Configuration Help
-..................
-
-Since each step might have its own configuration parameters, it is difficult for the user to know
-what can be configured where. DynaMake provides a way to make these steps self-documenting:
+Explicitly using configuration parameters as shown above is needed when executing generic actions.
+If, however, the action invokes a program implemented using the :py:mod:`dynamake.application`
+functions, it is possible to do better, by using a generated per-step configuration file. For
+example:
 
 .. code-block:: python
 
-    @dm.action()
-    def run_bar(...) -> dm.Action:
-        """
-        Describe this step.
+    @dm.step(output='foo')
+    async def make_foo() -> None:
+        require('bar')
+        await spawn('dynamain', 'bar_to_foo', '--config', dm.config_file(), ...)
 
-        The first sentence will be printed in the list of steps. The rest of this documentation
-        will be printed on request for help for a specified step. This is a good place to document
-        the parameters for steps that use ``config_param``.
-        """
-        ...
+Or even shorter:
 
-    @dm.action(run_help=['foo', '--help'])
-    def run_foo(...) -> dm.Action:
-        """
-        Describe this step.
+.. code-block:: python
 
-        The first sentence will be printed in the list of steps. Since ``run_help`` was specified,
-        it will be executed on request for the help of this step, instead of printing this comment.
-        """
-        ...
-        return { ..., run: ['foo', ...] }
+    @dm.step(output='foo')
+    async def make_foo() -> None:
+        require('bar')
+        await spawn('dynamain', 'bar_to_foo', dm.with_config(), ...)
 
-The :py:func:`dynamake.make.main` function provides command-line flags for listing all steps,
-printing the documentation of a specified step, or triggering the help command of a specified step.
-This "should" list all the available parameters and act as a guide for creating a configuration
-file.
+If :py:func:`dynamake.make.config_file` (or :py:func:`dynamake.make.with_config`) are invoked, then
+DynaMake will generate a configuration file containing just the parameter values for this specific
+step invocation, and consider it to be one of the required input files. If this file already exists,
+and already contains the correct values, then it is not touched. Thus, even if the main
+``DynaConf.yaml`` file is modified, an action will only be rebuilt if its effective parameter values
+have changed.
+
+The paths: to the generated configuration files are similar to the path to the persistent state
+files: ``.dynamake/step_name.config.yaml`` or
+``.dynamake/step_name/param=value&param=value.config.yaml``. Thus, if for some reason you want to
+avoid all persistent state, you should not use this functionality.
 
 Logging
 .......
@@ -532,121 +603,49 @@ Complex build scripts are notoriously difficult to debug. To help alleviate this
 uses the standard Python logging mechanism, and supports the following logging levels:
 
 * ``INFO`` prints only the executed actions. This is similar to the default ``make`` behavior.
-  Use this if you just want to know what is being run, when all is well.
+  Use this if you just want to know what is being run, when all is well. If
+  ``--log_skipped_actions`` is set, then this will also log skipped actions.
 
 * ``WHY`` also prints the reason for executing each action (which output file does not exist and
   needs to be created, which input file is newer than which output file, etc.). This is useful
   for debugging the logic of the build script.
 
+* ``TRACE`` also prints each step invocation. This can further help in debugging the logic of the
+  build script.
+
 * ``DEBUG`` prints a lot of very detailed information about the flow. Expanded globs, the full
   list of input and output files, the configuration files used, etc. This is useful in the hopefully
-  very rare cases when the terse output from the ``WHY`` level is not sufficient for figuring out
-  what went wrong.
+  very rare cases when the terse output from the ``WHY`` and ``TRACE`` levels is not sufficient for
+  figuring out what went wrong.
 
-The ``WHY`` level is not a standard python log level; it is defined to be between ``INFO`` and
-``DEBUG``.
+The ``WHY`` and ``TRACE`` levels are not a standard python log level. They are defined to be between
+``DEBUG`` and ``INFO`` in the proper order.
 
-If using the universal build script (or your custom build script using the provided main function),
-you can set the logging level using the ``-ll`` or ``--log-level`` flag.
+If using the provided ``make`` main function, the logging level can be set using the ``--log-level``
+command line option. The default log level is ``WARN`` which means the only expected output would
+be from the actions themselves.
 
 Configurable Applications
 .........................
 
-Here is a trivial example configurable program:
+A major use case for DynaMake is automating scientific computation pipelines. Such pipelines involve
+multiple actions, which are often also implemented in Python. Each such action also has its own
+configuration parameters, which we'd like to control using per-step configuration as described
+above.
 
-.. code-block:: python
-
-    import dynamake.application as da
-
-    da.Param(name='bar', default=1, parser=int, description='The number of bars')
-
-    def main() -> int:
-        parser = argparse.ArgumentParser(description='Example')
-        da.Prog.add_parameters_to_parser(parser)
-        args = parser.parse_args()
-        da.Prog.parse_args(args)
-        print(add(1))  # Bar will be taken from the configuration.
-
-
-    @da.config
-    def add(foo: int, *, bar: int = da,env()) -> int:
-        return foo + bar
-
-A possible configuration file for this program would be:
-
-.. code-block:: python
-
-   bar: 2  # The program will print 3 instead of the default 2.
-
-This file can be passed to the program using the ``--config`` flag, or ``--bar 2`` can be directly
-specified instead for the same effect.
-
-The usage pattern of these utilities is as follows:
-
-* First, one must declare all the parameters of all the configured functions by creating
-  :py:attr:`dynamake.application.Param` objects.
-
-* Typically one then adds all the necessary command line arguments to the program by calling
-  :py:func:`dynamake.application.Prog.add_parameters_to_parser`. This registers the ``--config``
-  flag for loading a configuration file and a per-parameter (``--bar`` in the above example) flag
-  for explicit overrides.
-
-* After the command line arguments have been parsed, the configuration is finalized using
-  :py:func:`dynamake.application.Prog.parse_args`.
-
-To use the finalized :py:attr:`dynamake.application.Prog` parameters, decorate any function with
-:py:func:`dynamake.application.config`. This will use the configuration to provide default values
-for each named function argument whose default is specified to be
-:py:func:`dynamake.application.env`. Calling the functions with an explicit parameter value will
-ignore the configuration's value.
-
-One can also use the :py:attr:`dynamake.application.Prog.logger` anywhere in the code.
-
-Configurable Multi-Applications
-...............................
-
-A realistic system has multiple related functions that need to be invoked. It is a hassle to have to
+A realistic system has multiple such functions that need to be invoked. It is a hassle to have to
 name and define a separate script for invoking each one. A way around this is to create a single
-script which takes the function name as a command-line argument. The top-level functions that should
-be invokable from the command line must have no positional arguments and be annotated with
-``@config(top=True)``:
+script which takes the function name as a command-line argument.
 
-.. code-block:: python
+DynaMake therefore factors out support for configurable Python-based programs, allowing users to
+implement their own. DynaMake itself can be seen as just another such program, with some minor
+tweaks.
 
-    import argparse
-    import dynamake.application as da
+DynaMake provides installs a universal ``dynamain`` script which is a thin wrapper for a provided
+:py:func:`dynamake.application.main` function. This script automatically imports ``DynaMain.py`` if
+it exists, and any other modules specified by the ``--module`` command line option.
 
-    @da.config(top=True)
-    def foo(...): ...
-
-    @da.config(top=True)
-    def bar(...): ...
-
-    da.Param(...)  # Parameters for *all* functions.
-
-    def main() -> int:
-        parser = argparse.ArgumentParser(description='Example')
-        da.Prog.add_commands_to_parser(parser)
-        args = parser.parse_args()
-        da.Prog.parse_args(args)
-        da.Prog.call_with_args(args)
-
-This will allow the script to be invoked as ``script.py foo ...`` to invoke the ``foo`` function and
-``script.py bar ...`` to invoke the ``bar`` function. ``script.py -h`` will list all the available
-functions, and ``script.py foo -h`` will list all the parameters used by the ``foo`` function (or
-any function it indirectly invokes).
-
-.. note::
-
-    The automatic detection of invocations of one configurable function from another is simplistic.
-    Basically, if we see inside the function source the name of another function, and this isn't the
-    name of a variable being assigned to, then we assume this is a call. This isn't 100% complete;
-    for example this will not detect cases where ``foo`` calls a non-configured ``bar`` which then
-    calls a configured ``baz``. However it works "well enough" for simple code.
-
-The above still requires some boilerplate which you can avoid by using the provided
-:py:func:`dynamake.application.main` function. A typical main script invoking configurable functions
-looks like this:
+Similarly to the ``make`` main function, you can implement your own custom script:
 
 .. code-block:: python
 
@@ -654,14 +653,98 @@ looks like this:
     import dynamake.application as da
     import ...  # Modules defining configurable functions
 
-    def main():
-        da.main(argparse.ArgumentParser(description="""
-            ... Describe this program ...
-        """))
+    da.main(argparse.ArgumentParser(description='...'))
 
-    if __name__ == '__main__':
-        main()
+You can also directly invoke the lower-level API to directly invoke the functions.
+See the implementation of the ``main`` function and the API documentation for details.
 
+Here is a trivial example configurable function which can be invoked from the command line using
+this mechanisms:
+
+.. code-block:: python
+
+    import dynamake.application as da
+
+    da.Param(name='bar', default=1, parser=int, description='The number of bars')
+
+    @da.config(top=True)
+    def foo() -> None:
+        do_bar()
+
+    @da.config()
+    def do_bar(bar: int = env()) -> None:
+        print(bar)
+
+The usage pattern of the library is as follows:
+
+* First, one must declare all the parameters of all the configured functions by creating
+  :py:attr:`dynamake.application.Param` objects.
+
+* All functions that use such parameters must be decorated with
+  :py:func:`dynamake.make.config`. They must either be annotated as top level using ``top=True``, or
+  be directly invoked from another configured function (and, ultimately, from a top-level function).
+
+.. note::
+
+   The automatic detection of invocations of one configurable function from another is simplistic.
+    Basically, if we see inside the function source the name of another function, and this isn't the
+    name of a variable being assigned to, then we assume this is a call. This isn't 100% complete;
+    for example this will not detect cases where ``foo`` calls a non-configured ``bar`` which then
+    calls a configured ``baz``. However it works "well enough" for simple code.
+
+* The configured parameters must use :py:func:`dynamake.application.env` as the parameter's default
+  value. This will inject the proper value at each point.
+
+To invoke this function from the command line, run ``dynamain foo`` (or, possibly, ``dynamain
+--module my_functions foo``, or ``dynamain --config my_configuration.yaml foo``, etc.). A possible
+configuration file for this program would be:
+
+.. code-block:: python
+
+   bar: 2  # The program will print 2 instead of the default 1.
+
+The ``main`` function is self-documenting. Running it with the ``--help`` command line option will
+list all the available top-level functions. Running it with ``--help function_name`` will print the
+function's documentation, and list all the parameters used by it (or any configurable function it
+indirectly invokes).
+
+The :py:attr:`dynamain.application.Prog.logger` provides access to Python's logging facilities,
+configured by the ``--log_level`` command line option. That is, just write
+``Prog.logger.debug(...)`` etc.
+
+The :py:func:`dynamain.application.parallel` function allows execution some function in parallel.
+The number of processes used is controlled by the ``--maximal_parallel_processes``. A nested
+invocation will execute serially, to ensure this limit is respected. To make it easier to
+debug code, :py:func:`dynamain.application.serial` has exactly the same interface, but executes
+the calls serially.
+
+Finally, you can override the value of some configuration parameters for some code. For example,
+the following:
+
+.. code-block:: python
+
+    import dynamake.application as da
+
+    da.Param(name='foo', default=1, parser=int, description='The number of foos')
+
+    @config()
+    def print_foo(title: str, foo: int = env()) -> None:
+        print(title, foo)
+
+    @config
+    def override_foo() -> None:
+        print_foo('global:')
+        print_foo('explicit:', foo=2)
+        with (da.override(foo=3)):
+            print_foo('override:')
+
+Will print:
+
+.. code-block:: yaml
+
+    global: 1
+    explicit: 2
+    override: 3
 
 WHAT NOT (YET)
 --------------
@@ -672,36 +755,31 @@ worked on yet:
 * Improve the documentation. This README covers the basics but there are additional features that
   are only mentioned in the class and function documentation, and deserves a better description.
 
-* Make the build script self-documenting (similarly to the provided universal application program).
-  That is, use :py:attr:`dynamake.application.Param` objects for build steps.
-
 * Allow forcing rebuilding (some) targets.
 
 * Dry run. While it is impossible in general to print the full set of dry run actions, if should
   be easy to just print the 1st action(s) that need to be executed. This should provide most of the
   value.
 
-* Allow automated clean actions based on the collected output files of actions. If there's nothing
-  to be done when running some plan, the collected output of all actions invoked by that plan are
-  fair game to being removed as part of a clean action. However, due to the dry-run problem, we
-  can't automatically clean outputs of actions that depend on actions that need to be executed.
+* Allow automated clean actions based on the collected step outputs. If there's nothing
+  to be done when building some target(s), then all generated output files (with or without the
+  ultimate targets) should be fair game to being removed as part of a clean action. However, due to
+  the dry-run problem, we can't automatically clean outputs of actions that depend on actions that
+  still need to be executed.
 
 * Allow skipping generating intermediate files if otherwise no actions need to be done. This is very
   hard to do with a dynamic build graph - probably impossible in the general case, but common
-  cases might be possible.
+  cases might be possible(?)
 
-* Generate a tree (actually a DAG) of step invocations.
-
-* A deeper analysis of the source code could generate a DAG by detecting when sub-steps need not
-  follow each other (e.g., using :py:func:`dynamake.make.pareach` and related functions, in
-  different branches of ``if`` ... ``else`` statements, etc.).
-
-* Generate an DAG of the actions for a specific execution. This would be much simpler to generate
-  and 100% exact, by tracking the expanded action inputs and outputs. It might even be able to
-  detect missed parallelization opportunities this way.
+* Generate a tree (actually a DAG) of step invocations. This can be collected from the persistent
+  state files.
 
 * Generate a visualization of the timeline of action executions showing start and end times, and
-  resources consumption. In case of distributed actions, make a distinction between submission and
-  completion times and actual start/end times to track the cluster/grid overheads.
+  possibly also resources consumption. In case of distributed actions, make a distinction between
+  submission and completion times and actual start/end times to track the cluster/grid overheads.
 
-* Allow registering additional file formats for the generated configuration files.
+* Allow registering additional file formats for the generated configuration files, to allow using
+  them for non-DynaMake external actions.
+
+* Allow using checksums instead of timestamps to determine if actions can be skipped, either
+  by default or on a per-file basis.
