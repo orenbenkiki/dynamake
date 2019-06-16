@@ -3,7 +3,6 @@ Cache stat calls for better performance.
 """
 
 from glob import glob as glob_files
-from prwlock import RWLock  # type: ignore
 from sortedcontainers import SortedDict  # type: ignore
 from stat import S_ISDIR
 from typing import List
@@ -21,7 +20,6 @@ class Stat:
     """
     Cache stat calls for better performance.
     """
-    _lock = RWLock()
     _cache: SortedDict
 
     @staticmethod
@@ -75,8 +73,7 @@ class Stat:
     @staticmethod
     def _result(path: str, *, throw: bool) -> StatResult:
         path = os.path.abspath(path)
-        with Stat._lock.reader_lock():
-            result = Stat._cache.get(path)
+        result = Stat._cache.get(path)
 
         if result is not None and (not throw or not isinstance(result, BaseException)):
             return result
@@ -86,8 +83,7 @@ class Stat:
         except OSError as exception:
             result = exception
 
-        with Stat._lock.writer_lock():
-            Stat._cache[path] = result
+        Stat._cache[path] = result
 
         if throw and isinstance(result, BaseException):
             raise result
@@ -104,8 +100,7 @@ class Stat:
         """
 
         path = os.path.abspath(pattern)
-        with Stat._lock.reader_lock():
-            result = Stat._cache.get(path)
+        result = Stat._cache.get(path)
 
         if isinstance(result, BaseException):
             return []
