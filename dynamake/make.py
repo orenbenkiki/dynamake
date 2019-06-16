@@ -1128,7 +1128,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                               self.log_prefix, self.newest_input_path,
                               _datetime_from_nanoseconds(self.newest_input_mtime_ns))
 
-    def config_param(self, name: str, default: Any) -> Any:
+    def config_param(self, name: str, default: Any = None) -> Any:
         """
         Access the value of a parameter from the step-specific configuration.
         """
