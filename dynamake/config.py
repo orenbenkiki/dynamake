@@ -2,15 +2,12 @@
 Manage per-step configurations.
 """
 
-from hashlib import md5
 from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
 from typing.re import Pattern  # type: ignore # pylint: disable=import-error
-from uuid import UUID
 
-import os
 import yaml
 
 
@@ -43,11 +40,11 @@ class Rule:  # pylint: disable=too-few-public-methods
         """
         Whether the rule is a match for a step invocation.
         """
-        return self._match_step(context) \
+        return self._match_builtins(context) \
             and self._verify_known_parameters(context) \
             and self._match_other_conditions(context)
 
-    def _match_step(self, context: Dict[str, Any]) -> bool:
+    def _match_builtins(self, context: Dict[str, Any]) -> bool:
         for key in Rule._BUILTINS:
             if key in self.when and not self._key_is_match(key, self.when[key], context):
                 return False
@@ -194,30 +191,12 @@ class Config:
     #: All the known configuration rules (including for per-rule parameters).
     rules: List[Rule]
 
-    #: The directory where to create the per-rule configuration files.
-    DIRECTORY: str
-
     @staticmethod
     def reset() -> None:
         """
         Reset all the current state, for tests.
         """
         Config.rules = []
-        Config.DIRECTORY = os.getenv('DYNAMAKE_CONFIG_DIR', '.dynamake')
-
-    @staticmethod
-    def path_for_context(context: Dict[str, Any]) -> str:
-        """
-        Return the path name of a configuration file for a specific step invocation.
-
-        The file name is based on a digest of the full invocation context.
-        """
-        digester = md5()
-        digester.update(yaml.dump(context).encode('utf-8'))
-        uuid = str(UUID(bytes=digester.digest())).replace('-', '')
-        uuid_path = [uuid[i:i + 2] for i in range(0, len(uuid), 2)]
-        uuid_path[-1] += '.yaml'
-        return os.path.join(Config.DIRECTORY, *uuid_path)
 
     @staticmethod
     def values_for_context(context: Dict[str, Any]) -> Dict[str, Any]:
@@ -237,65 +216,65 @@ class Config:
                     values[name] = value
         return values
 
+    @staticmethod
+    def load(path: str) -> None:
+        """
+        Load a YAML configuration file into :py:attr:`dynamake.config.Config.rules`.
+
+        The rules from the loaded files will override any values specified by previously loaded
+        rules. In general, the last matching rule wins.
+
+        The configuration YAML file should be empty, or contain a top-level sequence.
+        Each entry must be a mapping with two keys: ``when`` and ``then``.
+        The ``then`` value should be a mapping from parameter names to their values.
+        The ``when`` value should be a mapping of conditions.
+
+        The condition key can be either a parameter name, or ``lambda parameter_name, ...``.
+        If the key starts with ``lambda``, the value should be a string containing a
+        python boolean expression, which will be evaluated using the specified parameters.
+
+        Otherwise, the condition value should be one of:
+
+        * The exact value of the parameter.
+
+        * A ``!r regexp-pattern`` or a ``!g glob-pattern`` to match the (string) parameter value
+          against. While general regular expressions are more powerful, glob patterns are simpler
+          and more familiar to most people, as they are used by the shell.
+
+        * A list of alternative values or patterns to match the parameter value against.
+
+        A rule is applicable to a step invocation if all the conditions in its ``when`` mapping
+        match the parameters used in the invocation.
+
+        Two additional parameters are also added for the purpose of the matching: ``step`` contains
+        the step function name, and the call ``stack`` contains the path of step names
+        ``/top/.../step``. This uses ``/`` to separate the step names to allow matching it against a
+        glob pattern, as if it was a file path. Conditions on these parameters are evaluated first,
+        and if they reject the invocation, no other condition is evaluated.
+
+        It is normally an error for the rest of the conditions to specify a parameter which is not
+        one of the arguments of the invoked step function. However, if the condition key ends with
+        ``?``, then the condition will silently reject the step instead. This allows specifying
+        rules that provide defaults without worrying about applying the rule to the exact list of
+        steps that use it.
+
+        Default rules are very useful when used responsibly. However, they have two important
+        downsides:
+
+        * Modifying the values in such default rules will trigger the re-computation of all the
+          action steps that match them, even if they do not actually depend on the provided values.
+
+        * Default rules silently ignore typos in parameter names.
+
+        It is pretty annoying to modify the configuration file, to adjust some parameter, re-execute
+        the full computation, wait a few hours, and then discover this was wasted effort because you
+        wrote ``foo: 1`` instead of ``foos: 1`` in the default rule.
+
+        It is therefore recommended to minimize the use of default rules, and when they are used, to
+        restrict them to match as few steps as possible, typically by matching against the steps
+        call ``stack``.
+        """
+        Config.rules += Rule.load(path)
+
 
 Config.reset()
-
-
-def load_config(path: str) -> None:
-    """
-    Load a YAML configuration file into :py:attr:`dynamake.config.Config.rules`.
-
-    The rules from the loaded files will override any values specified by previously loaded
-    rules. In general, the last matching rule wins.
-
-    The configuration YAML file should be empty, or contain a top-level sequence.
-    Each entry must be a mapping with two keys: ``when`` and ``then``.
-    The ``then`` value should be a mapping from parameter names to their values.
-    The ``when`` value should be a mapping of conditions.
-
-    The condition key can be either a parameter name, or ``lambda parameter_name, ...``.
-    If the key starts with ``lambda``, the value should be a string containing a
-    python boolean expression, which will be evaluated using the specified parameters.
-
-    Otherwise, the condition value should be one of:
-
-    * The exact value of the parameter.
-
-    * A ``!r regexp-pattern`` or a ``!g glob-pattern`` to match the (string) parameter value
-      against. While general regular expressions are more powerful, glob patterns are simpler
-      and more familiar to most people, as they are used by the shell.
-
-    * A list of alternative values or patterns to match the parameter value against.
-
-    A rule is applicable to a step invocation if all the conditions in its ``when`` mapping
-    match the parameters used in the invocation.
-
-    Two additional parameters are also added for the purpose of the matching: ``step`` contains the
-    step function name, and the call ``stack`` contains the path of step names ``/top/.../step``.
-    This uses ``/`` to separate the step names to allow matching it against a glob pattern, as if it
-    was a file path. Conditions on these parameters are evaluated first, and if they reject the
-    invocation, no other condition is evaluated.
-
-    It is normally an error for the rest of the conditions to specify a parameter which is not one
-    of the arguments of the invoked step function. However, if the condition key ends with ``?``,
-    then the condition will silently reject the step instead. This allows specifying rules that
-    provide defaults without worrying about applying the rule to the exact list of steps that use
-    it.
-
-    Default rules are very useful when used responsibly. However, they have two important
-    downsides:
-
-    * Modifying the values in such default rules will trigger the re-computation of all the
-      action steps that match them, even if they do not actually depend on the provided values.
-
-    * Default rules silently ignore typos in parameter names.
-
-    It is pretty annoying to modify the configuration file, to adjust some parameter, re-execute
-    the full computation, wait a few hours, and then discover this was wasted effort because you
-    wrote ``foo: 1`` instead of ``foos: 1`` in the default rule.
-
-    It is therefore recommended to minimize the use of default rules, and when they are used, to
-    restrict them to match as few steps as possible, typically by matching against the steps
-    call ``stack``.
-    """
-    Config.rules += Rule.load(path)

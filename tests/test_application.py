@@ -251,6 +251,11 @@ class TestSimpleMain(TestWithFiles):
         sys.argv += ['--config', 'config.yaml']
         self.assertEqual(define_main_function()(), 2)
 
+    def test_default_config(self) -> None:
+        Prog.DEFAULT_CONFIG = 'DynaConf.yaml'
+        write_file('DynaConf.yaml', '{bar: 2}')
+        self.assertEqual(define_main_function()(), 3)
+
     def test_one_config(self) -> None:
         write_file('config.yaml', '{bar: 2}')
         sys.argv += ['--config', 'config.yaml']
