@@ -85,9 +85,10 @@ DynaMake tracks the list of inputs, outputs, actions and their command line opti
 change in the pipeline itself will trigger the invocation of the affected actions.
 
 This functionality requires keeping additional persistent state between invocation. This state is
-stored as human-readable (YAML) files in a special directory (by default, ``.dynamake``). The file
-names are legible (based on the step name and its parameters, if any), so it is easy to examine them
-after the fact to understand exactly which parameter values were used where.
+stored as human-readable (YAML) files in a special directory (by default, ``.dynamake``, but you can
+override it using the `DYNAMAKE_PERSISTENT_DIR`` environment variable). The file names are legible
+(based on the step name and its parameters, if any), so it is easy to examine them after the fact to
+understand exactly which parameter values were used where.
 
 In rare cases, there are good reasons to avoid any such additional persistent state. DynaMake allows
 disabling these features, switching to relying only on the modification times of the input files.
@@ -509,7 +510,7 @@ command line option(s) for the parameter, and using :py:func:`dynamake.applicati
 parameter's default value will ensure the proper value is passed to the step invocation.
 
 The provided ``make`` main function will also load the parameter values specified in the file
-``DynaMake.yaml``, if it exists, or any files specified using the ``--config`` command line option.
+``DynaConf.yaml``, if it exists, or any files specified using the ``--config`` command line option.
 
 Parallel Resources
 ..................
@@ -561,14 +562,14 @@ And create a YAML configuration file as follows:
        flags: [-g, -O3]
 
 This configuration file needs to be loaded using :py:func:`dynamake.config.load_config`. The
-provided ``make`` main function will automatically load the file ``DynaConf.yaml``, if it exists,
-followed by any file specified using the ``--load_config`` command line option(s), if any.
+provided ``make`` main function will automatically load the file ``DynaMake.yaml``, if it exists,
+followed by any file specified using the ``--step_config`` command line option(s), if any.
 
 .. note::
 
-    These configuration file(s) are different from ``DynaMake.yaml`` and any file(s) specified using
-    the ``--config`` command line option. The latter will control the build configuration flags and
-    not the step configuration flags!
+    Do not confuse ``DynaConf.yaml`` and ``--config`` files, which control the build configuration
+    parameters, with the ``DynaMake.yaml`` and ``--step_config`` files, which control control the
+    step configuration parameters.
 
 Explicitly using configuration parameters as shown above is needed when executing generic actions.
 If, however, the action invokes a program implemented using the :py:mod:`dynamake.application`
@@ -598,7 +599,7 @@ and already contains the correct values, then it is not touched. Thus, even if t
 ``DynaConf.yaml`` file is modified, an action will only be rebuilt if its effective parameter values
 have changed.
 
-The paths: to the generated configuration files are similar to the path to the persistent state
+The paths to the generated configuration files are similar to the path to the persistent state
 files: ``.dynamake/step_name.config.yaml`` or
 ``.dynamake/step_name/param=value&param=value.config.yaml``. Thus, if for some reason you want to
 avoid all persistent state, you should not use this functionality.

@@ -5,6 +5,8 @@ Test the make utilities.
 # pylint: disable=too-many-lines
 
 from dynamake.application import Prog
+from dynamake.make import config_file
+from dynamake.make import config_param
 from dynamake.make import env
 from dynamake.make import make
 from dynamake.make import override
@@ -17,6 +19,7 @@ from dynamake.make import spawn
 from dynamake.make import step
 from dynamake.make import StepException
 from dynamake.make import sync
+from dynamake.make import with_config
 from dynamake.patterns import optional
 from dynamake.patterns import phony
 from dynamake.stat import Stat
@@ -138,6 +141,25 @@ class TestMake(TestWithReset):
 
 class TestMain(TestWithFiles):
 
+    def check(self, register: Callable, *, error: Optional[str] = None,
+              log: Optional[List[Tuple[str, str, str]]] = None) -> None:
+        reset_make()
+        Stat.reset()
+        Prog.is_test = True
+        logging.getLogger('asyncio').setLevel('WARN')
+        register()
+
+        sys.argv += ['--log_level', 'DEBUG']
+
+        with LogCapture() as captured_log:
+            if error is None:
+                make(argparse.ArgumentParser())
+            else:
+                self.assertRaisesRegex(StepException, error, make, argparse.ArgumentParser())
+
+        if log is not None:
+            captured_log.check(*log)
+
     def test_no_op(self) -> None:
         def _register() -> None:
             @step(output=phony('all'))
@@ -151,7 +173,7 @@ class TestMain(TestWithFiles):
              '[.] make: the required: all will be produced by the spawned: [.1] no_op'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] no_op: call'),
-            ('dynamake', 'DEBUG',
+            ('dynamake', 'WHY',
              '[.1] no_op: must run actions because missing the persistent actions: '
              '.dynamake/no_op.actions.yaml'),
             ('dynamake', 'DEBUG', '[.1] no_op: synced'),
@@ -199,7 +221,7 @@ class TestMain(TestWithFiles):
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
-            ('dynamake', 'DEBUG',
+            ('dynamake', 'WHY',
              '[.1] make_all: must run actions because missing the persistent actions: '
              '.dynamake/make_all.actions.yaml'),
             ('dynamake', 'DEBUG', '[.1] make_all: build the required: foo.1.1'),
@@ -208,7 +230,7 @@ class TestMain(TestWithFiles):
              'the spawned: [.1.1] make_foos/major=1'),
             ('dynamake', 'DEBUG', '[.1] make_all: sync'),
             ('dynamake', 'TRACE', '[.1.1] make_foos/major=1: call'),
-            ('dynamake', 'DEBUG',
+            ('dynamake', 'WHY',
              '[.1.1] make_foos/major=1: must run actions '
              'because missing the persistent actions: .dynamake/make_foos/major=1.actions.yaml'),
             ('dynamake', 'DEBUG',
@@ -446,6 +468,8 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
             ('dynamake', 'ERROR',
              '[.1] make_all: the required: foo.1.1 has failed to build'),
+            ('dynamake', 'DEBUG', '[.1] make_all: remove '
+             'the persistent actions: .dynamake/make_all.actions.yaml'),
             ('dynamake', 'TRACE', '[.1] make_all: fail'),
             ('dynamake', 'TRACE', '[.] make: fail'),
         ])
@@ -1263,7 +1287,7 @@ class TestMain(TestWithFiles):
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
-            ('dynamake', 'DEBUG',
+            ('dynamake', 'WHY',
              '[.1] make_all: must run actions because missing '
              'the persistent actions: .dynamake/make_all.actions.yaml'),
             ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
@@ -1310,7 +1334,7 @@ class TestMain(TestWithFiles):
              '[.] make: the required: all will be produced by the spawned: [.1] make_all/name=all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all/name=all: call'),
-            ('dynamake', 'DEBUG',
+            ('dynamake', 'WHY',
              '[.1] make_all/name=all: must run actions because missing '
              'the persistent actions: .dynamake/make_all/name=all.actions.yaml'),
             ('dynamake', 'DEBUG', '[.1] make_all/name=all: missing the output(s): {*name}'),
@@ -1334,7 +1358,7 @@ class TestMain(TestWithFiles):
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
-            ('dynamake', 'DEBUG',
+            ('dynamake', 'WHY',
              '[.1] make_all: must run actions because missing '
              'the persistent actions: .dynamake/make_all.actions.yaml'),
             ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
@@ -1402,7 +1426,7 @@ class TestMain(TestWithFiles):
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
-            ('dynamake', 'DEBUG',
+            ('dynamake', 'WHY',
              '[.1] make_all: must run actions because missing '
              'the persistent actions: .dynamake/make_all.actions.yaml'),
             ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
@@ -1469,7 +1493,7 @@ class TestMain(TestWithFiles):
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
-            ('dynamake', 'DEBUG',
+            ('dynamake', 'WHY',
              '[.1] make_all: must run actions because missing the persistent actions: '
              '.dynamake/make_all.actions.yaml'),
             ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
@@ -1564,7 +1588,7 @@ class TestMain(TestWithFiles):
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
-            ('dynamake', 'DEBUG',
+            ('dynamake', 'WHY',
              '[.1] make_all: must run actions because missing '
              'the persistent actions: .dynamake/make_all.actions.yaml'),
             ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
@@ -1634,7 +1658,7 @@ class TestMain(TestWithFiles):
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
-            ('dynamake', 'DEBUG',
+            ('dynamake', 'WHY',
              '[.1] make_all: must run actions because missing '
              'the persistent actions: .dynamake/make_all.actions.yaml'),
             ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
@@ -1705,7 +1729,7 @@ class TestMain(TestWithFiles):
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
-            ('dynamake', 'DEBUG',
+            ('dynamake', 'WHY',
              '[.1] make_all: must run actions because missing '
              'the persistent actions: .dynamake/make_all.actions.yaml'),
             ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
@@ -1775,7 +1799,7 @@ class TestMain(TestWithFiles):
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
             ('dynamake', 'TRACE', '[.1] make_all: call'),
-            ('dynamake', 'DEBUG',
+            ('dynamake', 'WHY',
              '[.1] make_all: must run actions because missing '
              'the persistent actions: .dynamake/make_all.actions.yaml'),
             ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
@@ -1822,7 +1846,7 @@ class TestMain(TestWithFiles):
              '[.1] make_all: the required: foo will be produced by the spawned: [.1.1] make_foo'),
             ('dynamake', 'DEBUG', '[.1] make_all: sync'),
             ('dynamake', 'TRACE', '[.1.1] make_foo: call'),
-            ('dynamake', 'DEBUG',
+            ('dynamake', 'WHY',
              '[.1.1] make_foo: must run actions because missing '
              'the persistent actions: .dynamake/make_foo.actions.yaml'),
             ('dynamake', 'DEBUG', '[.1.1] make_foo: exists output: foo'),
@@ -1855,21 +1879,236 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '[.] make: done'),
         ])
 
-    def check(self, register: Callable, *, error: Optional[str] = None,
-              log: Optional[List[Tuple[str, str, str]]] = None) -> None:
-        reset_make()
-        Stat.reset()
-        Prog.is_test = True
-        logging.getLogger('asyncio').setLevel('WARN')
-        register()
+    def test_config_param(self) -> None:
+        def _register() -> None:
+            @step(output='all')
+            async def make_all() -> None:  # pylint: disable=unused-variable
+                foo = config_param('foo', '0')
+                await shell('echo %s > all' % foo)
 
-        sys.argv += ['--log_level', 'DEBUG']
+        self.check(_register, log=[
+            ('dynamake', 'TRACE', '[.] make: all'),
+            ('dynamake', 'DEBUG', '[.] make: build the required: all'),
+            ('dynamake', 'DEBUG',
+             '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
+            ('dynamake', 'DEBUG', '[.] make: sync'),
+            ('dynamake', 'TRACE', '[.1] make_all: call'),
+            ('dynamake', 'WHY',
+             '[.1] make_all: must run actions because missing the persistent actions: '
+             '.dynamake/make_all.actions.yaml'),
+            ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'INFO', '[.1] make_all: run: echo 0 > all'),
+            ('dynamake', 'TRACE', '[.1] make_all: success: echo 0 > all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'DEBUG', '[.1] make_all: has the output: all time: 1'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: write the persistent actions: .dynamake/make_all.actions.yaml'),
+            ('dynamake', 'TRACE', '[.1] make_all: done'),
+            ('dynamake', 'DEBUG', '[.] make: synced'),
+            ('dynamake', 'DEBUG', '[.] make: has the required: all'),
+            ('dynamake', 'TRACE', '[.] make: done'),
+        ])
 
-        with LogCapture() as captured_log:
-            if error is None:
-                make(argparse.ArgumentParser())
-            else:
-                self.assertRaisesRegex(StepException, error, make, argparse.ArgumentParser())
+        self.expect_file('all', '0\n')
 
-        if log is not None:
-            captured_log.check(*log)
+        write_file('DynaMake.yaml', '- { when: { step: make_all }, then: { foo: 1 } }\n')
+        write_file('conf.yaml', '- { when: { step: make_all }, then: { foo: 2 } }\n')
+
+        self.check(_register, log=[
+            ('dynamake', 'TRACE', '[.] make: all'),
+            ('dynamake', 'DEBUG', '[.] make: build the required: all'),
+            ('dynamake', 'DEBUG',
+             '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
+            ('dynamake', 'DEBUG', '[.] make: sync'),
+            ('dynamake', 'TRACE', '[.1] make_all: call'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: read the persistent actions: .dynamake/make_all.actions.yaml'),
+            ('dynamake', 'DEBUG', '[.1] make_all: exists output: all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: oldest output: all time: 1'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'DEBUG', '[.1] make_all: newest input: None time: 0'),
+            ('dynamake', 'WHY',
+             '[.1] make_all: must run actions because it has changed '
+             'the shell command: echo 0 > all into the shell command: echo 1 > all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: remove the stale output: all'),
+            ('dynamake', 'INFO', '[.1] make_all: run: echo 1 > all'),
+            ('dynamake', 'TRACE', '[.1] make_all: success: echo 1 > all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'DEBUG', '[.1] make_all: has the output: all time: 2'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: write the persistent actions: .dynamake/make_all.actions.yaml'),
+            ('dynamake', 'TRACE', '[.1] make_all: done'),
+            ('dynamake', 'DEBUG', '[.] make: synced'),
+            ('dynamake', 'DEBUG', '[.] make: has the required: all'),
+            ('dynamake', 'TRACE', '[.] make: done'),
+        ])
+
+        self.expect_file('all', '1\n')
+
+        sys.argv += ['--step_config', 'conf.yaml']
+
+        self.check(_register, log=[
+            ('dynamake', 'TRACE', '[.] make: all'),
+            ('dynamake', 'DEBUG', '[.] make: build the required: all'),
+            ('dynamake', 'DEBUG',
+             '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
+            ('dynamake', 'DEBUG', '[.] make: sync'),
+            ('dynamake', 'TRACE', '[.1] make_all: call'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: read the persistent actions: .dynamake/make_all.actions.yaml'),
+            ('dynamake', 'DEBUG', '[.1] make_all: exists output: all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: oldest output: all time: 2'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'DEBUG', '[.1] make_all: newest input: None time: 0'),
+            ('dynamake', 'WHY',
+             '[.1] make_all: must run actions because it has changed '
+             'the shell command: echo 1 > all into the shell command: echo 2 > all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: remove the stale output: all'),
+            ('dynamake', 'INFO', '[.1] make_all: run: echo 2 > all'),
+            ('dynamake', 'TRACE', '[.1] make_all: success: echo 2 > all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'DEBUG', '[.1] make_all: has the output: all time: 3'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: write the persistent actions: .dynamake/make_all.actions.yaml'),
+            ('dynamake', 'TRACE', '[.1] make_all: done'),
+            ('dynamake', 'DEBUG', '[.] make: synced'),
+            ('dynamake', 'DEBUG', '[.] make: has the required: all'),
+            ('dynamake', 'TRACE', '[.] make: done'),
+        ])
+
+        self.expect_file('all', '2\n')
+
+    def test_config_file(self) -> None:
+        def _register() -> None:
+            @step(output='all')
+            async def make_all() -> None:  # pylint: disable=unused-variable
+                config_file()
+                await shell('echo', with_config(), '> all')
+
+        sys.argv += ['--rebuild_changed_actions', 'false']
+
+        self.check(_register, log=[
+            ('dynamake', 'TRACE', '[.] make: all'),
+            ('dynamake', 'DEBUG', '[.] make: build the required: all'),
+            ('dynamake', 'DEBUG',
+             '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
+            ('dynamake', 'DEBUG', '[.] make: sync'),
+            ('dynamake', 'TRACE', '[.1] make_all: call'),
+            ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
+            ('dynamake', 'WHY',
+             '[.1] make_all: must run actions because creating '
+             'the missing persistent configuration: .dynamake/make_all.config.yaml'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'INFO',
+             '[.1] make_all: run: echo --config .dynamake/make_all.config.yaml > all'),
+            ('dynamake', 'TRACE',
+             '[.1] make_all: success: echo --config .dynamake/make_all.config.yaml > all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'DEBUG', '[.1] make_all: has the output: all time: 1'),
+            ('dynamake', 'TRACE', '[.1] make_all: done'),
+            ('dynamake', 'DEBUG', '[.] make: synced'),
+            ('dynamake', 'DEBUG', '[.] make: has the required: all'),
+            ('dynamake', 'TRACE', '[.] make: done'),
+        ])
+
+        self.expect_file('.dynamake/make_all.config.yaml', '{}\n')
+
+        write_file('DynaMake.yaml', '- { when: { step: make_all }, then: { foo: 1 } }\n')
+        write_file('conf.yaml', '- { when: { step: make_all }, then: { foo: 2 } }\n')
+
+        self.check(_register, log=[
+            ('dynamake', 'TRACE', '[.] make: all'),
+            ('dynamake', 'DEBUG', '[.] make: build the required: all'),
+            ('dynamake', 'DEBUG',
+             '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
+            ('dynamake', 'DEBUG', '[.] make: sync'),
+            ('dynamake', 'TRACE', '[.1] make_all: call'),
+            ('dynamake', 'DEBUG', '[.1] make_all: exists output: all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: oldest output: all time: 1'),
+            ('dynamake', 'WHY',
+             '[.1] make_all: must run actions because changed '
+             'the persistent configuration: .dynamake/make_all.config.yaml'),
+            ('dynamake', 'DEBUG', '[.1] make_all: from the old persistent configuration:\n{}\n'),
+            ('dynamake', 'DEBUG', '[.1] make_all: to the new persistent configuration:\nfoo: 1\n'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'DEBUG', '[.1] make_all: newest input: None time: 0'),
+            ('dynamake', 'DEBUG', '[.1] make_all: remove the stale output: all'),
+            ('dynamake', 'INFO',
+             '[.1] make_all: run: echo --config .dynamake/make_all.config.yaml > all'),
+            ('dynamake', 'TRACE',
+             '[.1] make_all: success: echo --config .dynamake/make_all.config.yaml > all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'DEBUG', '[.1] make_all: has the output: all time: 2'),
+            ('dynamake', 'TRACE', '[.1] make_all: done'),
+            ('dynamake', 'DEBUG', '[.] make: synced'),
+            ('dynamake', 'DEBUG', '[.] make: has the required: all'),
+            ('dynamake', 'TRACE', '[.] make: done'),
+        ])
+
+        self.expect_file('.dynamake/make_all.config.yaml', 'foo: 1\n')
+
+        sys.argv += ['--step_config', 'conf.yaml']
+
+        self.check(_register, log=[
+            ('dynamake', 'TRACE', '[.] make: all'),
+            ('dynamake', 'DEBUG', '[.] make: build the required: all'),
+            ('dynamake', 'DEBUG',
+             '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
+            ('dynamake', 'DEBUG', '[.] make: sync'),
+            ('dynamake', 'TRACE', '[.1] make_all: call'),
+            ('dynamake', 'DEBUG', '[.1] make_all: exists output: all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: oldest output: all time: 2'),
+            ('dynamake', 'WHY',
+             '[.1] make_all: must run actions because changed '
+             'the persistent configuration: .dynamake/make_all.config.yaml'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: from the old persistent configuration:\nfoo: 1\n'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: to the new persistent configuration:\nfoo: 2\n'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'DEBUG', '[.1] make_all: newest input: None time: 0'),
+            ('dynamake', 'DEBUG', '[.1] make_all: remove the stale output: all'),
+            ('dynamake', 'INFO',
+             '[.1] make_all: run: echo --config .dynamake/make_all.config.yaml > all'),
+            ('dynamake', 'TRACE',
+             '[.1] make_all: success: echo --config .dynamake/make_all.config.yaml > all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'DEBUG', '[.1] make_all: has the output: all time: 3'),
+            ('dynamake', 'TRACE', '[.1] make_all: done'),
+            ('dynamake', 'DEBUG', '[.] make: synced'),
+            ('dynamake', 'DEBUG', '[.] make: has the required: all'),
+            ('dynamake', 'TRACE', '[.] make: done'),
+        ])
+
+        self.expect_file('.dynamake/make_all.config.yaml', 'foo: 2\n')
+
+        self.check(_register, log=[
+            ('dynamake', 'TRACE', '[.] make: all'),
+            ('dynamake', 'DEBUG', '[.] make: build the required: all'),
+            ('dynamake', 'DEBUG',
+             '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
+            ('dynamake', 'DEBUG', '[.] make: sync'),
+            ('dynamake', 'TRACE', '[.1] make_all: call'),
+            ('dynamake', 'DEBUG', '[.1] make_all: exists output: all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: oldest output: all time: 3'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: use '
+             'the same persistent configuration: .dynamake/make_all.config.yaml'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'DEBUG', '[.1] make_all: newest input: None time: 0'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: can skip actions '
+             'because all the outputs exist and there are no newer inputs'),
+            ('dynamake', 'DEBUG',
+             '[.1] make_all: skip: echo --config .dynamake/make_all.config.yaml > all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'DEBUG', '[.1] make_all: newest input: None time: 0'),
+            ('dynamake', 'DEBUG', '[.1] make_all: has the output: all time: 3'),
+            ('dynamake', 'TRACE', '[.1] make_all: done'),
+            ('dynamake', 'DEBUG', '[.] make: synced'),
+            ('dynamake', 'DEBUG', '[.] make: has the required: all'),
+            ('dynamake', 'TRACE', '[.] make: done'),
+        ])
+
+        self.expect_file('.dynamake/make_all.config.yaml', 'foo: 2\n')

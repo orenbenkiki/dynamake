@@ -2,8 +2,7 @@
 Utilities for configurable applications.
 """
 
-from .parameters import Env
-from .parameters import env  # pylint: disable=unused-import
+from argparse import _ArgumentGroup
 from argparse import ArgumentParser
 from argparse import Namespace
 from argparse import RawDescriptionHelpFormatter
@@ -36,6 +35,33 @@ import os
 import re
 import sys
 import yaml
+
+
+class Env:
+    """
+    Marker for default for environment parameters.
+    """
+
+    def __init__(self, default_value: Any) -> None:
+        """
+        Optionally provide a default value for the parameter.
+        """
+        #: The default value for the parameter.
+        self.value = default_value
+
+
+def env(default_value: Any = Parameter.empty) -> Any:
+    """
+    Used as a default value for environment parameters.
+
+    When a step uses this as a default value for a parameter,
+    and an invocation does not specify an explicit or a configuration value for the parameter,
+    then the value will be taken from the nearest parent which has a parameter with the same name.
+
+    If a default value is provided, then it is used if no value is available from either the command
+    line or the invocation.
+    """
+    return Env(default_value)
 
 
 class Func:  # pylint: disable=too-many-instance-attributes
@@ -353,6 +379,9 @@ class Prog:
     #: The default module to load.
     DEFAULT_MODULE: str
 
+    #: The default configuration to load, if any.
+    DEFAULT_CONFIG: Optional[str]
+
     #: The global arguments currently in effect.
     current: 'Prog'
 
@@ -371,6 +400,7 @@ class Prog:
         Reset all the current state, for tests.
         """
         Prog.DEFAULT_MODULE = 'DynaMods'
+        Prog.DEFAULT_CONFIG = None
         Prog.current = Prog()
         Prog.logger = logging.getLogger('prog')
         Prog.is_test = False
@@ -569,7 +599,7 @@ class Prog:
                 current_group_arguments.add_argument('--' + parameter_name, help=text,
                                                      metavar=parameter.metavar)
 
-    def add_global_parameters(self, parser: ArgumentParser) -> None:
+    def add_global_parameters(self, parser: ArgumentParser) -> _ArgumentGroup:
         """
         Add the parameters that are not tied to specific functions.
         """
@@ -602,6 +632,8 @@ class Prog:
             else:
                 group.add_argument('--' + parameter_name, help=text, metavar=parameter.metavar)
 
+        return group
+
     @staticmethod
     def _verify_function(function_name: str, is_command: bool) -> Func:
         if function_name not in Func.by_name:
@@ -622,6 +654,8 @@ class Prog:
         Prog.current._parse_args(args)  # pylint: disable=protected-access
 
     def _parse_args(self, args: Namespace) -> None:
+        if Prog.DEFAULT_CONFIG is not None and os.path.exists(Prog.DEFAULT_CONFIG):
+            self.load(Prog.DEFAULT_CONFIG)
         for path in (args.config or []):
             self.load(path)
 

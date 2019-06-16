@@ -5,13 +5,13 @@ Utilities for dynamic make.
 # pylint: disable=too-many-lines
 
 from .application import config
+from .application import env
 from .application import Func
 from .application import override  # pylint: disable=unused-import
 from .application import Param
 from .application import Prog
 from .application import reset_application
 from .config import Config
-from .parameters import env  # pylint: disable=unused-import
 from .patterns import capture2re
 from .patterns import emphasized  # pylint: disable=unused-import
 from .patterns import exists  # pylint: disable=unused-import
@@ -58,6 +58,9 @@ class Make:
     """
     #: The directory to keep persistent state in.
     PERSISTENT_DIRECTORY: str
+
+    #: The default steps configuration to load.
+    DEFAULT_STEP_CONFIG: str
 
     #: The log level for logging the reasons for sub-process invocations.
     WHY = (Prog.TRACE + logging.INFO) // 2
@@ -128,7 +131,8 @@ class Make:
         """
         Reset all the current state, for tests.
         """
-        Make.PERSISTENT_DIRECTORY = '.dynamake'
+        Make.PERSISTENT_DIRECTORY = os.getenv('DYNAMAKE_PERSISTENT_DIR', '.dynamake')
+        Make.DEFAULT_STEP_CONFIG = 'DynaMake.yaml'
         Make.failure_aborts_build = True
         Make.remove_stale_outputs = True
         Make.wait_nfs_outputs = False
@@ -304,7 +308,7 @@ class PersistentAction:
         return actions
 
 
-class Invocation:  # pylint: disable=too-many-instance-attributes
+class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
     """
     An active invocation of a build step.
     """
@@ -436,13 +440,19 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         #: Whether we haven't run (or skipped) the first sub-process yet.
         self.is_first_sub_process = True
 
-        #: Whether we run all sub-processes.
+        #: Whether we run all sub-processes seen so far.
         self.did_run_all_sub_processes = True
 
         #: Whether we should remove stale outputs before running the next sub-process.
         self.should_remove_stale_outputs = Make.remove_stale_outputs
 
-    def read_old_persistent_data(self) -> None:
+        #: The configuration for the step, if used.
+        self.config_values: Optional[Dict[str, Any]] = None
+
+        #: The path to the persistent configuration file, if it is used.
+        self.config_path: Optional[str] = None
+
+    def read_old_persistent_actions(self) -> None:
         """
         Read the old persistent data from the disk file.
 
@@ -450,8 +460,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         """
         path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.actions.yaml')
         if not os.path.exists(path):
-            Prog.logger.debug('%s must run actions because missing the persistent actions: %s',
-                              self.log_prefix, path)
+            Prog.logger.log(Make.WHY,
+                            '%s must run actions because missing the persistent actions: %s',
+                            self.log_prefix, path)
             self.must_run_sub_process = True
             return
 
@@ -475,6 +486,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         if os.path.exists(path):
             Prog.logger.debug('%s remove the persistent actions: %s', self.log_prefix, path)
             os.remove(path)
+
+        path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.config.yaml')
+        if os.path.exists(path):
+            Prog.logger.debug('%s remove the persistent configuration: %s', self.log_prefix, path)
+            os.remove(path)
+
         if '/' not in self.name:
             return
         try:
@@ -482,9 +499,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         except OSError:
             pass
 
-    def write_new_persistent_data(self) -> None:
+    def write_new_persistent_actions(self) -> None:
         """
-        Write the new persistent data from the disk file.
+        Write the new persistent data into the disk file.
 
         This is only done on a successful build.
         """
@@ -600,7 +617,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
 
         if Make.rebuild_changed_actions:
             self.new_persistent_actions.append(PersistentAction())
-            self.read_old_persistent_data()
+            self.read_old_persistent_actions()
 
         assert self.name not in Invocation.active
         Invocation.active[self.name] = self
@@ -626,7 +643,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
                     self.new_persistent_actions.pop()
 
                 if self.did_run_all_sub_processes:
-                    self.write_new_persistent_data()
+                    self.write_new_persistent_actions()
                 elif len(self.new_persistent_actions) < len(self.old_persistent_actions):
                     Prog.logger.warn('%s skipped some action(s) '
                                      'even though it has changed to remove some final action(s)',
@@ -636,8 +653,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
 
         else:
             self.poison_all_outputs()
-            if self.new_persistent_actions:
-                self.remove_old_persistent_data()
+            self.remove_old_persistent_data()
             Prog.logger.log(Prog.TRACE, '%s fail', self.log_prefix)
 
         del Invocation.active[self.name]
@@ -1112,6 +1128,64 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
                               self.log_prefix, self.newest_input_path,
                               _datetime_from_nanoseconds(self.newest_input_mtime_ns))
 
+    def config_param(self, name: str, default: Any) -> Any:
+        """
+        Access the value of a parameter from the step-specific configuration.
+        """
+        self._ensure_config_values()
+        assert self.config_values is not None
+        return self.config_values.get(name, default)
+
+    def config_file(self) -> str:
+        """
+        Use the step-specific configuration file in the following step action(s).
+        """
+        if self.config_path is not None:
+            assert self.config_values is not None
+            return self.config_path
+
+        self._ensure_config_values()
+        new_config_text = yaml.dump(self.config_values)
+
+        self.config_path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.config.yaml')
+
+        if not os.path.exists(self.config_path):
+            Prog.logger.log(Make.WHY,
+                            '%s must run actions '
+                            'because creating the missing persistent configuration: %s',
+                            self.log_prefix, self.config_path)
+        else:
+            with open(self.config_path, 'r') as file:
+                old_config_text = file.read()
+            if new_config_text == old_config_text:
+                Prog.logger.debug('%s use the same persistent configuration: %s',
+                                  self.log_prefix, self.config_path)
+                return self.config_path
+
+            Prog.logger.log(Make.WHY,
+                            '%s must run actions because changed the persistent configuration: %s',
+                            self.log_prefix, self.config_path)
+            Prog.logger.debug('%s from the old persistent configuration:\n%s',
+                              self.log_prefix, old_config_text)
+            Prog.logger.debug('%s to the new persistent configuration:\n%s',
+                              self.log_prefix, new_config_text)
+
+        self.must_run_sub_process = True
+        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        with open(self.config_path, 'w') as file:
+            file.write(new_config_text)
+        return self.config_path
+
+    def _ensure_config_values(self) -> None:
+        if self.config_values is not None:
+            return
+
+        assert 'step' not in self.kwargs
+        assert self.step is not None
+        self.kwargs['step'] = self.step.name()
+        self.config_values = Config.values_for_context(self.kwargs)
+        del self.kwargs['step']
+
 
 _OLD_DATES: Dict[int, float] = {}
 
@@ -1203,8 +1277,12 @@ async def shell(*command: Strings) -> None:
     This first waits until all input files requested so far are ready.
     """
     current = Invocation.current
-    await current.run_sub_process('shell', asyncio.create_subprocess_shell, *command)
+    await current.run_sub_process('shell', _run_shell, *command)
     Invocation.current = current
+
+
+def _run_shell(*command: str) -> Any:
+    return asyncio.create_subprocess_shell(' '.join(command))
 
 
 async def spawn(*command: Strings) -> None:
@@ -1216,6 +1294,27 @@ async def spawn(*command: Strings) -> None:
     current = Invocation.current
     await current.run_sub_process('spawn', asyncio.create_subprocess_exec, *command)
     Invocation.current = current
+
+
+def config_param(name: str, default: Any) -> Any:
+    """
+    Access the value of a parameter from the step-specific configuration.
+    """
+    return Invocation.current.config_param(name, default)
+
+
+def config_file() -> str:
+    """
+    Use the step-specific configuration file in the following step action(s).
+    """
+    return Invocation.current.config_file()
+
+
+def with_config() -> List[str]:
+    """
+    A convenient shorthand for writing [``--config``, `config_file()`].
+    """
+    return ['--config', config_file()]
 
 
 def _define_parameters() -> None:
@@ -1299,13 +1398,24 @@ def make(parser: ArgumentParser, *,
     default_targets = list(dp.each_string(default_targets))
     parser.add_argument('TARGET', nargs='*',
                         help='The file or target to make (default: %s)' % ' '.join(default_targets))
-    Prog.current.add_global_parameters(parser)
+    group = Prog.current.add_global_parameters(parser)
+    group.add_argument('--step_config', '-sc', metavar='FILE', action='append',
+                       help='Load a step parameters configuration YAML file')
+
     Prog.current.add_sorted_parameters(parser, extra_help=_extra_parameter_help)
     args = parser.parse_args()
     Prog.parse_args(args)
+
+    if os.path.exists(Make.DEFAULT_STEP_CONFIG):
+        Config.load(Make.DEFAULT_STEP_CONFIG)
+    for path in (args.step_config or []):
+        Config.load(path)
+
     if adapter is not None:
         adapter(args)
+
     _collect_parameters()
+
     targets = [path for path in args.TARGET if path is not None] \
         or list(dp.each_string(default_targets))
 
@@ -1329,11 +1439,11 @@ def make(parser: ArgumentParser, *,
         raise result
 
 
-def run(invocation: Awaitable) -> Any:
+def run(awaitable: Awaitable) -> Any:
     """
     A Python3.6 way to implement the `asyncio.run` function from Python 3.7.
     """
-    return asyncio.get_event_loop().run_until_complete(invocation)
+    return asyncio.get_event_loop().run_until_complete(awaitable)
 
 
 def _extra_parameter_help(parameter_name: str) -> str:
@@ -1353,6 +1463,7 @@ def reset_make() -> None:
     """
     reset_application()
     Prog.DEFAULT_MODULE = 'DynaMake'
+    Prog.DEFAULT_CONFIG = 'DynaConf.yaml'
     Make.reset()
     Config.reset()
     Invocation.reset()
