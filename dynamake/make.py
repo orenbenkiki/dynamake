@@ -433,6 +433,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         #: Whether we already decided to run sub-processes.
         self.must_run_sub_process = False
 
+        #: Whether we haven't run (or skipped) the first sub-process yet.
+        self.is_first_sub_process = True
+
         #: Whether we run all sub-processes.
         self.did_run_all_sub_processes = True
 
@@ -460,7 +463,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
             Prog.logger.debug('%s read the persistent actions: %s', self.log_prefix, path)
 
         except BaseException:  # pylint: disable=broad-except
-            Prog.logger.warn('%s must run actions because read invalid persistent actions: %s',
+            Prog.logger.warn('%s must run actions because read the invalid persistent actions: %s',
                              self.log_prefix, path)
             self.must_run_sub_process = True
 
@@ -729,6 +732,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
             return
 
         for output_path in sorted(self.initial_outputs):
+            if dp.is_exists(output_path):
+                continue
             output_mtime_ns = Stat.stat(output_path).st_mtime_ns
             if self.oldest_output_path is None or self.oldest_output_mtime_ns > output_mtime_ns:
                 self.oldest_output_path = output_path
@@ -771,7 +776,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
                             Prog.logger.warn('%s waited: %s seconds for the output: %s',
                                              self.log_prefix, round(waited, 2), path)
 
-                        if Make.touch_success_outputs:
+                        if Make.touch_success_outputs and not dp.is_exists(path):
                             if not did_sleep:
                                 await asyncio.sleep(0.01)
                                 Invocation.current = self
@@ -819,8 +824,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         """
         for path in sorted(self.initial_outputs):
             if self.should_remove_stale_outputs and not is_precious(path):
-                Prog.logger.debug('%s remove the stale output: %s', self.log_prefix, path)
-                self.remove_output(path)
+                if self.is_first_sub_process:  # TODO: Warn if otherwise (keeping the stale output)?
+                    Prog.logger.debug('%s remove the stale output: %s', self.log_prefix, path)
+                    self.remove_output(path)
             Stat.forget(path)
 
         self.should_remove_stale_outputs = False
@@ -895,7 +901,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
             index = len(self.new_persistent_actions) - 1
             if index >= len(self.old_persistent_actions):
                 Prog.logger.log(Make.WHY,
-                                '%s must run actions since it has changed to add actions',
+                                '%s must run actions since it has changed to add action(s)',
                                 self.log_prefix)
                 return True
             new_action = self.new_persistent_actions[index]
@@ -908,7 +914,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         if self.newest_input_path is None:
             # No input files (pure computation).
             Prog.logger.debug('%s can skip actions '
-                              'because all the outputs exist and there are no inputs',
+                              'because all the outputs exist and there are no newer inputs',
                               self.log_prefix)
             return False
 
@@ -975,7 +981,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
                                 '%s must run actions '
                                 'because the producer of the required: %s '
                                 'has changed from: %s into: %s',
-                                self.log_prefix, path, old_invocation, new_invocation)
+                                self.log_prefix, path,
+                                (old_invocation or 'source file'),
+                                (new_invocation or 'source file'))
                 return True
 
         return False
@@ -1009,14 +1017,17 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
             else:
                 Prog.logger.debug('%s skip: %s', self.log_prefix, log_command)
             self.did_run_all_sub_processes = False
+            self.is_first_sub_process = False
             if self.new_persistent_actions:
                 self.new_persistent_actions.append(  #
                     PersistentAction(self.new_persistent_actions[-1]))
             return
 
-        self.must_run_sub_process = True
-        self.oldest_output_path = None
         self.remove_stale_outputs()
+
+        self.oldest_output_path = None
+        self.must_run_sub_process = True
+        self.is_first_sub_process = False
 
         Prog.logger.info('%s run: %s', self.log_prefix, log_command)
 
@@ -1036,7 +1047,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
 
         Prog.logger.log(Prog.TRACE, '%s success: %s', self.log_prefix, log_command)
 
-    async def sync(self) -> None:
+    async def sync(self) -> None:  # pylint: disable=too-many-branches
         """
         Wait until all the async actions queued so far are complete.
 
@@ -1060,7 +1071,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
         failed_inputs = False
         self.phony_inputs = []
         for path in sorted(self.all_inputs):
-            if path in Invocation.poisoned or path not in Invocation.up_to_date:
+            if path in Invocation.poisoned \
+                    or (not dp.is_optional(path) and path not in Invocation.up_to_date):
                 if self.exception is None:
                     level = logging.ERROR
                 else:
@@ -1071,10 +1083,17 @@ class Invocation:  # pylint: disable=too-many-instance-attributes
                 failed_inputs = True
                 continue
 
+            if path not in Invocation.up_to_date:
+                assert dp.is_optional(path)
+                continue
+
             Prog.logger.debug('%s has the required: %s', self.log_prefix, path)
 
             if path in Invocation.phony:
                 self.phony_inputs.append(path)
+                continue
+
+            if dp.is_exists(path):
                 continue
 
             result = Stat.stat(path)
