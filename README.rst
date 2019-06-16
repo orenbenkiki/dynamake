@@ -209,8 +209,13 @@ For example, inside each step, you can do the following:
 
 .. note::
 
-    The correctness of the ``stat`` cache depends on accurate listing of each action's inputs and
-    outputs. In general DynaMake needs these lists to be accurate for correct operation.
+    **The correctness of the ``stat`` cache depends on accurate listing of each action's inputs and
+    outputs.**
+
+    In general DynaMake needs these lists to be accurate for correct operation. This is true of
+    almost any build tool. In theory, one could use ``strace`` to automatically extract the true
+    lists of inputs and outputs, but this is complex, fragile (breaks for programs running on
+    cluster servers), and impacts the performance.
 
 The ability to mix general Python code together with ``make`` functionality is what gives DynaMake
 its additional power over static build tools like ``make`` or ``ninja``. The following examples
@@ -424,6 +429,8 @@ option which is then handled by the provided ``make`` main function.
 
 .. note::
 
+    **Removal of stale outputs is not guaranteed when there are multiple actions.**
+
     If DynaMake skips running the first action, but later discovers it needs to run a following
     action of the same step, then it will not remove the stale output file(s), as it has no way of
     telling which of these files are created by which of the actions. In general it is recommended
@@ -469,14 +476,15 @@ option which is then handled by the provided ``make`` main function.
 
 .. note::
 
-    The DynaMake python code itself is *not* parallel. It always runs on a single process.
-    Parallelism is the result of DynaMake executing an external action, and instead of waiting for
-    it to complete, switching over to a different step and processing it until it also executes an
-    external action, and so on. Thus actions may execute in parallel, while the Python code is still
-    doing only one thing at a time. This greatly simplifies reasoning about the code. Specifically,
-    if a piece of code contains no ``await`` calls, then it is guaranteed to "atomically" execute to
-    completion, so there is no need for a lock or a mutex to synchronize between the steps, even
-    when they share some data.
+    **The DynaMake python code itself is not parallel.**
+
+    DynaMake always runs on a single process. Parallelism is the result of DynaMake executing an
+    external action, and instead of waiting for it to complete, switching over to a different step
+    and processing it until it also executes an external action, and so on. Thus actions may execute
+    in parallel, while the Python code is still doing only one thing at a time. This greatly
+    simplifies reasoning about the code. Specifically, if a piece of code contains no ``await``
+    calls, then it is guaranteed to "atomically" execute to completion, so there is no need for a
+    lock or a mutex to synchronize between the steps, even when they share some data.
 
 Build Configuration
 ...................
@@ -560,7 +568,7 @@ And create a YAML configuration file as follows:
 
    - when:
        step: make_object
-       name: src/main.c
+       name: main
      then:
        flags: [-g, -O3]
 
@@ -571,9 +579,13 @@ any.
 
 .. note::
 
-    Do not confuse ``DynaConf.yaml`` and ``--config`` files, which control the **build**
-    configuration parameters, with the ``DynaMake.yaml`` and ``--step_config`` files, which control
-    control the **steps** configuration parameters.
+    **Do not confuse build and step configuration files.**
+
+    The ``DynaConf.yaml`` and ``--config`` files control the **build** configuration parameters.
+    The ``DynaMake.yaml`` and ``--step_config`` control control the **steps** configuration
+    parameters. Thus the ``DynaConf.yaml`` contains simple build parameter values, while
+    ``DynaMake.yaml`` contains configuration **rules** used to decide on the parameter values for
+    each build step invocation.
 
 Explicitly using configuration parameters as shown above is needed when executing generic programs.
 If, however, the action invokes a program implemented using the :py:mod:`dynamake.application`
@@ -698,11 +710,13 @@ The usage pattern of the library is as follows:
 
 .. note::
 
-   The automatic detection of invocations of one configurable function from another is simplistic.
-    Basically, if we see inside the function source the name of another function, and this isn't the
-    name of a variable being assigned to, then we assume this is a call. This isn't 100% complete;
-    for example this will not detect cases where ``foo`` calls a non-configured ``bar`` which then
-    calls a configured ``baz``. However it works "well enough" for simple code.
+   **The automatic detection of invocations of one configurable function from another is
+   simplistic.**
+
+   Basically, if we see inside the function source the name of another function, and this isn't the
+   name of a variable being assigned to, then we assume this is a call. This isn't 100% complete;
+   for example this will not detect cases where ``foo`` calls a non-configured ``bar`` which then
+   calls a configured ``baz``. However it works "well enough" for simple code.
 
 * The configured parameters must use :py:func:`dynamake.application.env` as the parameter's default
   value. This will inject the proper value at each point.
