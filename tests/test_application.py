@@ -11,6 +11,7 @@ from dynamake.application import override
 from dynamake.application import parallel
 from dynamake.application import Param
 from dynamake.application import Prog
+from dynamake.application import serial
 from dynamake.patterns import str2int
 from testfixtures import OutputCapture  # type: ignore
 from tests import TestWithFiles
@@ -165,12 +166,16 @@ class TestParameters(TestWithReset):
         parameters = Prog()
 
         self.assertRaisesRegex(RuntimeError,
-                               'Unknown parameter: bar .* function: .*.test_missing_parameter',
-                               parameters.get, 'bar', TestParameters.test_missing_parameter)
+                               'Unknown parameter: bar',
+                               parameters.get_parameter, 'bar')
+
+    def test_serial(self) -> None:
+        results = serial(2, _call_in_parallel, kwargs=lambda index: {'index': index})
+        self.assertEqual(results, [('MainThread', 0), ('MainThread', 1)])
 
     def test_parallel(self) -> None:
-        results = parallel(1, 2, _call_in_parallel, kwargs=lambda index: {'index': index})
-        self.assertEqual(results, [('Fork-1.Thread-1', 0), ('Fork-1.Thread-1', 1)])
+        results = parallel(2, _call_in_parallel, kwargs=lambda index: {'index': index})
+        self.assertEqual(sorted(results), [('Fork-1.Thread-1', 0), ('Fork-1.Thread-2', 1)])
 
     def test_overrides(self) -> None:
         Prog.logger.setLevel('WARN')
@@ -211,7 +216,7 @@ class TestParameters(TestWithReset):
         def foo(*, bar: int = env()) -> int:
             return bar
 
-        results = parallel(1, 2, foo, overrides=lambda index: {'bar': index})
+        results = serial(2, foo, overrides=lambda index: {'bar': index})
         self.assertEqual(results, [0, 1])
 
 

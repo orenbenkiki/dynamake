@@ -46,6 +46,129 @@ import sys
 import yaml
 
 
+def _dict_to_str(values: Dict[str, Any]) -> str:
+    return ','.join(['%s=%s' % (quote_plus(name), quote_plus(str(value)))
+                     for name, value in sorted(values.items())])
+
+
+class Resources:
+    """
+    Restrict parallelism using some resources.
+    """
+
+    #: The total amount of each resource.
+    total: Dict[str, int]
+
+    #: The unused amount of each resource.
+    available: Dict[str, int]
+
+    #: The default amount used by each action.
+    default: Dict[str, int]
+
+    #: A condition for synchronizing between the asynchronous actions.
+    condition: asyncio.Condition
+
+    @staticmethod
+    def reset() -> None:
+        """
+        Reset all the current state, for tests.
+        """
+        assert Prog.current is not None
+        Resources.total = dict(jobs=int(Prog.current.get_parameter('jobs')))
+        Resources.available = Resources.total.copy()
+        Resources.default = dict(jobs=1)
+        Resources.condition = asyncio.Condition()
+
+    @staticmethod
+    def effective(requested: Dict[str, int]) -> Dict[str, int]:
+        """
+        Return the effective resource amounts given the explicitly requested amounts.
+        """
+        amounts: Dict[str, int] = {}
+
+        for name, amount in sorted(requested.items()):
+            total = Resources.total.get(name)
+            if total is None:
+                raise RuntimeError('Requested the unknown resource: %s' % name)
+            if amount == 0 or Resources.total[name] == 0:
+                continue
+            if amount > total:
+                raise RuntimeError('The requested resource: %s amount: %s '
+                                   'is greater than the total amount: %s'
+                                   % (name, amount, total))
+            amounts[name] = amount
+
+        for name, amount in Resources.total.items():
+            if name in requested or amount <= 0:
+                continue
+            amount = Resources.default[name]
+            if amount <= 0:
+                continue
+            amounts[name] = amount
+
+        return amounts
+
+    @staticmethod
+    def have(amounts: Dict[str, int]) -> bool:
+        """
+        Return whether there are available resource to cover the requested amounts.
+        """
+        for name, amount in amounts.items():
+            if amount > Resources.available[name]:
+                return False
+        return True
+
+    @staticmethod
+    def grab(amounts: Dict[str, int]) -> None:
+        """
+        Take ownership of some resource amounts.
+        """
+        for name, amount in amounts.items():
+            Resources.available[name] -= amount
+
+    @staticmethod
+    def free(amounts: Dict[str, int]) -> None:
+        """
+        Release ownership of some resource amounts.
+        """
+        for name, amount in amounts.items():
+            Resources.available[name] += amount
+
+    @staticmethod
+    async def use(**amounts: int) -> Dict[str, int]:
+        """
+        Wait for and grab some resource amounts.
+
+        Returns the actual used resource amounts. If a resource is not explicitly given an amount,
+        the default used amount from the :py:func:`dynamake.make.resource_parameters` declaration is
+        used.
+
+        The caller is responsible for invoking :py:func:`dynamake.make.Resources.free` to
+        release the actual used resources.
+        """
+
+
+def resource_parameters(**default_amounts: int) -> None:
+    """
+    Declare additional resources for controlling parallel action execution.
+
+    Each resource should have been declared as a :py:class:`dynamake.application.Param`.
+    The value given here is the default amount of the resource used by each action that
+    does not specify an explicit value.
+    """
+    for name, amount in default_amounts.items():
+        total = int(Prog.current.get_parameter(name))
+        if amount > total:
+            raise RuntimeError('The default amount: %s '
+                               'of the resource: %s '
+                               'is greater than the total amount: %s'
+                               % (amount, name, total))
+        Resources.total[name] = total
+        Resources.available[name] = total
+        Resources.default[name] = amount
+        Func.names_by_parameter[name] = []
+
+
 class StepException(Exception):
     """
     Indicates a step has aborted and its output must not be used by other steps.
@@ -62,7 +185,7 @@ class Make:
     #: The default steps configuration to load.
     DEFAULT_STEP_CONFIG: str
 
-    #: The log level for logging the reasons for sub-process invocations.
+    #: The log level for logging the reasons for action execution.
     WHY = (Prog.TRACE + logging.INFO) // 2
 
     #: Whether to rebuild outputs if the actions have changed (by default, ``True``).
@@ -237,7 +360,7 @@ class PersistentAction:
         """
         self.required[path] = origin
 
-    def run_sub_process(self, kind: str, command: List[str]) -> None:
+    def run_action(self, kind: str, command: List[str]) -> None:
         """
         Set the executed command of the action.
         """
@@ -245,7 +368,7 @@ class PersistentAction:
         self.kind = kind
         self.start = datetime.now()
 
-    def done_sub_process(self) -> None:
+    def done_action(self) -> None:
         """
         Record the end time of the command.
         """
@@ -319,6 +442,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
     #: The current invocation.
     current: 'Invocation'
 
+    #: The top-level invocation.
+    top: 'Invocation'
+
     #: The paths for phony targets.
     phony: Set[str]
 
@@ -335,7 +461,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         Invocation.active = {}
         Invocation.current = None  # type: ignore
-        Invocation.current = Invocation(None)
+        Invocation.top = Invocation(None)
+        Invocation.current = Invocation.top
         Invocation.up_to_date = {}
         Invocation.phony = set()
         Invocation.poisoned = set()
@@ -359,8 +486,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         self.name = 'make'
         if self.step is not None:
             self.name = self.step.name()
-        args_string = ','.join(['%s=%s' % (quote_plus(name), quote_plus(str(value)))
-                                for name, value in sorted(kwargs.items())])
+        args_string = _dict_to_str(kwargs)
         if args_string:
             self.name += '/'
             self.name += args_string
@@ -423,7 +549,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         self.oldest_output_mtime_ns = 0
 
         #: The reason to abort this invocation, if any.
-        self.exception: Optional[StepException] = None
+        self.exception: Optional[BaseException] = None
 
         #: The old persistent actions (from the disk) for ensuring rebuild when actions change.
         self.old_persistent_actions: List[PersistentAction] = []
@@ -434,16 +560,16 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         #: The new persistent actions (from the code) for ensuring rebuild when actions change.
         self.new_persistent_actions: List[PersistentAction] = []
 
-        #: Whether we already decided to run sub-processes.
-        self.must_run_sub_process = False
+        #: Whether we already decided to run actions.
+        self.must_run_action = False
 
-        #: Whether we haven't run (or skipped) the first sub-process yet.
-        self.is_first_sub_process = True
+        #: Whether we haven't run (or skipped) the first action yet.
+        self.is_first_action = True
 
-        #: Whether we run all sub-processes seen so far.
-        self.did_run_all_sub_processes = True
+        #: Whether we run all actions seen so far.
+        self.did_run_all_actions = True
 
-        #: Whether we should remove stale outputs before running the next sub-process.
+        #: Whether we should remove stale outputs before running the next action.
         self.should_remove_stale_outputs = Make.remove_stale_outputs
 
         #: The configuration for the step, if used.
@@ -463,7 +589,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             Prog.logger.log(Make.WHY,
                             '%s must run actions because missing the persistent actions: %s',
                             self.log_prefix, path)
-            self.must_run_sub_process = True
+            self.must_run_action = True
             return
 
         try:
@@ -476,7 +602,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         except BaseException:  # pylint: disable=broad-except
             Prog.logger.warn('%s must run actions because read the invalid persistent actions: %s',
                              self.log_prefix, path)
-            self.must_run_sub_process = True
+            self.must_run_action = True
 
     def remove_old_persistent_data(self) -> None:
         """
@@ -530,10 +656,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
     def require(self, path: str) -> None:
         """
-        Require a file to be up-to-date before executing any sub-processes or completing the current
+        Require a file to be up-to-date before executing any actions or completing the current
         invocation.
         """
-        assert id(Invocation.current) == id(self)
+        Invocation.current = self
 
         Prog.logger.debug('%s build the required: %s', self.log_prefix, path)
 
@@ -572,8 +698,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Prog.logger.debug('%s the required: %s '
                           'will be produced by the spawned: %s',
                           self.log_prefix, path, invocation.log_prefix[:-1])
-        self.async_actions.append(invocation.run())
-        Invocation.current = self
+        self.async_actions.append(asyncio.Task(invocation.run()))  # type: ignore
 
     def producer_of(self, path: str) -> Tuple[Optional[Step], Optional[Dict[str, Any]]]:
         """
@@ -604,13 +729,13 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         return producer, kwargs
 
-    async def run(self) -> Optional[StepException]:
+    async def run(self) -> Optional[BaseException]:  # pylint: disable=too-many-branches
         """
         Actually run the invocation.
         """
         active = Invocation.active.get(self.name)
         if active is not None:
-            return await self.wait_for(active)
+            return await self.done(self.wait_for(active))
 
         Invocation.current = self
         Prog.logger.log(Prog.TRACE, '%s call', self.log_prefix)
@@ -625,16 +750,15 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         try:
             assert self.step is not None
-            await self.step.func.wrapped(**self.kwargs)
-            Invocation.current = self
-            await self.sync()
-            Invocation.current = self
-            await self.collect_final_outputs()
-            Invocation.current = self
+            await self.done(self.step.func.wrapped(**self.kwargs))
+            await self.done(self.sync())
+            await self.done(self.collect_final_outputs())
 
-        except StepException as exception:
-            Invocation.current = self
+        except BaseException as exception:  # pylint: disable=broad-except
             self.exception = exception
+
+        finally:
+            Invocation.current = self
 
         if self.exception is None:
             if self.new_persistent_actions:
@@ -642,7 +766,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                         and self.new_persistent_actions[-1].is_empty():
                     self.new_persistent_actions.pop()
 
-                if self.did_run_all_sub_processes:
+                if self.did_run_all_actions:
                     self.write_new_persistent_actions()
                 elif len(self.new_persistent_actions) < len(self.old_persistent_actions):
                     Prog.logger.warn('%s skipped some action(s) '
@@ -658,8 +782,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         del Invocation.active[self.name]
         if self.condition is not None:
-            await self.condition.acquire()
-            Invocation.current = self
+            await self.done(self.condition.acquire())
             self.condition.notify_all()
             self.condition.release()
 
@@ -668,23 +791,21 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         return self.exception
 
-    async def wait_for(self, active: 'Invocation') -> Optional[StepException]:
+    async def wait_for(self, active: 'Invocation') -> Optional[BaseException]:
         """
         Wait until the invocation is done.
 
         This is used by other invocations that use this invocation's output(s) as their input(s).
         """
+        Invocation.current = self
+
         Prog.logger.debug('%s paused by waiting for: %s', self.log_prefix, active.log_prefix[:-1])
 
         if active.condition is None:
             active.condition = asyncio.Condition()
 
-        await active.condition.acquire()
-        Invocation.current = self
-
-        await active.condition.wait()
-        Invocation.current = self
-
+        await self.done(active.condition.acquire())
+        await self.done(active.condition.wait())
         active.condition.release()
 
         Prog.logger.debug('%s resumed by completion of: %s',
@@ -695,7 +816,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
     def collect_initial_outputs(self) -> None:  # pylint: disable=too-many-branches
         """
         Check which of the outputs already exist and what their modification times are, to be able
-        to decide whether sub-processes need to be run to create or update them.
+        to decide whether actions need to be run to create or update them.
         """
         assert self.step is not None
         missing_outputs = []
@@ -741,7 +862,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
                 Stat.forget(path)
 
-        if self.must_run_sub_process \
+        if self.must_run_action \
                 or self.phony_outputs \
                 or self.missing_output is not None \
                 or self.abandoned_output is not None:
@@ -768,6 +889,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         If successful, this marks all the outputs as up-to-date so that steps that depend on them
         will immediately proceed.
         """
+        Invocation.current = self
 
         missing_outputs = False
         assert self.step is not None
@@ -794,8 +916,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
                         if Make.touch_success_outputs and not dp.is_exists(path):
                             if not did_sleep:
-                                await asyncio.sleep(0.01)
-                                Invocation.current = self
+                                await self.done(asyncio.sleep(0.01))
                                 did_sleep = True
                             Prog.logger.debug('%s touch the output: %s', self.log_prefix, path)
                             Stat.touch(path)
@@ -816,9 +937,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     break
 
                 except dp.NonOptionalException:
+                    Invocation.current = self
                     if Make.wait_nfs_outputs and waited < Make.nfs_outputs_timeout:
-                        await asyncio.sleep(next_wait)
-                        Invocation.current = self
+                        await self.done(asyncio.sleep(next_wait))
                         did_sleep = True
                         waited += next_wait
                         next_wait *= 2
@@ -834,13 +955,13 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
     def remove_stale_outputs(self) -> None:
         """
-        Delete stale outputs before running a sub-process.
+        Delete stale outputs before running a action.
 
-        This is only done before running the first sub-process of a step.
+        This is only done before running the first action of a step.
         """
         for path in sorted(self.initial_outputs):
             if self.should_remove_stale_outputs and not is_precious(path):
-                if self.is_first_sub_process:  # TODO: Warn if otherwise (keeping the stale output)?
+                if self.is_first_action:  # TODO: Warn if otherwise (keeping the stale output)?
                     Prog.logger.debug('%s remove the stale output: %s', self.log_prefix, path)
                     self.remove_output(path)
             Stat.forget(path)
@@ -880,12 +1001,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     Prog.logger.debug('%s remove the failed output: %s', self.log_prefix, path)
                     self.remove_output(path)
 
-    def should_run_sub_process(self) -> bool:  # pylint: disable=too-many-return-statements
+    def should_run_action(self) -> bool:  # pylint: disable=too-many-return-statements
         """
         Test whether all (required) outputs already exist, and are newer than all input files
         specified so far.
         """
-        if self.must_run_sub_process:
+        if self.must_run_action:
             return True
 
         if self.phony_outputs:
@@ -1004,14 +1125,14 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         return False
 
-    async def run_sub_process(self, kind: str, runner: Callable, *command: Strings) -> None:
+    async def run_action(self,  # pylint: disable=too-many-branches,too-many-statements
+                         kind: str, runner: Callable, *command: Strings, **resources: int) -> None:
         """
-        Spawn a sub-process to actually create some files.
+        Spawn a action to actually create some files.
         """
-        assert id(Invocation.current) == id(self)
-
-        await self.sync()
         Invocation.current = self
+
+        await self.done(self.sync())
 
         run_words = []
         log_words = []
@@ -1025,56 +1146,98 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             raise self.exception
 
         if self.new_persistent_actions:
-            self.new_persistent_actions[-1].run_sub_process(kind, run_words)
+            self.new_persistent_actions[-1].run_action(kind, run_words)
 
-        if not self.should_run_sub_process():
+        if not self.should_run_action():
             if Make.log_skipped_actions:
                 Prog.logger.info('%s skip: %s', self.log_prefix, log_command)
             else:
                 Prog.logger.debug('%s skip: %s', self.log_prefix, log_command)
-            self.did_run_all_sub_processes = False
-            self.is_first_sub_process = False
+            self.did_run_all_actions = False
+            self.is_first_action = False
             if self.new_persistent_actions:
                 self.new_persistent_actions.append(  #
                     PersistentAction(self.new_persistent_actions[-1]))
             return
 
-        self.remove_stale_outputs()
+        resources = Resources.effective(resources)
+        if resources:
+            await self.done(self._use_resources(resources))
 
-        self.oldest_output_path = None
-        self.must_run_sub_process = True
-        self.is_first_sub_process = False
+        try:
+            self.remove_stale_outputs()
 
-        Prog.logger.info('%s run: %s', self.log_prefix, log_command)
+            self.oldest_output_path = None
+            self.must_run_action = True
+            self.is_first_action = False
 
-        process = await runner(*run_words)
+            Prog.logger.info('%s run: %s', self.log_prefix, log_command)
+
+            sub_process = await self.done(runner(*run_words))
+            exit_status = await self.done(sub_process.wait())
+
+            if self.new_persistent_actions:
+                persistent_action = self.new_persistent_actions[-1]
+                persistent_action.done_action()
+                self.new_persistent_actions.append(PersistentAction(persistent_action))
+
+            if exit_status != 0:
+                self.log_and_abort('%s failure: %s' % (self.log_prefix, ' '.join(run_words)))
+                return
+
+            Prog.logger.log(Prog.TRACE, '%s success: %s', self.log_prefix, log_command)
+        finally:
+            Invocation.current = self
+            if resources:
+                if Prog.logger.isEnabledFor(logging.DEBUG):
+                    Prog.logger.debug('%s free resources: %s',
+                                      self.log_prefix, _dict_to_str(resources))
+                Resources.free(resources)
+                if Prog.logger.isEnabledFor(logging.DEBUG):
+                    Prog.logger.debug('%s available resources: %s',
+                                      self.log_prefix, _dict_to_str(Resources.available))
+                await self.done(Resources.condition.acquire())
+                Resources.condition.notify_all()
+                Resources.condition.release()
+
+    async def _use_resources(self, amounts: Dict[str, int]) -> None:
         Invocation.current = self
 
-        exit_status = await process.wait()
-        Invocation.current = self
+        while True:
+            if Resources.have(amounts):
+                if Prog.logger.isEnabledFor(logging.DEBUG):
+                    Prog.logger.debug('%s grab resources: %s',
+                                      self.log_prefix, _dict_to_str(amounts))
+                Resources.grab(amounts)
+                if Prog.logger.isEnabledFor(logging.DEBUG):
+                    Prog.logger.debug('%s available resources: %s',
+                                      self.log_prefix, _dict_to_str(Resources.available))
+                return
 
-        if self.new_persistent_actions:
-            self.new_persistent_actions[-1].done_sub_process()
-            self.new_persistent_actions.append(PersistentAction(self.new_persistent_actions[-1]))
+            if Prog.logger.isEnabledFor(logging.DEBUG):
+                if Prog.logger.isEnabledFor(logging.DEBUG):
+                    Prog.logger.debug('%s available resources: %s',
+                                      self.log_prefix, _dict_to_str(Resources.available))
+                    Prog.logger.debug('%s paused by waiting for resources: %s',
+                                      self.log_prefix, _dict_to_str(amounts))
 
-        if exit_status != 0:
-            self.log_and_abort('%s failure: %s' % (self.log_prefix, ' '.join(run_words)))
-            return
+            await self.done(Resources.condition.acquire())
+            await self.done(Resources.condition.wait())
 
-        Prog.logger.log(Prog.TRACE, '%s success: %s', self.log_prefix, log_command)
+            Resources.condition.release()
 
-    async def sync(self) -> None:  # pylint: disable=too-many-branches
+    async def sync(self) -> Optional[BaseException]:  # pylint: disable=too-many-branches
         """
         Wait until all the async actions queued so far are complete.
 
-        This is implicitly called before running a sub-process.
+        This is implicitly called before running a action.
         """
-        assert id(Invocation.current) == id(self)
+        Invocation.current = self
 
         if self.async_actions:
             Prog.logger.debug('%s sync', self.log_prefix)
-            results: List[Optional[StepException]] = await asyncio.gather(*self.async_actions)
-            Invocation.current = self
+            results: List[Optional[BaseException]] = \
+                await self.done(asyncio.gather(*self.async_actions))
             if self.exception is None:
                 for exception in results:
                     if exception is not None:
@@ -1119,7 +1282,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if failed_inputs:
             self.abort('%s failed to build the required target(s)' % self.log_prefix)
-            return
+            return self.exception
 
         if self.exception is None \
                 and Prog.logger.isEnabledFor(logging.DEBUG) \
@@ -1127,6 +1290,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             Prog.logger.debug('%s newest input: %s time: %s',
                               self.log_prefix, self.newest_input_path,
                               _datetime_from_nanoseconds(self.newest_input_mtime_ns))
+
+        return self.exception
 
     def config_param(self, name: str, default: Any = None) -> Any:
         """
@@ -1170,7 +1335,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             Prog.logger.debug('%s to the new persistent configuration:\n%s',
                               self.log_prefix, new_config_text)
 
-        self.must_run_sub_process = True
+        self.must_run_action = True
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
         with open(self.config_path, 'w') as file:
             file.write(new_config_text)
@@ -1185,6 +1350,14 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         self.kwargs['step'] = self.step.name()
         self.config_values = Config.values_for_context(self.kwargs)
         del self.kwargs['step']
+
+    async def done(self, awaitable: Awaitable) -> Any:
+        """
+        Await some non-DynaMake function.
+        """
+        result = await awaitable
+        Invocation.current = self
+        return result
 
 
 _OLD_DATES: Dict[int, float] = {}
@@ -1257,18 +1430,17 @@ def require(path: str) -> None:
     Invocation.current.require(path)
 
 
-async def sync() -> None:
+async def sync() -> Optional[BaseException]:
     """
     Wait until all the input files specified so far are built.
 
-    This is invoked automatically before running sub-processes.
+    This is invoked automatically before running actions.
     """
     current = Invocation.current
-    await current.sync()
-    Invocation.current = current
+    return await current.done(current.sync())
 
 
-async def shell(*command: Strings) -> None:
+async def shell(*command: Strings, **resources: int) -> None:
     """
     Execute a shell command.
 
@@ -1277,23 +1449,22 @@ async def shell(*command: Strings) -> None:
     This first waits until all input files requested so far are ready.
     """
     current = Invocation.current
-    await current.run_sub_process('shell', _run_shell, *command)
-    Invocation.current = current
+    await current.done(current.run_action('shell', _run_shell, *command, **resources))
 
 
 def _run_shell(*command: str) -> Any:
     return asyncio.create_subprocess_shell(' '.join(command))
 
 
-async def spawn(*command: Strings) -> None:
+async def spawn(*command: Strings, **resources: int) -> None:
     """
     Execute an external program with arguments.
 
     This first waits until all input files requested so far are ready.
     """
     current = Invocation.current
-    await current.run_sub_process('spawn', asyncio.create_subprocess_exec, *command)
-    Invocation.current = current
+    await current.done(current.run_action('spawn', asyncio.create_subprocess_exec,
+                                          *command, **resources))
 
 
 def config_param(name: str, default: Any) -> Any:
@@ -1356,8 +1527,7 @@ def _define_parameters() -> None:
           description='Whether to rebuild outputs if the actions have changed')
 
     @config(top=True)
-    def _use_parameters(  # pylint: disable=unused-argument
-        *,
+    def _use_parameters(  # pylint: disable=unused-argument,too-many-arguments
         failure_aborts_build: bool = env(),
         remove_stale_outputs: bool = env(),
         wait_nfs_outputs: bool = env(),
@@ -1372,15 +1542,16 @@ def _define_parameters() -> None:
 
 
 def _collect_parameters() -> None:
-    Make.failure_aborts_build = Prog.current.get('failure_aborts_build', make)
-    Make.remove_stale_outputs = Prog.current.get('remove_stale_outputs', make)
-    Make.wait_nfs_outputs = Prog.current.get('wait_nfs_outputs', make)
-    Make.nfs_outputs_timeout = Prog.current.get('nfs_outputs_timeout', make)
-    Make.touch_success_outputs = Prog.current.get('touch_success_outputs', make)
-    Make.remove_failed_outputs = Prog.current.get('remove_failed_outputs', make)
-    Make.remove_empty_directories = Prog.current.get('remove_empty_directories', make)
-    Make.log_skipped_actions = Prog.current.get('log_skipped_actions', make)
-    Make.rebuild_changed_actions = Prog.current.get('rebuild_changed_actions', make)
+    Resources.available['jobs'] = Resources.total['jobs'] = int(Prog.current.get_parameter('jobs'))
+    Make.failure_aborts_build = Prog.current.get_parameter('failure_aborts_build')
+    Make.remove_stale_outputs = Prog.current.get_parameter('remove_stale_outputs')
+    Make.wait_nfs_outputs = Prog.current.get_parameter('wait_nfs_outputs')
+    Make.nfs_outputs_timeout = Prog.current.get_parameter('nfs_outputs_timeout')
+    Make.touch_success_outputs = Prog.current.get_parameter('touch_success_outputs')
+    Make.remove_failed_outputs = Prog.current.get_parameter('remove_failed_outputs')
+    Make.remove_empty_directories = Prog.current.get_parameter('remove_empty_directories')
+    Make.log_skipped_actions = Prog.current.get_parameter('log_skipped_actions')
+    Make.rebuild_changed_actions = Prog.current.get_parameter('rebuild_changed_actions')
 
 
 def make(parser: ArgumentParser, *,
@@ -1392,6 +1563,7 @@ def make(parser: ArgumentParser, *,
     The optional ``adapter`` may perform additional adaptation of the execution environment based on
     the parsed command-line arguments before the actual function(s) are invoked.
     """
+    Func.collect_indirect_invocations = False
     Prog.load_modules()
     Prog.logger = logging.getLogger(logger_name or sys.argv[0])
     logging.getLogger('asyncio').setLevel('WARN')
@@ -1420,12 +1592,18 @@ def make(parser: ArgumentParser, *,
         or list(dp.each_string(default_targets))
 
     Prog.logger.log(Prog.TRACE, '[.] make: %s', ' '.join(targets))
+    if Prog.logger.isEnabledFor(logging.DEBUG):
+        for value in Resources.available.values():
+            if value > 0:
+                Prog.logger.debug('[.] make: available resources: %s',
+                                  _dict_to_str(Resources.available))
+                break
     # TODO: Switch to `asyncio.run(sync())` in Python 3.7.
     for target in targets:
         require(target)
     try:
-        result: Optional[StepException] = run(sync())
-    except StepException as exception:
+        result: Optional[BaseException] = run(Invocation.top.sync())
+    except BaseException as exception:  # pylint: disable=broad-except
         result = exception
 
     if result is None:
@@ -1437,6 +1615,13 @@ def make(parser: ArgumentParser, *,
         if not Prog.is_test:
             sys.exit(1)
         raise result
+
+
+async def done(awaitable: Awaitable) -> Any:
+    """
+    Await some non-DynaMake function.
+    """
+    return await Invocation.current.done(awaitable)
 
 
 def run(awaitable: Awaitable) -> Any:
@@ -1451,6 +1636,8 @@ def _extra_parameter_help(parameter_name: str) -> str:
     for func_name in Func.names_by_parameter[parameter_name]:
         for pattern in Step.by_name[func_name].output:
             globs.append(dp.capture2glob(pattern))
+    if not globs:
+        return ''
     return '. Used when making: %s' % ' '.join(sorted(globs))
 
 
@@ -1464,6 +1651,7 @@ def reset_make() -> None:
     reset_application()
     Prog.DEFAULT_MODULE = 'DynaMake'
     Prog.DEFAULT_CONFIG = 'DynaConf.yaml'
+    Resources.reset()
     Make.reset()
     Config.reset()
     Invocation.reset()
