@@ -5,11 +5,9 @@ Common utilities for tests.
 from dynamake.application import Prog
 from dynamake.make import _reset_test_dates
 from dynamake.make import reset_make
-from testfixtures import StringComparison  # type: ignore
 from textwrap import dedent
 from unittest import TestCase
 
-import asyncio
 import logging
 import os
 import shutil
@@ -17,9 +15,6 @@ import sys
 import tempfile
 
 # pylint: disable=missing-docstring
-
-
-StringComparison.strip = lambda self: self
 
 
 def undent(content: str) -> str:
@@ -60,15 +55,10 @@ class TestWithFiles(TestWithReset):
         self.temporary_directory = tempfile.mkdtemp()
         os.chdir(os.path.expanduser(self.temporary_directory))
         sys.path.insert(0, os.getcwd())
-        self.exit = sys.exit
-        sys.exit = _exit  # type: ignore
 
     def tearDown(self) -> None:
-        pending = asyncio.Task.all_tasks()
-        asyncio.get_event_loop().run_until_complete(asyncio.gather(*pending))
         os.chdir(self.previous_directory)
         shutil.rmtree(self.temporary_directory)
-        sys.exit = self.exit
 
     def expect_file(self, path: str, expected: str) -> None:
         with open(path, 'r') as file:

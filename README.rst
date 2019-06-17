@@ -202,6 +202,14 @@ For example, inside each step, you can do the following:
   the execution of a shell command or an external program. This will automatically ``sync`` first
   to ensure all required input files have completed to build.
 
+.. note::
+
+   **Inside a step, do not simply ``await`` co-routines that are not provided by DynaMake.**
+
+   DynaMake tracks the current step, and invoking ``await`` of some other co-routines will confuse
+   it. Use :py:func:`dynamake.make.wait_for` to ``await`` on external co-routines. That is,
+   write ``await done(something())`` rather than ``await something()``.
+
 * Use Python code to examine the file system (it is recommended to use
   :py:class:`dynamake.stat.Stat` for cached ``stat`` operations), analyze the content of
   required input files (following a ``sync``), perform control flow operations (branches, loops),
@@ -467,12 +475,12 @@ option which is then handled by the provided ``make`` main function.
 * ``-remove_empty_directories`` controls whether DynaMake will remove empty directories resulting
   from removing any output file(s). By default this is ``False``.
 
-* ``--maximal_parallel_processes`` controls the maximal number of ``shell`` or ``spawn`` actions
-  that are invoked at the same time. By default this is the number of (logical) processors in the
-  system (``nproc``). A value of ``1`` will force executing one action at a time. A value of ``0``
-  will allow for unlimited number of parallel actions. This is useful if actions are to be be
-  executed on a cluster of servers instead of on the local machine, or if some other resource(s) are
-  used to restrict the number of parallel actions (see below).
+* ``--jobs`` controls the maximal number of ``shell`` or ``spawn`` actions that are invoked at the
+  same time. By default this is the number of (logical) processors in the system (``nproc``). A
+  value of ``1`` will force executing one action at a time. A value of ``0`` will allow for
+  unlimited number of parallel actions. This is useful if actions are to be be executed on a cluster
+  of servers instead of on the local machine, or if some other resource(s) are used to restrict the
+  number of parallel actions (see below).
 
 .. note::
 
@@ -529,15 +537,16 @@ Parallel Resources
 As mentioned above, DynaMake will perform all ``require`` operations concurrently, up to the next
 ``sync`` call of the step (which automatically happens before any ``shell`` or ``spawn`` action). As
 a result, by default DynaMake will execute several actions in parallel, subject to the setting of
-``--maximal_parallel_processes``.
+``--jobs``.
 
 It is possible to define some additional resources using :py:func:`dynamake.make.resources` to
-restrict parallel execution. For example, specifying ``resources('ram', 'io')`` will create
-two new resources, ``ram`` and ``io``, which must have been previously defined using
-configuration ``Param`` calls.
+restrict parallel execution. For example, specifying ``resource_parameters(ram=1, io=1)`` will
+create two new resources, ``ram`` and ``io``, which must have been previously defined using
+configuration ``Param`` calls. The values specified are the default consumption for actions that do
+not specify an explicit value.
 
 Then, when invoking ``shell`` or ``spawn``, it is possible to add ``ram=...`` and/or ``io=...``
-named arguments to the call, to specify the expected resource consumption of the action. DynaMake
+named arguments to the call, to override the expected resource consumption of the action. DynaMake
 will ensure that the sum of these expected consumptions will never exceed the established limit.
 
 Action Configuration
@@ -739,7 +748,7 @@ configured by the ``--log_level`` command line option. That is, just write
 ``Prog.logger.debug(...)`` etc.
 
 The :py:func:`dynamain.application.parallel` function allows multiple invocations of some function
-in parallel. The number of processes used is controlled by the ``--maximal_parallel_processes``. Any
+in parallel. The number of processes used is controlled by the ``--jobs`` command line option. Any
 nested ``parallel`` invocation will execute serially, to ensure this limit is respected. To make it
 easier to debug code, :py:func:`dynamain.application.serial` has exactly the same interface, but
 executes the calls serially.

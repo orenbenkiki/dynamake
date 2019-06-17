@@ -431,7 +431,7 @@ class Prog:
                                    % (parameter_name, function.__module__, function.__qualname__))
 
         for parameter_name in self.parameters:
-            if parameter_name not in Func.names_by_parameter:
+            if parameter_name not in Func.names_by_parameter and parameter_name != 'jobs':
                 raise RuntimeError('The parameter: %s is not used by any configurable function'
                                    % parameter_name)
 
@@ -448,13 +448,12 @@ class Prog:
         Prog.current.parameters[parameter.name] = parameter
         Prog.current.parameter_values[parameter.name] = parameter.default
 
-    def get(self, name: str, function: Callable) -> Any:
+    def get_parameter(self, name: str) -> Any:
         """
         Access the value of some parameter.
         """
         if name not in self.parameter_values:
-            raise RuntimeError('Unknown parameter: %s used by the function: %s.%s'
-                               % (name, function.__module__, function.__qualname__))
+            raise RuntimeError('Unknown parameter: %s' % name)
         return self.parameter_values[name]
 
     @staticmethod
@@ -783,11 +782,14 @@ class Parallel:
         Parallel._indexed_overrides = []
 
     @staticmethod
-    def _calls(processes: int, invocations: int,  # pylint: disable=too-many-locals
+    def _calls(invocations: int,  # pylint: disable=too-many-locals
                function: Callable, *fixed_args: Any,
                kwargs: Optional[Callable[[int], Dict[str, Any]]] = None,
                overrides: Optional[Callable[[int], Dict[str, Any]]] = None,
                **fixed_kwargs: Any) -> List[Any]:
+        assert Prog.current is not None
+        processes_count = processes()
+
         previous_process_index = Parallel._process_index
         previous_function = Parallel._function
         previous_fixed_args = Parallel._fixed_args
@@ -795,8 +797,9 @@ class Parallel:
         previous_indexed_kwargs = Parallel._indexed_kwargs
         previous_indexed_overrides = Parallel._indexed_overrides
 
-        with Parallel._fork_index:  # type: ignore
-            Parallel._fork_index.value += 1
+        if processes_count > 1:
+            with Parallel._fork_index:  # type: ignore
+                Parallel._fork_index.value += 1
 
         Parallel._process_index = Value(ctypes.c_int32, lock=True)  # type: ignore
         Parallel._process_index.value = 0
@@ -809,7 +812,10 @@ class Parallel:
             [{} if overrides is None else overrides(index) for index in range(invocations)]
 
         try:
-            with Pool(min(processes, invocations), Parallel._initialize_process) as pool:
+            if processes_count == 1:
+                return [Parallel._call(index) for index in range(invocations)]
+
+            with Pool(processes_count, Parallel._initialize_process) as pool:
                 return pool.map(Parallel._call, range(invocations))
         finally:
             Parallel._process_index = previous_process_index
@@ -822,7 +828,7 @@ class Parallel:
     @staticmethod
     def _call(index: int) -> Any:  # TODO: Appears uncovered since runs in a separate thread.
         assert Parallel._function is not None
-        with override(processes=1, **Parallel._indexed_overrides[index]):
+        with override(jobs=1, **Parallel._indexed_overrides[index]):
             return Parallel._function(*Parallel._fixed_args,
                                       **Parallel._fixed_kwargs,
                                       **Parallel._indexed_kwargs[index])
@@ -836,7 +842,7 @@ class Parallel:
         current_thread().name = 'Fork-%s.Thread-%s' % (fork_index, process_index)
 
 
-def parallel(processes: int, invocations: int, function: Callable, *fixed_args: Any,
+def parallel(invocations: int, function: Callable, *fixed_args: Any,
              kwargs: Optional[Callable[[int], Dict[str, Any]]] = None,
              overrides: Optional[Callable[[int], Dict[str, Any]]] = None,
              **fixed_kwargs: Any) -> List[Any]:
@@ -845,8 +851,6 @@ def parallel(processes: int, invocations: int, function: Callable, *fixed_args: 
 
     Parameters
     ----------
-    processeses
-        The number of processes to fork.
     invocations
         The number of function invocations needed.
     fixed_args
@@ -866,8 +870,22 @@ def parallel(processes: int, invocations: int, function: Callable, *fixed_args: 
     List[Any]
         The list of results from all the function invocations, in order.
     """
-    return Parallel._calls(processes, invocations, function,  # pylint: disable=protected-access
+    if invocations == 0:
+        return []
+    return Parallel._calls(invocations, function,  # pylint: disable=protected-access
                            *fixed_args, kwargs=kwargs, overrides=overrides, **fixed_kwargs)
+
+
+def serial(*args: Any, **kwargs: Any) -> List[Any]:
+    """
+    Identical to :py:func:`dynamake.application.parallal` except that runs the invocations in
+    serial.
+
+    This is useful when one wants to temporarily convert a parallel call to a serial call,
+    for debugging.
+    """
+    with override(jobs=1):
+        return parallel(*args, **kwargs)
 
 
 @contextmanager
@@ -886,7 +904,7 @@ def override(**values: Any) -> Iterator[None]:
     as if the parameter ``foo`` was configured to have the specified ``value``.
     """
     for name in values:
-        if name not in Prog.current.parameter_values and name != 'processes':
+        if name not in Prog.current.parameter_values and name != 'jobs':
             raise RuntimeError('Unknown override parameter: %s' % name)
     old_values = Prog.current.parameter_values
     old_explicit_parameters = Prog.current.explicit_parameters.copy()
@@ -900,6 +918,28 @@ def override(**values: Any) -> Iterator[None]:
         Prog.current.explicit_parameters = old_explicit_parameters
 
 
+def _define_parameters() -> None:
+    Param(name='jobs', short='j', metavar='INT', default=os.cpu_count(),
+          parser=dp.str2int(min=0), group='global options',
+          description='The maximal number of parallel threads and/or processes')
+
+
+def processes() -> int:
+    """
+    Return the number of parallel processes at the current context.
+
+    This is restricted by the ``--jobs`` command line option, and is reduced to
+    one when nested inside a parallel call.
+    """
+    assert Prog.current is not None
+    processes_count = Prog.current.get_parameter('jobs')
+    cpus = os.cpu_count()
+    assert cpus is not None
+    if processes_count == 0:
+        return cpus
+    return min(processes_count, cpus)
+
+
 def reset_application() -> None:
     """
     Reset all the current state, for tests.
@@ -907,6 +947,7 @@ def reset_application() -> None:
     Func.reset()
     Prog.reset()
     Parallel.reset()
+    _define_parameters()
 
 
 def main(parser: ArgumentParser, functions: Optional[List[str]] = None,
