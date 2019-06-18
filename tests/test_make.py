@@ -879,7 +879,7 @@ class TestMain(TestWithFiles):
             @step(output=phony('all'))
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
-                await done(asyncio.sleep(0.1))
+                await done(asyncio.sleep(0.2))
                 require('bar')
                 await shell('true')
 
@@ -1557,7 +1557,7 @@ class TestMain(TestWithFiles):
         def _register_with() -> None:
             @step(output=['all', 'foo'])
             async def make_all() -> None:  # pylint: disable=unused-variable
-                await shell('touch all ; touch foo')
+                await shell('touch all ; sleep 0.1 ; touch foo')
 
         sys.argv += ['--jobs', '0']
 
@@ -1573,9 +1573,9 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
             ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): foo'),
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
-            ('dynamake', 'INFO', '[.1] make_all: run: touch all ; touch foo'),
+            ('dynamake', 'INFO', '[.1] make_all: run: touch all ; sleep 0.1 ; touch foo'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
-            ('dynamake', 'TRACE', '[.1] make_all: success: touch all ; touch foo'),
+            ('dynamake', 'TRACE', '[.1] make_all: success: touch all ; sleep 0.1 ; touch foo'),
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
             ('dynamake', 'DEBUG', '[.1] make_all: has the output: all time: 1'),
             ('dynamake', 'DEBUG', '[.1] make_all: has the output: foo time: 2'),
@@ -1603,9 +1603,9 @@ class TestMain(TestWithFiles):
             ('dynamake', 'WHY',
              '[.1] make_all: must run actions to create the missing output(s): all'),
             ('dynamake', 'DEBUG', '[.1] make_all: remove the stale output: foo'),
-            ('dynamake', 'INFO', '[.1] make_all: run: touch all ; touch foo'),
+            ('dynamake', 'INFO', '[.1] make_all: run: touch all ; sleep 0.1 ; touch foo'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
-            ('dynamake', 'TRACE', '[.1] make_all: success: touch all ; touch foo'),
+            ('dynamake', 'TRACE', '[.1] make_all: success: touch all ; sleep 0.1 ; touch foo'),
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
             ('dynamake', 'DEBUG', '[.1] make_all: has the output: all time: 3'),
             ('dynamake', 'DEBUG', '[.1] make_all: has the output: foo time: 4'),
