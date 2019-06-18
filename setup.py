@@ -12,8 +12,9 @@ VERSION = '0.3'
 
 
 def readme():
+    sphinx = re.compile(':py:[a-z]+:(`[^`]+`)')
     with open('README.rst') as readme_file:
-        return readme_file.read()
+        return sphinx.sub('`\\1`', readme_file.read())
 
 
 def version_from_hg():
@@ -186,6 +187,7 @@ setup(name='dynamake',
       version=generate_version(),
       description='Dynamic Make in Python',
       long_description=readme(),
+      long_description_content_type='text/x-rst',
       classifiers=[
           'Development Status :: 3 - Alpha',
           'License :: OSI Approved :: MIT License',
