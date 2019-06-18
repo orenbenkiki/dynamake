@@ -180,7 +180,7 @@ class ToxCommand(SimpleCommand):
 INSTALL_REQUIRES = ['prwlock', 'pyyaml', 'sortedcontainers', 'termcolor']
 TESTS_REQUIRE = ['nose', 'testfixtures', 'coverage']
 DEVELOP_REQUIRES = ['autopep8', 'isort', 'mypy', 'pylint', 'sphinx', 'sphinx_rtd_theme', 'tox',
-                    'numpy', 'pandas', 'feather-format']
+                    'feather-format']
 
 
 setup(name='dynamake',
@@ -196,7 +196,7 @@ setup(name='dynamake',
           'Topic :: Software Development :: Build Tools',
           'Intended Audience :: Developers',
       ],
-      keywords='logging configuration',
+      keywords='make logging configuration',
       url='https://bitbucket.org/orenbenkiki/dynamake',
       author='Oren Ben-Kiki',
       author_email='oren@ben-kiki.org',
