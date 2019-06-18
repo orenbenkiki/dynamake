@@ -8,7 +8,7 @@ import os
 import re
 import subprocess
 
-VERSION = '0.2'
+VERSION = '0.3'
 
 
 def readme():
