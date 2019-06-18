@@ -42,6 +42,7 @@ import dynamake.patterns as dp
 import logging
 import os
 import re
+import shlex
 import sys
 import yaml
 
@@ -364,7 +365,7 @@ class PersistentAction:
         """
         Set the executed command of the action.
         """
-        self.command = command
+        self.command = [word for word in command if not dp.is_phony(word)]
         self.kind = kind
         self.start = datetime.now()
 
@@ -454,6 +455,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
     #: The files that failed to build and must not be used by other steps.
     poisoned: Set[str]
 
+    #: A running counter of the executed actions.
+    actions_count: int
+
     @staticmethod
     def reset() -> None:
         """
@@ -466,6 +470,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Invocation.up_to_date = {}
         Invocation.phony = set()
         Invocation.poisoned = set()
+        Invocation.actions_count = 0
 
     def __init__(self, step: Optional[Step], **kwargs: Any) -> None:  # pylint: disable=redefined-outer-name
         """
@@ -572,11 +577,14 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         #: Whether we should remove stale outputs before running the next action.
         self.should_remove_stale_outputs = Make.remove_stale_outputs
 
-        #: The configuration for the step, if used.
-        self.config_values: Optional[Dict[str, Any]] = None
+        #: The full configuration for the step, if used.
+        self.full_config_values: Optional[Dict[str, Any]] = None
 
         #: The path to the persistent configuration file, if it is used.
         self.config_path: Optional[str] = None
+
+        #: The persistent configuration for the step, if the file is used.
+        self.file_config_values: Optional[Dict[str, Any]] = None
 
     def read_old_persistent_actions(self) -> None:
         """
@@ -1134,19 +1142,21 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         await self.done(self.sync())
 
-        run_words = []
-        log_words = []
-        for word in dp.each_string(*command):
-            run_words.append(word)
-            log_words.append(''.join(dp.color(word)))
-        log_command = ' '.join(log_words)
+        run_parts = []
+        log_parts = []
+        for part in dp.each_string(*command):
+            run_parts.append(part)
+            if kind != 'shell':
+                part = dp.copy_annotations(part, shlex.quote(part))
+            log_parts.append(dp.color(part))
+        log_command = ' '.join(log_parts)
 
         if self.exception is not None:
             Prog.logger.debug("%s can't run: %s", self.log_prefix, log_command)
             raise self.exception
 
         if self.new_persistent_actions:
-            self.new_persistent_actions[-1].run_action(kind, run_words)
+            self.new_persistent_actions[-1].run_action(kind, run_parts)
 
         if not self.should_run_action():
             if Make.log_skipped_actions:
@@ -1159,6 +1169,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 self.new_persistent_actions.append(  #
                     PersistentAction(self.new_persistent_actions[-1]))
             return
+
+        Invocation.actions_count += 1
 
         resources = Resources.effective(resources)
         if resources:
@@ -1173,7 +1185,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
             Prog.logger.info('%s run: %s', self.log_prefix, log_command)
 
-            sub_process = await self.done(runner(*run_words))
+            sub_process = await self.done(runner(*run_parts))
             exit_status = await self.done(sub_process.wait())
 
             if self.new_persistent_actions:
@@ -1182,7 +1194,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 self.new_persistent_actions.append(PersistentAction(persistent_action))
 
             if exit_status != 0:
-                self.log_and_abort('%s failure: %s' % (self.log_prefix, ' '.join(run_words)))
+                self.log_and_abort('%s failure: %s' % (self.log_prefix, log_command))
                 return
 
             Prog.logger.log(Prog.TRACE, '%s success: %s', self.log_prefix, log_command)
@@ -1293,24 +1305,37 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         return self.exception
 
-    def config_param(self, name: str, default: Any = None) -> Any:
+    def config_param(self, name: str, default: Any = None, keep_in_file: bool = False) -> Any:
         """
         Access the value of a parameter from the step-specific configuration.
+
+        If ``keep_in_file`` is ``False``, then the parameter will be removed from the generated
+        persistent configuration file (if any). This ensures that when changing parameters that only
+        affect the internals of the build step, the resulting actions will not be triggered unless
+        they actually changed as well.
         """
         self._ensure_config_values()
-        assert self.config_values is not None
-        return self.config_values.get(name, default)
+        assert self.full_config_values is not None
+        assert self.file_config_values is not None
+        value = self.full_config_values.get(name, default)
+
+        if not keep_in_file:
+            for name_in_file in [name, name + '?']:
+                if name_in_file in self.file_config_values:
+                    del self.file_config_values[name_in_file]
+
+        return value
 
     def config_file(self) -> str:
         """
         Use the step-specific configuration file in the following step action(s).
         """
         if self.config_path is not None:
-            assert self.config_values is not None
+            assert self.file_config_values is not None
             return self.config_path
 
         self._ensure_config_values()
-        new_config_text = yaml.dump(self.config_values)
+        new_config_text = yaml.dump(self.file_config_values)
 
         self.config_path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.config.yaml')
 
@@ -1342,13 +1367,18 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         return self.config_path
 
     def _ensure_config_values(self) -> None:
-        if self.config_values is not None:
+        if self.full_config_values is not None:
             return
 
         assert 'step' not in self.kwargs
         assert self.step is not None
         self.kwargs['step'] = self.step.name()
-        self.config_values = Config.values_for_context(self.kwargs)
+        self.file_config_values = Config.values_for_context(self.kwargs)
+        self.full_config_values = {}
+        for name, value in self.file_config_values.items():
+            if name[-1] == '?':
+                name = name[:-1]
+            self.full_config_values[name] = value
         del self.kwargs['step']
 
     async def done(self, awaitable: Awaitable) -> Any:
@@ -1465,6 +1495,27 @@ async def spawn(*command: Strings, **resources: int) -> None:
     current = Invocation.current
     await current.done(current.run_action('spawn', asyncio.create_subprocess_exec,
                                           *command, **resources))
+
+
+async def submit(*command: Strings, **resources: int) -> None:
+    """
+    Execute an external command using a submit prefix.
+
+    This allows the action configuration file to specify a ``run_prefix`` and/or ``run_suffix``
+    injected before and/or after the spawned command. The result is treated as a shell command. This
+    allows setting up environment variables, submitting the command to execute on a compute cluster,
+    etc.
+    """
+    current = Invocation.current
+    prefix = current.config_param('run_prefix', [])
+    suffix = current.config_param('run_suffix', [])
+    if prefix or suffix:
+        wrapped = dp.phony(prefix) \
+            + [dp.copy_annotations(part, shlex.quote(part)) for part in dp.each_string(*command)] \
+            + dp.phony(suffix)
+        await shell(*wrapped, **resources)
+    else:
+        await spawn(*command, **resources)
 
 
 def config_param(name: str, default: Any) -> Any:

@@ -57,6 +57,8 @@ class TestWithFiles(TestWithReset):
         sys.path.insert(0, os.getcwd())
 
     def tearDown(self) -> None:
+        if 'DYNAMAKE_JOBS' in os.environ:
+            del os.environ['DYNAMAKE_JOBS']
         os.chdir(self.previous_directory)
         shutil.rmtree(self.temporary_directory)
 

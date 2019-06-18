@@ -406,6 +406,12 @@ cases, control formatting.
   ``clean``. When a step has any ``phony`` output(s), its actions are always executed. Similarly, if
   a step has any ``phony`` required input(s), its actions are also always executed.
 
+  If using persistent state to track actions (see below), this state will ignore any parts of
+  invoked commands that are marked as ``phony``. This prevents changes irrelevant command line
+  options from triggering a rebuild. For example, changing the value passed to the ``--jobs``
+  command line option of a program should not impact its outputs, and therefore should not trigger a
+  rebuild.
+
 * :py:func:`dynamake.patterns.emphasized` is used by ``shell`` and ``spawn``. Arguments
   so annotated are printed in **bold** in the log file. This makes it easier to see the important
   bits of long command lines.
@@ -477,10 +483,12 @@ option which is then handled by the provided ``make`` main function.
 
 * ``--jobs`` controls the maximal number of ``shell`` or ``spawn`` actions that are invoked at the
   same time. By default this is the number of (logical) processors in the system (``nproc``). A
-  value of ``1`` will force executing one action at a time. A value of ``0`` will allow for
-  unlimited number of parallel actions. This is useful if actions are to be be executed on a cluster
-  of servers instead of on the local machine, or if some other resource(s) are used to restrict the
-  number of parallel actions (see below).
+  value of ``1`` will force executing one action at a time. You can override this default using the
+  ``DYNAMAKE_JOBS`` environment variable.
+
+  A value of ``0`` will allow for unlimited number of parallel actions. This is useful if actions
+  are to be be executed on a cluster of servers instead of on the local machine, or if some other
+  resource(s) are used to restrict the number of parallel actions (see below).
 
 .. note::
 
@@ -598,7 +606,7 @@ any.
 
 Explicitly using configuration parameters as shown above is needed when executing generic programs.
 If, however, the action invokes a program implemented using the :py:mod:`dynamake.application`
-functions, it is possible to do better, by using a generated per-step configuration file. For
+functions, it is possible to do better, by using a generated action configuration file. For
 example:
 
 .. code-block:: python
@@ -628,6 +636,31 @@ The paths to the generated configuration files are similar to the path to the pe
 files: ``.dynamake/step_name.config.yaml`` or
 ``.dynamake/step_name/param=value&param=value.config.yaml``. Thus, if for some reason you want to
 avoid all persistent state, you should not use this functionality.
+
+As an additional convenience, DynaMake provides the :py:func:`dynamake.make.submit` function which
+allows the action configuration file to specify a ``run_prefix`` and/or ``run_suffix`` around what
+would otherwise be a normal `spawn` action. For example:
+
+.. code-block:: python
+
+    @dm.step(output='foo')
+    async def make_foo() -> None:
+        require('bar')
+        await spawn('compute_foo_from_bar', ...)
+
+Combined with the YAML configuration file:
+
+.. code-block:: yaml
+
+    - when:
+        step: make_foo
+      then:
+        run_prefix: run_on_compute_cluster
+
+Will result in DynaMake executing the ``shell`` command ``run_on_compute_cluster
+compute_foo_from_bar ...``. Both the prefix and suffix are marked as ``phony`` so modifying them
+will not trigger a rebuild. By default both prefix and suffix are empty, in which case ``submit``
+behaves identically to ``spawn``.
 
 Logging
 .......
@@ -663,7 +696,7 @@ Configurable Applications
 
 A major use case for DynaMake is automating scientific computation pipelines. Such pipelines involve
 multiple actions, which are often also implemented in Python. Each such action also has its own
-configuration parameters, which we'd like to control using per-step configuration as described
+configuration parameters, which we'd like to control using action configuration as described
 above.
 
 A realistic system has multiple such functions that need to be invoked. It is a hassle to have to

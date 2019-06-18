@@ -919,7 +919,19 @@ def override(**values: Any) -> Iterator[None]:
 
 
 def _define_parameters() -> None:
-    Param(name='jobs', short='j', metavar='INT', default=os.cpu_count(),
+    default_jobs = os.cpu_count()
+    dynamake_jobs = os.getenv('DYNAMAKE_JOBS')
+    if dynamake_jobs:
+        try:
+            from_env = int(dynamake_jobs)
+        except ValueError:
+            from_env = -1
+        if from_env < 0:
+            Prog.logger.warn('ignoring invalid value: %s for: DYNAMAKE_JOBS' % dynamake_jobs)
+        else:
+            default_jobs = from_env
+
+    Param(name='jobs', short='j', metavar='INT', default=default_jobs,
           parser=dp.str2int(min=0), group='global options',
           description='The maximal number of parallel threads and/or processes')
 

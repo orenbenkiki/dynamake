@@ -2215,7 +2215,7 @@ class TestMain(TestWithFiles):
             async def make_bar() -> None:  # pylint: disable=unused-variable
                 await shell('touch bar')
 
-        sys.argv += ['--jobs', '1']
+        os.environ['DYNAMAKE_JOBS'] = '1'
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, log=[
