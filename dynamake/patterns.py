@@ -394,6 +394,39 @@ def emphasized(*patterns: Any) -> Any:  # type: ignore
     return strings
 
 # pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+
+@overload
+def color(string: str) -> str: ...
+
+
+@overload
+def color(not_string: NotString) -> List[str]: ...
+
+
+@overload
+def color(first: Strings, second: Strings, *strings: Strings) -> List[str]: ...
+
+# pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+
+def color(*strings: Any) -> Any:  # type: ignore
+    """
+    Return the strings, replacing any that were :py:func:`dynamake.patterns.emphasized` by a colored
+    version.
+    """
+    result = []
+    for string in each_string(*strings):
+        if is_emphasized(string):
+            result.append(colored(string, attrs=['bold']))
+        else:
+            result.append(string)
+    if len(strings) == 1 and isinstance(strings[0], str):
+        assert len(result) == 1
+        return result[0]
+    return result
+
+
 # pylint: enable=function-redefined
 
 
@@ -430,20 +463,6 @@ def is_emphasized(string: str) -> bool:
     Whether a string has been annotated as :py:func:`dynamake.patterns.emphasized`.
     """
     return isinstance(string, AnnotatedStr) and string.emphasized
-
-
-def color(*strings: Strings) -> List[str]:
-    """
-    Return the strings, replacing any that were :py:func:`dynamake.patterns.emphasized` by a colored
-    version.
-    """
-    result = []
-    for string in each_string(*strings):
-        if is_emphasized(string):
-            result.append(colored(string, attrs=['bold']))
-        else:
-            result.append(string)
-    return result
 
 
 def copy_annotations(source: str, target: str) -> str:
