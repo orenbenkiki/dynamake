@@ -2294,11 +2294,12 @@ class TestMain(TestWithFiles):
             async def make_bar() -> None:  # pylint: disable=unused-variable
                 await shell('touch bar', jobs=0)
 
+        sys.argv += ['--jobs', '8']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, log=[
             ('dynamake', 'TRACE', '[.] make: all'),
-            ('dynamake', 'DEBUG', '[.] make: available resources: foo=2,jobs=56'),
+            ('dynamake', 'DEBUG', '[.] make: available resources: foo=2,jobs=8'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
@@ -2314,7 +2315,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'WHY',
              '[.1.1] make_foo: must run actions to create the missing output(s): foo'),
             ('dynamake', 'DEBUG', '[.1.1] make_foo: grab resources: foo=2,jobs=1'),
-            ('dynamake', 'DEBUG', '[.1.1] make_foo: available resources: foo=0,jobs=55'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foo: available resources: foo=0,jobs=7'),
             ('dynamake', 'INFO', '[.1.1] make_foo: run: sleep 0.2 ; touch foo'),
             ('dynamake', 'DEBUG', '[.1] make_all: build the required: bar'),
             ('dynamake', 'DEBUG',
@@ -2326,20 +2327,20 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '[.1.2] make_bar: synced'),
             ('dynamake', 'WHY',
              '[.1.2] make_bar: must run actions to create the missing output(s): bar'),
-            ('dynamake', 'DEBUG', '[.1.2] make_bar: available resources: foo=0,jobs=55'),
+            ('dynamake', 'DEBUG', '[.1.2] make_bar: available resources: foo=0,jobs=7'),
             ('dynamake', 'DEBUG', '[.1.2] make_bar: paused by waiting for resources: foo=1'),
             ('dynamake', 'TRACE', '[.1.1] make_foo: success: sleep 0.2 ; touch foo'),
             ('dynamake', 'DEBUG', '[.1.1] make_foo: free resources: foo=2,jobs=1'),
-            ('dynamake', 'DEBUG', '[.1.1] make_foo: available resources: foo=2,jobs=56'),
+            ('dynamake', 'DEBUG', '[.1.1] make_foo: available resources: foo=2,jobs=8'),
             ('dynamake', 'DEBUG', '[.1.1] make_foo: synced'),
             ('dynamake', 'DEBUG', '[.1.1] make_foo: has the output: foo time: 1'),
             ('dynamake', 'TRACE', '[.1.1] make_foo: done'),
             ('dynamake', 'DEBUG', '[.1.2] make_bar: grab resources: foo=1'),
-            ('dynamake', 'DEBUG', '[.1.2] make_bar: available resources: foo=1,jobs=56'),
+            ('dynamake', 'DEBUG', '[.1.2] make_bar: available resources: foo=1,jobs=8'),
             ('dynamake', 'INFO', '[.1.2] make_bar: run: touch bar'),
             ('dynamake', 'TRACE', '[.1.2] make_bar: success: touch bar'),
             ('dynamake', 'DEBUG', '[.1.2] make_bar: free resources: foo=1'),
-            ('dynamake', 'DEBUG', '[.1.2] make_bar: available resources: foo=2,jobs=56'),
+            ('dynamake', 'DEBUG', '[.1.2] make_bar: available resources: foo=2,jobs=8'),
             ('dynamake', 'DEBUG', '[.1.2] make_bar: synced'),
             ('dynamake', 'DEBUG', '[.1.2] make_bar: has the output: bar time: 2'),
             ('dynamake', 'TRACE', '[.1.2] make_bar: done'),
@@ -2380,11 +2381,12 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 await shell('true', jobs=1000000)
 
+        sys.argv += ['--jobs', '8']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, error='resource: jobs amount: 1000000 .* greater .* amount:', log=[
             ('dynamake', 'TRACE', '[.] make: all'),
-            ('dynamake', 'DEBUG', '[.] make: available resources: jobs=56'),
+            ('dynamake', 'DEBUG', '[.] make: available resources: jobs=8'),
             ('dynamake', 'DEBUG', '[.] make: build the required: all'),
             ('dynamake', 'DEBUG',
              '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
