@@ -1510,10 +1510,14 @@ async def submit(*command: Strings, **resources: int) -> None:
     prefix = current.config_param('run_prefix', [])
     suffix = current.config_param('run_suffix', [])
     if prefix or suffix:
-        wrapped = dp.phony(prefix) \
-            + [dp.copy_annotations(part, shlex.quote(part)) for part in dp.each_string(*command)] \
-            + dp.phony(suffix)
-        await shell(*wrapped, **resources)
+        prefix = [dp.phony(part.format(action_id=Invocation.actions_count))
+                  for part in dp.each_string(prefix)]
+        wrapped = [dp.copy_annotations(part, shlex.quote(part))
+                   for part in dp.each_string(*command)]
+        suffix = [dp.phony(part.format(action_id=Invocation.actions_count))
+                  for part in dp.each_string(suffix)]
+        wrapper = prefix + wrapped + suffix
+        await shell(*wrapper, **resources)
     else:
         await spawn(*command, **resources)
 

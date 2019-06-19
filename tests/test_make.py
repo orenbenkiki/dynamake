@@ -20,6 +20,7 @@ from dynamake.make import shell
 from dynamake.make import spawn
 from dynamake.make import step
 from dynamake.make import StepException
+from dynamake.make import submit
 from dynamake.make import sync
 from dynamake.make import with_config
 from dynamake.patterns import optional
@@ -2198,6 +2199,41 @@ class TestMain(TestWithFiles):
         ])
 
         self.expect_file('.dynamake/make_all.config.yaml', 'foo: 2\n')
+
+    def test_run_wrapper(self) -> None:
+        def _register() -> None:
+            @step(output='all')
+            async def make_all() -> None:  # pylint: disable=unused-variable
+                await submit('touch', 'all')
+
+        write_file('DynaMake.yaml',
+                   '- { when: {step: make_all}, then: {run_prefix: "echo {action_id} > log;"} }\n')
+
+        sys.argv += ['--jobs', '0']
+        sys.argv += ['--rebuild_changed_actions', 'false']
+
+        self.check(_register, log=[
+            ('dynamake', 'TRACE', '[.] make: all'),
+            ('dynamake', 'DEBUG', '[.] make: build the required: all'),
+            ('dynamake', 'DEBUG',
+             '[.] make: the required: all will be produced by the spawned: [.1] make_all'),
+            ('dynamake', 'TRACE', '[.1] make_all: call'),
+            ('dynamake', 'DEBUG', '[.1] make_all: missing the output(s): all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'WHY',
+             '[.1] make_all: must run actions to create the missing output(s): all'),
+            ('dynamake', 'INFO', '[.1] make_all: run: echo 0 > log; touch all'),
+            ('dynamake', 'DEBUG', '[.] make: sync'),
+            ('dynamake', 'TRACE', '[.1] make_all: success: echo 0 > log; touch all'),
+            ('dynamake', 'DEBUG', '[.1] make_all: synced'),
+            ('dynamake', 'DEBUG', '[.1] make_all: has the output: all time: 1'),
+            ('dynamake', 'TRACE', '[.1] make_all: done'),
+            ('dynamake', 'DEBUG', '[.] make: synced'),
+            ('dynamake', 'DEBUG', '[.] make: has the required: all'),
+            ('dynamake', 'TRACE', '[.] make: done')
+        ])
+
+        self.expect_file('log', '0\n')
 
     def test_resources(self) -> None:
         def _register() -> None:
