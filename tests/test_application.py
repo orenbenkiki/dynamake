@@ -18,6 +18,7 @@ from tests import TestWithFiles
 from tests import TestWithReset
 from tests import write_file
 from threading import current_thread
+from time import sleep
 from typing import Any
 from typing import Callable
 from typing import List
@@ -221,6 +222,7 @@ class TestParameters(TestWithReset):
 
 
 def _call_in_parallel(index: int) -> Tuple[str, int]:
+    sleep(0.1)
     return (current_thread().name, index)
 
 
