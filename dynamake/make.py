@@ -1376,14 +1376,15 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         assert 'step' not in self.kwargs
         assert self.step is not None
-        self.kwargs['step'] = self.step.name()
-        self.file_config_values = Config.values_for_context(self.kwargs)
+        context = self.kwargs.copy()
+        context.update(self.context)
+        context['step'] = self.step.name()
+        self.file_config_values = Config.values_for_context(context)
         self.full_config_values = {}
         for name, value in self.file_config_values.items():
             if name[-1] == '?':
                 name = name[:-1]
             self.full_config_values[name] = value
-        del self.kwargs['step']
 
     async def done(self, awaitable: Awaitable) -> Any:
         """
