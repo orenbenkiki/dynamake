@@ -504,12 +504,16 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         if self.parent is None:
             #: A short unique stack to identify invocations in the log.
             self.stack: str = '.'
+
+            #: Context for formatting action wrappers (run prefix and suffix).
+            self.context: Dict[str, Any] = {}
         else:
             self.parent.sub_count += 1
             if self.parent.stack == '.':
                 self.stack = '.%s' % self.parent.sub_count
             else:
                 self.stack = '%s.%s' % (self.parent.stack, self.parent.sub_count)
+            self.context = self.parent.context.copy()
 
         #: The prefix for log messages.
         self.log_prefix = '[%s] %s:' % (self.stack, self.name)
@@ -1510,12 +1514,11 @@ async def submit(*command: Strings, **resources: int) -> None:
     prefix = current.config_param('run_prefix', [])
     suffix = current.config_param('run_suffix', [])
     if prefix or suffix:
-        prefix = [dp.phony(part.format(action_id=Invocation.actions_count))
-                  for part in dp.each_string(prefix)]
-        wrapped = [dp.copy_annotations(part, shlex.quote(part))
-                   for part in dp.each_string(*command)]
-        suffix = [dp.phony(part.format(action_id=Invocation.actions_count))
-                  for part in dp.each_string(suffix)]
+        current.context['action_id'] = Invocation.actions_count
+        prefix = [dp.phony(part.format(**current.context)) for part in dp.each_string(prefix)]
+        wrapped = \
+            [dp.copy_annotations(part, shlex.quote(part)) for part in dp.each_string(*command)]
+        suffix = [dp.phony(part.format(**current.context)) for part in dp.each_string(suffix)]
         wrapper = prefix + wrapped + suffix
         await shell(*wrapper, **resources)
     else:
