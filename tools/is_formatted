@@ -11,7 +11,9 @@ do
         diff ${SOURCE} .reformat
         STATUS=1
     fi
-    if grep -Hn "[^=][^][\"'a-zA-Z0-9_,:)#}{.?!\\=\`]$" ${SOURCE} | grep -v -- '--$'
+    if grep -Hn "[^=][^][\"'a-zA-Z0-9_,:)#}{.?!\\=\`]$" ${SOURCE} \
+     | grep -v -- '--$' \
+     | grep -v 'from \(.application\|.patterns\) import \*$'
     then
         STATUS=1
     fi

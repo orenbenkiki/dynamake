@@ -4,22 +4,9 @@ Utilities for dynamic make.
 
 # pylint: disable=too-many-lines
 
-from .application import config
-from .application import env
-from .application import Func
-from .application import override  # pylint: disable=unused-import
-from .application import Param
-from .application import Prog
-from .application import reset_application
+from .application import *  # pylint: disable=redefined-builtin,wildcard-import,unused-wildcard-import
 from .config import Config
-from .patterns import capture2re
-from .patterns import emphasized  # pylint: disable=unused-import
-from .patterns import exists  # pylint: disable=unused-import
-from .patterns import is_precious
-from .patterns import optional  # pylint: disable=unused-import
-from .patterns import phony  # pylint: disable=unused-import
-from .patterns import precious  # pylint: disable=unused-import
-from .patterns import Strings
+from .patterns import *  # pylint: disable=redefined-builtin,wildcard-import,unused-wildcard-import
 from .stat import Stat
 from argparse import ArgumentParser
 from argparse import Namespace
@@ -839,7 +826,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 Invocation.phony.add(path)
                 continue
             try:
-                for path in sorted(dp.glob_strings(self.kwargs, pattern)):
+                for path in sorted(dp.fmt_glob_paths(self.kwargs, pattern)):
                     self.initial_outputs.append(path)
                     if path == pattern:
                         Prog.logger.debug('%s exists output: %s', self.log_prefix, path)
@@ -919,7 +906,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             did_wait = False
             while True:
                 try:
-                    for path in sorted(dp.glob_strings(self.kwargs, pattern)):
+                    for path in sorted(dp.fmt_glob_paths(self.kwargs, pattern)):
                         self.built_outputs.append(path)
 
                         if did_wait:
@@ -1007,7 +994,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         for pattern in sorted(self.step.output):
             if dp.is_phony(pattern):
                 continue
-            for path in sorted(dp.glob_strings(self.kwargs, dp.optional(pattern))):
+            for path in sorted(dp.fmt_glob_paths(self.kwargs, dp.optional(pattern))):
                 Invocation.poisoned.add(path)
                 if Make.remove_failed_outputs and not is_precious(path):
                     Prog.logger.debug('%s remove the failed output: %s', self.log_prefix, path)
@@ -1626,7 +1613,7 @@ def make(parser: ArgumentParser, *,
     Prog.load_modules()
     Prog.logger = logging.getLogger(logger_name or sys.argv[0])
     logging.getLogger('asyncio').setLevel('WARN')
-    default_targets = list(dp.each_string(default_targets))
+    default_targets = dp.flatten(default_targets)
     parser.add_argument('TARGET', nargs='*',
                         help='The file or target to make (default: %s)' % ' '.join(default_targets))
     group = Prog.current.add_global_parameters(parser)
@@ -1647,8 +1634,7 @@ def make(parser: ArgumentParser, *,
 
     _collect_parameters()
 
-    targets = [path for path in args.TARGET if path is not None] \
-        or list(dp.each_string(default_targets))
+    targets = [path for path in args.TARGET if path is not None] or dp.flatten(default_targets)
 
     Prog.logger.log(Prog.TRACE, '[.] make: %s', ' '.join(targets))
     if Prog.logger.isEnabledFor(logging.DEBUG):

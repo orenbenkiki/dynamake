@@ -1,8 +1,10 @@
 """
-Allow simple loading of regular expressions in configuration YAML files.
+Utility functions for dealing with strings.
+
+This is somewhat of a mixed bag and should arguably be split into several modules.
 """
 
-# pylint: disable=too-many-lines
+# pylint: disable=too-many-lines,redefined-builtin
 
 from .stat import Stat
 from curses.ascii import isalnum
@@ -26,10 +28,175 @@ import logging
 import re
 import yaml
 
+_REGEXP_ERROR_POSITION = re.compile(r'(.*) at position (\d+)')
+
+
+def capture2re(capture: str) -> str:  # pylint: disable=too-many-statements
+    """
+    Translate a capture pattern to the equivalent ``re.Pattern``.
+    """
+    index = 0
+    size = len(capture)
+    results: List[str] = []
+
+    def _is_next(expected: str) -> bool:
+        nonlocal capture, index, size
+        return index < size and capture[index] == expected
+
+    def _invalid(reason: str = '') -> None:
+        nonlocal capture, index
+        raise RuntimeError('Invalid capture pattern:\n%s\n%s^ %s' % (capture, index * ' ', reason))
+
+    def _expect_close() -> None:
+        if not _is_next('}'):
+            _invalid('missing }')
+        nonlocal index
+        index += 1
+
+    def _parse_name(terminators: str) -> str:
+        nonlocal capture, index, size
+        start_index = index
+        while index < size and capture[index] not in terminators:
+            if capture[index] != '_' and not isalnum(capture[index]):
+                _invalid('invalid captured name character')
+            index += 1
+        if index == start_index:
+            _invalid('empty captured name')
+        return capture[start_index:index]
+
+    def _parse_regexp() -> str:
+        nonlocal capture, index, size
+
+        if not _is_next(':'):
+            return ''
+        index += 1
+
+        start_index = index
+        while index < size and capture[index] != '}':
+            index += 1
+
+        if index == start_index:
+            _invalid('empty captured regexp')
+
+        return glob2re(capture[start_index:index])
+
+    def _parse_two_stars() -> None:
+        name = _parse_name('}')
+        regexp = _parse_regexp() or '.*'
+        _expect_close()
+
+        nonlocal capture, index, size, results
+        if results and results[-1] == '/' and index < size and capture[index] == '/':
+            index += 1
+            _append_regexp(name, regexp, '(?:', '/)?')
+        else:
+            _append_regexp(name, regexp)
+
+    def _parse_one_star() -> None:
+        name = _parse_name(':}')
+        regexp = _parse_regexp() or '[^/]*'
+        _expect_close()
+        _append_regexp(name, regexp)
+
+    def _append_regexp(name: str, regexp: str, prefix: str = '', suffix: str = '') -> None:
+        nonlocal results
+        results.append(prefix)
+        results.append('(?P<')
+        results.append(name)
+        results.append('>')
+        results.append(regexp)
+        results.append(')')
+        results.append(suffix)
+
+    while index < size:
+        char = capture[index]
+        index += 1
+
+        if char == '}' and _is_next('}'):
+            results.append('}}')
+            index += 1
+
+        elif char == '{' and _is_next('{'):
+            results.append('{{')
+            index += 1
+
+        elif char == '{' and _is_next('*'):
+            index += 1
+            if _is_next('*'):
+                index += 1
+                _parse_two_stars()
+            else:
+                _parse_one_star()
+
+        elif char in '{}/':
+            results.append(char)
+
+        else:
+            results.append(re.escape(char))
+
+    return ''.join(results)
+
+
+def capture2glob(capture: str) -> str:  # pylint: disable=too-many-statements
+    """
+    Translate a capture pattern to the equivalent ``glob`` pattern.
+    """
+    index = 0
+    size = len(capture)
+    results: List[str] = []
+
+    def _is_next(expected: str) -> bool:
+        nonlocal capture, index, size
+        return index < size and capture[index] == expected
+
+    def _invalid(reason: str = '') -> None:
+        nonlocal capture, index
+        raise RuntimeError('Invalid capture pattern:\n%s\n%s^ %s' % (capture, index * ' ', reason))
+
+    def _parse_glob(glob: str, terminators: str) -> None:
+        nonlocal capture, index, size
+        while index < size and capture[index] not in terminators:
+            index += 1
+        if index < size and capture[index] == ':':
+            index += 1
+            start_index = index
+            while index < size and capture[index] != '}':
+                index += 1
+            glob = capture[start_index:index]
+        if not _is_next('}'):
+            _invalid('missing }')
+        index += 1
+        results.append(glob)
+
+    while index < size:
+        char = capture[index]
+        index += 1
+
+        if char == '}' and _is_next('}'):
+            results.append('}')
+            index += 1
+
+        elif char == '{' and _is_next('{'):
+            results.append('{')
+            index += 1
+
+        elif char == '{' and _is_next('*'):
+            index += 1
+            if _is_next('*'):
+                index += 1
+                _parse_glob('**', '}')
+            else:
+                _parse_glob('*', ':}')
+
+        else:
+            results.append(char)
+
+    return ''.join(results)
+
 
 def glob2re(glob: str) -> str:  # pylint: disable=too-many-branches
     """
-    Translate a ``glob`` pattern to the equivalent ``re.Pattern``.
+    Translate a ``glob`` pattern to the equivalent ``re.Pattern`` (as a string).
 
     This is subtly different from ``fnmatch.translate`` since we use it to match the result of a
     successful ``glob`` rather than to actually perform the ``glob``.
@@ -142,52 +309,6 @@ def flatten(*args: Strings) -> List[str]:
     return list(each_string(*args))
 
 
-def expand_strings(wildcards: Dict[str, Any], *patterns: Strings) -> List[str]:
-    """
-    Given some wildcards values and a pattern (Python format string),
-    generate one output per pattern using these values.
-    """
-    return [copy_annotations(pattern, pattern.format(**wildcards))
-            for pattern
-            in each_string(*patterns)]
-
-
-class Captured:
-    """
-    The results of a :py:func:`dynamake.make.capture` operation.
-    """
-
-    def __init__(self) -> None:
-        """
-        Create an empty capture results.
-        """
-
-        #: The list of existing paths that matched the capture pattern.
-        self.paths: List[str] = []
-
-        #: The list of wildcard values captured from the matched paths.
-        self.wildcards: List[Dict[str, Any]] = []
-
-
-class NonOptionalException(Exception):
-    """
-    Exception when an non-optional pattern did not match any disk files.
-    """
-
-    def __init__(self, glob: str, capture: str) -> None:
-        """
-        Create a new exception when no disk files matched the pattern.
-        """
-        if capture == glob:
-            super().__init__('No files matched the non-optional glob pattern: %s' % (glob))
-        else:
-            super().__init__('No files matched the non-optional glob: %s pattern: %s'
-                             % (glob, capture))
-
-        #: The glob pattern that failed to match.
-        self.glob = glob
-
-
 class AnnotatedStr(str):
     """
     A wrapper containing optional annotations.
@@ -209,7 +330,90 @@ class AnnotatedStr(str):
     emphasized = False
 
 
+def copy_annotations(source: str, target: str) -> str:
+    """
+    Copy the annotations from one string to another.
+
+    Returns the annotated target string.
+    """
+    if isinstance(source, AnnotatedStr):
+        if not isinstance(target, AnnotatedStr):
+            target = AnnotatedStr(target)
+        target.optional = source.optional
+        target.exists = source.exists
+        target.phony = source.phony
+        target.precious = source.precious
+        target.emphasized = source.emphasized
+    return target
+
+
+def is_optional(string: str) -> bool:
+    """
+    Whether a string has been annotated as :py:func:`dynamake.patterns.optional`.
+    """
+    return isinstance(string, AnnotatedStr) and string.optional
+
+
+def is_exists(string: str) -> bool:
+    """
+    Whether a string has been annotated as :py:func:`dynamake.patterns.exists`-only.
+    """
+    return isinstance(string, AnnotatedStr) and string.exists
+
+
+def is_phony(string: str) -> bool:
+    """
+    Whether a string has been annotated as :py:func:`dynamake.patterns.phony`.
+    """
+    return isinstance(string, AnnotatedStr) and string.phony
+
+
+def is_precious(string: str) -> bool:
+    """
+    Whether a string has been annotated as :py:func:`dynamake.patterns.precious`.
+    """
+    return isinstance(string, AnnotatedStr) and string.precious
+
+
+def is_emphasized(string: str) -> bool:
+    """
+    Whether a string has been annotated as :py:func:`dynamake.patterns.emphasized`.
+    """
+    return isinstance(string, AnnotatedStr) and string.emphasized
+
+
 # pylint: disable=function-redefined
+# pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+@overload
+def fmt(wildcards: Dict[str, Any], string: str) -> str: ...
+
+
+@overload
+def fmt(wildcards: Dict[str, Any], not_string: NotString) -> List[str]: ...
+
+
+@overload
+def fmt(wildcards: Dict[str, Any],
+        first: Strings, second: Strings, *strings: Strings) -> List[str]: ...
+
+
+# pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+def fmt(wildcards: Any, *strings: Any) -> Any:  # type: ignore
+    """
+    Similar to ``str.format``, but will format any number of strings in one call.
+
+    In addition, this will preserve the annotations of the strings, if any.
+    """
+    results = \
+        [copy_annotations(string, string.format(**wildcards)) for string in each_string(*strings)]
+    if len(strings) == 1 and isinstance(strings[0], str):
+        assert len(results) == 1
+        return results[0]
+    return results
+
+
 # pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
 
 @overload
@@ -415,90 +619,120 @@ def color(*strings: Any) -> Any:  # type: ignore
     Return the strings, replacing any that were :py:func:`dynamake.patterns.emphasized` by a colored
     version.
     """
-    result = []
+    results: List[str] = []
     for string in each_string(*strings):
         if is_emphasized(string):
-            result.append(colored(string, attrs=['bold']))
+            results.append(copy_annotations(string, colored(string, attrs=['bold'])))
         else:
-            result.append(string)
+            results.append(string)
     if len(strings) == 1 and isinstance(strings[0], str):
-        assert len(result) == 1
-        return result[0]
-    return result
+        assert len(results) == 1
+        return results[0]
+    return results
+
+
+# pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+
+@overload
+def match_fmt(pattern: str, template: str, string: str) -> str: ...
+
+
+@overload
+def match_fmt(pattern: str, template: str, not_string: NotString) -> List[str]: ...
+
+
+@overload
+def match_fmt(pattern: str, template: str,
+              first: Strings, second: Strings, *strings: Strings) -> List[str]: ...
+
+# pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+
+def match_fmt(pattern: Any, template: Any, *strings: Any) -> Any:  # type: ignore
+    """
+    for each of the ``strings``, capture it using the ``pattern`` and use the extracted values to
+    format the ``template``.
+    """
+    results: List[str] = []
+    for string in each_string(strings):
+        wildcards = match_extract(pattern, string)
+        results.append(copy_annotations(string, template.format(**wildcards[0])))
+    if len(strings) == 1 and isinstance(strings[0], str):
+        assert len(results) == 1
+        return results[0]
+    return results
 
 
 # pylint: enable=function-redefined
 
 
-def is_optional(string: str) -> bool:
+class Captured:
     """
-    Whether a string has been annotated as :py:func:`dynamake.patterns.optional`.
+    The results of operations using a capture pattern.
+
+    A capture pattern is similar to a glob pattern. However, all wildcard matches must
+    be specified inside ``{...}`` as follows:
+
+    * ``{*name}`` has the same effect as ``*``. The matching substring will be captured
+      using the key ``name``.
+
+    * ``/{**name}/`` has the same effect as ``/**/``. The matching substring will be captured
+      using the key ``name``.
+
+    If ``name`` starts with ``_`` then the matching substring will be discarded instead of being
+    captured.
+
+    If ``name`` is followed by ``:``, it must be followed by the actual glob pattern. That is,
+    ``{*name}`` is a shorthand for ``{*name:*}`` and ``{**name}`` is shorthand for ``{*name:**}``.
+    This allows using arbitrary match patterns (for example ``{*digit:[0-9]}`` will capture a single
+    decimal digit).
     """
-    return isinstance(string, AnnotatedStr) and string.optional
+
+    def __init__(self) -> None:
+        """
+        Create an empty capture results.
+        """
+
+        #: The list of existing paths that matched the capture pattern.
+        self.paths: List[str] = []
+
+        #: The list of wildcard values captured from the matched paths.
+        self.wildcards: List[Dict[str, Any]] = []
 
 
-def is_exists(string: str) -> bool:
+class NonOptionalException(Exception):
     """
-    Whether a string has been annotated as :py:func:`dynamake.patterns.exists`-only.
+    Exception when an non-optional pattern did not match any disk files.
     """
-    return isinstance(string, AnnotatedStr) and string.exists
+
+    def __init__(self, glob: str, capture: str) -> None:
+        """
+        Create a new exception when no disk files matched the pattern.
+        """
+        if capture == glob:
+            super().__init__('No files matched the non-optional glob pattern: %s' % (glob))
+        else:
+            super().__init__('No files matched the non-optional glob: %s pattern: %s'
+                             % (glob, capture))
+
+        #: The glob pattern that failed to match.
+        self.glob = glob
 
 
-def is_phony(string: str) -> bool:
+def glob_capture(*patterns: Strings) -> Captured:
     """
-    Whether a string has been annotated as :py:func:`dynamake.patterns.phony`.
-    """
-    return isinstance(string, AnnotatedStr) and string.phony
-
-
-def is_precious(string: str) -> bool:
-    """
-    Whether a string has been annotated as :py:func:`dynamake.patterns.precious`.
-    """
-    return isinstance(string, AnnotatedStr) and string.precious
-
-
-def is_emphasized(string: str) -> bool:
-    """
-    Whether a string has been annotated as :py:func:`dynamake.patterns.emphasized`.
-    """
-    return isinstance(string, AnnotatedStr) and string.emphasized
-
-
-def copy_annotations(source: str, target: str) -> str:
-    """
-    Copy the annotations from one string to another.
-
-    Returns the annotated target string.
-    """
-    if isinstance(source, AnnotatedStr):
-        if not isinstance(target, AnnotatedStr):
-            target = AnnotatedStr(target)
-        target.optional = source.optional
-        target.exists = source.exists
-        target.phony = source.phony
-        target.precious = source.precious
-        target.emphasized = source.emphasized
-    return target
-
-
-def capture_globs(wildcards: Dict[str, Any], *patterns: Strings) -> Captured:
-    """
-    Given a glob pattern containing ``...{name}...{*captured_name}...``,
-    return a list of dictionaries containing the captured values for each
-    existing file that matches the pattern.
+    Given capture pattern, return the :py:class:`dynamake.pattern.Captured` information (paths and
+    captured values).
 
     Parameters
     ----------
-    wildcards
-        Provide the values for expanding ``...{name}...``.
     capture
-        The pattern may contain ``...{name}...``, ``...{*captured_name}...``, as well as normal
-        ``glob`` patterns (``*``, ``**``). The ``...{name}..`` is
-        expanded using the provided ``wildcards``. The ``*`` and
-        ``**`` are ``glob``-ed. A capture expression will cause the matching substring to be
-        collected in a list of dictionaries (one per matching existing path name). Valid capture
-        patterns are:
+        The pattern may contain ``...{*captured_name}...``, as well as normal
+        ``glob`` patterns (``*``, ``**``). The ``...{name}..`` is expanded using the provided
+        ``wildcards``. The ``*`` and ``**`` are ``glob``-ed. A capture expression will cause the
+        matching substring to be collected in a list of dictionaries (one per matching existing path
+        name). Valid capture patterns are:
 
         * ``...{*captured_name}...`` is treated as if it was a ``*`` glob pattern, and the matching
           zero or more characters are entered into the dictionary under the ``captured_name`` key.
@@ -521,238 +755,122 @@ def capture_globs(wildcards: Dict[str, Any], *patterns: Strings) -> Captured:
         (:py:class:`dynamake.patterns.AnnotatedStr`) of the pattern are copied to the paths expanded
         from the pattern.
     """
+    return fmt_glob_capture({}, *patterns)
+
+
+def glob_paths(*patterns: Strings) -> List[str]:
+    """
+    Similar to :py:func:`dynamake.patterns.glob_capture`, but just return the list of matching
+    paths, ignoring any extracted values.
+    """
+    return glob_capture(*patterns).paths
+
+
+def glob_extract(*patterns: Strings) -> List[Dict[str, Any]]:
+    """
+    Similar to :py:func:`dynamake.patterns.glob_capture`, but just return the list of extracted
+    wildcards dictionaries, ignoring the matching paths.
+    """
+    return glob_capture(*patterns).wildcards
+
+
+def fmt_glob_capture(wildcards: Dict[str, Any], *patterns: Strings) -> Captured:
+    """
+    Similar to :py:func:`dynamake.patterns.glob_capture`, but :py:func:`dynamake.patterns.fmt`
+    each pattern first.
+
+    This is not equivalent to ``glob_capture(fmt(wildcards, patterns))`` because ``fmt`` will be
+    confused by the ``{*captured_name}`` in the patterns. Instead, each pattern is first converted
+    to a clean ``glob`` pattern, eliminating the ``{*captured_name}`` parts, and only then is the
+    ``fmt`` applied.
+    """
     captured = Captured()
-    for capture in each_string(*patterns):
-        regexp = capture2re(capture).format(**wildcards)
-        glob = capture2glob(capture).format(**wildcards)
+    for pattern in each_string(*patterns):
+        regexp = capture2re(pattern)
+        glob = capture2glob(pattern)
+        if wildcards:
+            regexp = regexp.format(**wildcards)
+            glob = glob.format(**wildcards)
         paths = Stat.glob(glob)
 
-        if not paths and not is_optional(capture):
-            raise NonOptionalException(glob, capture)
+        if not paths and not is_optional(pattern):
+            raise NonOptionalException(glob, pattern)
 
         # Sorted to make tests deterministic.
         for path in sorted(paths):
-            path = copy_annotations(capture, path)
+            path = copy_annotations(pattern, path)
             captured.paths.append(path)
-            captured.wildcards.append(_capture_string(capture, regexp, path))
+            captured.wildcards.append(_capture_string(pattern, regexp, path))
 
     return captured
 
 
-def glob_strings(wildcards: Dict[str, Any], *patterns: Strings) -> List[str]:
+def fmt_glob_paths(wildcards: Dict[str, Any], *patterns: Strings) -> List[str]:
     """
-    Similar to :py:func:`dynamake.patterns.capture_globs`, except that it just returns
-    the list of existing paths that match any of the expanded ``glob`` patterns,
-    without doing any capturing of sub-strings. Using ``...{*captured_name}...`` is
-    still allowed, but has no effect beyond being interpreted as a glob pattern.
+    Similar to :py:func:`dynamake.patterns.fmt_glob_capture`, but just return the list of
+    matching paths, ignoring any extracted values.
+
+    The annotations of each pattern are copied to the paths expanded from the pattern.
     """
-    results: List[str] = []
-    for capture in each_string(*patterns):
-        glob = capture2glob(capture).format(**wildcards)
-        paths = Stat.glob(glob)
-
-        if not paths and not is_optional(capture):
-            raise NonOptionalException(glob, capture)
-
-        # Sorted to make tests deterministic.
-        for path in sorted(paths):
-            results.append(copy_annotations(capture, path))
-
-    return results
+    return fmt_glob_capture(wildcards, *patterns).paths
 
 
-def extract_strings(wildcards: Dict[str, Any], capture: str, *strings: Strings) \
-        -> List[Dict[str, Any]]:
+def fmt_glob_extract(wildcards: Dict[str, Any], *patterns: Strings) -> List[Dict[str, Any]]:
     """
-    Similar to :py:func:`dynamake.patterns.capture_globs`, except that it just captures
-    the values of the ``...{*captured_name}...`` from the expanded strings, without
-    any call to ``glob`` to discover existing file paths.
-
-    Returns
-    -------
-    List[Dict[str, Any]]
-        A list of the dictionary of values for the captured names from each string.
+    Similar to :py:func:`dynamake.patterns.fmt_glob_capture`, but just return the list of
+    extracted wildcards dictionaries, ignoring the matching paths.
     """
-    regexp = capture2re(capture).format(**wildcards)
-    return [_capture_string(capture, regexp, string) for string in each_string(*strings)]
+    return fmt_glob_capture(wildcards, *patterns).wildcards
 
 
-def _capture_string(capture: str, regexp: Pattern, string: str) -> Dict[str, Any]:
+def match_extract(pattern: str, *strings: Strings) -> List[Dict[str, Any]]:
+    """
+    Similar to :py:func:`dynamake.patterns.glob_extract`, except that it uses just one capture
+    pattern and apply it to some string(s).
+    """
+    return fmt_match_extract({}, pattern, *strings)
+
+
+def fmt_match_extract(wildcards: Dict[str, Any],
+                      pattern: str, *strings: Strings) -> List[Dict[str, Any]]:
+    """
+    Similar to :py:func:`dynamake.patterns.match_extract`, but :py:func:`dynamake.patterns.fmt`
+    the pattern first.
+
+    This is not equivalent to ``match_extract(fmt(wildcards, pattern), ...)`` because ``fmt`` will
+    be confused by the ``{*captured_name}`` in the patterns. Instead, the pattern is first converted
+    to a clean ``re`` pattern, eliminating the ``{*captured_name}`` parts, and only then is the
+    ``fmt`` applied.
+    """
+    regexp = capture2re(pattern)
+    if wildcards:
+        regexp = regexp.format(**wildcards)
+    return [_capture_string(pattern, regexp, string) for string in each_string(*strings)]
+
+
+def _capture_string(pattern: str, regexp: Pattern, string: str) -> Dict[str, Any]:
     match = re.fullmatch(regexp, string)
     if not match:
         raise RuntimeError('The string: %s does not match the capture pattern: %s'
-                           % (string, capture))
+                           % (string, pattern))
 
     values = match.groupdict()
     for name, value in values.items():
-        values[name] = str(value or '')
+        if name and name[0] != '_':
+            values[name] = str(value or '')
     return values
 
 
-_REGEXP_ERROR_POSITION = re.compile(r'(.*) at position (\d+)')
-
-
-def capture2re(capture: str) -> str:  # pylint: disable=too-many-statements
+def glob_fmt(pattern: str, *templates: Strings) -> List[str]:
     """
-    Translate a capture pattern to the equivalent ``re.Pattern``.
+    For each file that matches the capture ``pattern``, extract its wildcards,
+    then use them to format each of the ``templates``.
     """
-    index = 0
-    size = len(capture)
     results: List[str] = []
-
-    def _is_next(expected: str) -> bool:
-        nonlocal capture, index, size
-        return index < size and capture[index] == expected
-
-    def _invalid(reason: str = '') -> None:
-        nonlocal capture, index
-        raise RuntimeError('Invalid capture pattern:\n%s\n%s^ %s' % (capture, index * ' ', reason))
-
-    def _expect_close() -> None:
-        if not _is_next('}'):
-            _invalid('missing }')
-        nonlocal index
-        index += 1
-
-    def _parse_name(terminators: str) -> str:
-        nonlocal capture, index, size
-        start_index = index
-        while index < size and capture[index] not in terminators:
-            if capture[index] != '_' and not isalnum(capture[index]):
-                _invalid('invalid captured name character')
-            index += 1
-        if index == start_index:
-            _invalid('empty captured name')
-        return capture[start_index:index]
-
-    def _parse_regexp() -> str:
-        nonlocal capture, index, size
-
-        if not _is_next(':'):
-            return ''
-        index += 1
-
-        start_index = index
-        while index < size and capture[index] != '}':
-            index += 1
-
-        if index == start_index:
-            _invalid('empty captured regexp')
-
-        return glob2re(capture[start_index:index])
-
-    def _parse_two_stars() -> None:
-        name = _parse_name('}')
-        regexp = _parse_regexp() or '.*'
-        _expect_close()
-
-        nonlocal capture, index, size, results
-        if results and results[-1] == '/' and index < size and capture[index] == '/':
-            index += 1
-            _append_regexp(name, regexp, '(?:', '/)?')
-        else:
-            _append_regexp(name, regexp)
-
-    def _parse_one_star() -> None:
-        name = _parse_name(':}')
-        regexp = _parse_regexp() or '[^/]*'
-        _expect_close()
-        _append_regexp(name, regexp)
-
-    def _append_regexp(name: str, regexp: str, prefix: str = '', suffix: str = '') -> None:
-        nonlocal results
-        results.append(prefix)
-        results.append('(?P<')
-        results.append(name)
-        results.append('>')
-        results.append(regexp)
-        results.append(')')
-        results.append(suffix)
-
-    while index < size:
-        char = capture[index]
-        index += 1
-
-        if char == '}' and _is_next('}'):
-            results.append('}}')
-            index += 1
-
-        elif char == '{' and _is_next('{'):
-            results.append('{{')
-            index += 1
-
-        elif char == '{' and _is_next('*'):
-            index += 1
-            if _is_next('*'):
-                index += 1
-                _parse_two_stars()
-            else:
-                _parse_one_star()
-
-        elif char in '{}/':
-            results.append(char)
-
-        else:
-            results.append(re.escape(char))
-
-    return ''.join(results)
-
-
-def capture2glob(capture: str) -> str:  # pylint: disable=too-many-statements
-    """
-    Translate a capture pattern to the equivalent ``glob`` pattern.
-    """
-    index = 0
-    size = len(capture)
-    results: List[str] = []
-
-    def _is_next(expected: str) -> bool:
-        nonlocal capture, index, size
-        return index < size and capture[index] == expected
-
-    def _invalid(reason: str = '') -> None:
-        nonlocal capture, index
-        raise RuntimeError('Invalid capture pattern:\n%s\n%s^ %s' % (capture, index * ' ', reason))
-
-    def _parse_glob(glob: str, terminators: str) -> None:
-        nonlocal capture, index, size
-        while index < size and capture[index] not in terminators:
-            index += 1
-        if index < size and capture[index] == ':':
-            index += 1
-            start_index = index
-            while index < size and capture[index] != '}':
-                index += 1
-            glob = capture[start_index:index]
-        if not _is_next('}'):
-            _invalid('missing }')
-        index += 1
-        results.append(glob)
-
-    while index < size:
-        char = capture[index]
-        index += 1
-
-        if char == '}' and _is_next('}'):
-            results.append('}')
-            index += 1
-
-        elif char == '{' and _is_next('{'):
-            results.append('{')
-            index += 1
-
-        elif char == '{' and _is_next('*'):
-            index += 1
-            if _is_next('*'):
-                index += 1
-                _parse_glob('**', '}')
-            else:
-                _parse_glob('*', ':}')
-
-        else:
-            results.append(char)
-
-    return ''.join(results)
+    for wildcards in glob_extract(pattern):
+        for template in each_string(*templates):
+            results.append(copy_annotations(template, template.format(**wildcards)))
+    return results
 
 
 _SPACES = re.compile(r'\s+')
@@ -833,9 +951,7 @@ def str2enum(enum: type) -> Callable[[str], Any]:
     return _parse
 
 
-# pylint: disable=redefined-builtin
-
-class Range:
+class RangeParam:
     """
     A range for a numeric argument.
     """
@@ -926,7 +1042,7 @@ class Range:
         return ' '.join(text)
 
 
-def _str2range(string: str, parser: Callable[[str], Union[int, float]], range: Range) \
+def _str2range(string: str, parser: Callable[[str], Union[int, float]], range: RangeParam) \
         -> Union[int, float]:
     try:
         value = parser(string)
@@ -947,13 +1063,13 @@ def str2float(min: Optional[float] = None,
               include_max: bool = True) -> Callable[[str], float]:
     """
     Return a parser that accepts a float argument in the specified
-    :py:func:`dynamake.pattern.Range`.
+    :py:func:`dynamake.pattern.RangeParam`.
     """
     def _parse(string: str) -> float:
         return _str2range(string, float,
-                          Range(min=min, max=max, step=step,
-                                include_min=include_min,
-                                include_max=include_max))
+                          RangeParam(min=min, max=max, step=step,
+                                     include_min=include_min,
+                                     include_max=include_max))
     return _parse
 
 
@@ -964,13 +1080,13 @@ def str2int(min: Optional[int] = None,
             include_max: bool = True) -> Callable[[str], int]:
     """
     Return a parser that accepts an int argument in the specified
-    :py:func:`dynamake.pattern.Range`.
+    :py:func:`dynamake.pattern.RangeParam`.
     """
     def _parse(string: str) -> int:
         return _str2range(string, int,  # type: ignore
-                          Range(min=min, max=max, step=step,
-                                include_min=include_min,
-                                include_max=include_max))
+                          RangeParam(min=min, max=max, step=step,
+                                     include_min=include_min,
+                                     include_max=include_max))
     return _parse
 
 

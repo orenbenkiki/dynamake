@@ -12,14 +12,12 @@ from typing import Union
 import os
 import shutil
 
-#: Internal cached stat result.
-StatResult = Union[BaseException, os.stat_result]
-
 
 class Stat:
     """
     Cache stat calls for better performance.
     """
+
     _cache: SortedDict
 
     @staticmethod
@@ -71,7 +69,7 @@ class Stat:
         return not isinstance(result, BaseException) and S_ISDIR(result.st_mode)
 
     @staticmethod
-    def _result(path: str, *, throw: bool) -> StatResult:
+    def _result(path: str, *, throw: bool) -> Union[BaseException, os.stat_result]:
         path = os.path.abspath(path)
         result = Stat._cache.get(path)
 

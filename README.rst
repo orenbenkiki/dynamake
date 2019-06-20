@@ -256,7 +256,7 @@ A more generic script might be:
 
     @dm.step(output='bin/main')
     async def make_executable() -> None:
-        object_paths = dm.glob_expand('src/{*name}.c', 'obj/{name}.o')
+        object_paths = dm.glob_format('src/{*name}.c', 'obj/{name}.o')
         dm.require(object_paths)
         await dm.spawn('ld', '-o', dm.output(), object_paths)
 
@@ -276,10 +276,9 @@ This demonstrates some additional concepts:
   must exist on the disk. Otherwise, DynaMake complains it doesn't know how to make this target.
 
 * DynaMake provides many functions to deal with ``glob``-ing, capturing, and formatting lists
-  of strings, listed in the :py:func:`dynamake.patterns` module. These make it convenient
-  to perform common operations (for example, using a ``glob`` to obtain a list of file names,
-  then ``capture`` to extract some part(s) of each, then ``expand`` some other pattern
-  using these parts).
+  of strings, listed in the :py:func:`dynamake.patterns` module. These make it convenient to perform
+  common operations (for example, using a ``glob`` to obtain a list of file names, then ``extract``
+  some part(s) of each, then ``format`` some other pattern using these values).
 
 * Most DynaMake functions accept :py:class:`Strings`, that is, either a single string, or a list of
   strings, or a list of list of strings, etc.; but they return either a single string or a flat list
@@ -517,10 +516,9 @@ A quick example of how such parameters can be used is:
 
 .. code-block:: python
 
-    import dynamake.application as da
     import dynamake.make as dm
 
-    da.Param('mode', ...)
+    dm.Param('mode', ...)
 
     MODE_FLAGS = {
         'debug': [ ... ],
@@ -528,7 +526,7 @@ A quick example of how such parameters can be used is:
     }
 
     @dm.step(output='obj/{*name}.o')
-    async def make_object(mode: str = da.env(), **kwargs: str) -> None:
+    async def make_object(mode: str = dm.env(), **kwargs: str) -> None:
         dm.require('src/{name}.c'.format(**kwargs))
         await spawn('cc', '-o', dm.output(), MODE_FLAGS[mode], source_path)
 

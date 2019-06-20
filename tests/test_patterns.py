@@ -5,17 +5,24 @@ Test the pattern matching.
 
 from dynamake.patterns import capture2glob
 from dynamake.patterns import capture2re
-from dynamake.patterns import capture_globs
+from dynamake.patterns import copy_annotations
 from dynamake.patterns import emphasized
 from dynamake.patterns import exists
-from dynamake.patterns import expand_strings
-from dynamake.patterns import extract_strings
 from dynamake.patterns import flatten
+from dynamake.patterns import fmt
+from dynamake.patterns import fmt_glob_extract
+from dynamake.patterns import fmt_glob_paths
+from dynamake.patterns import fmt_match_extract
 from dynamake.patterns import glob2re
-from dynamake.patterns import glob_strings
+from dynamake.patterns import glob_capture
+from dynamake.patterns import glob_extract
+from dynamake.patterns import glob_fmt
+from dynamake.patterns import glob_paths
 from dynamake.patterns import is_emphasized
 from dynamake.patterns import is_exists
 from dynamake.patterns import is_optional
+from dynamake.patterns import match_extract
+from dynamake.patterns import match_fmt
 from dynamake.patterns import NonOptionalException
 from dynamake.patterns import optional
 from dynamake.patterns import precious
@@ -40,7 +47,7 @@ import yaml
 # pylint: disable=missing-docstring
 
 
-class TestPatterns(TestWithReset):
+class TestAnnotations(TestWithReset):
 
     def test_annotations(self) -> None:
         self.assertFalse(is_optional('x'))
@@ -64,8 +71,30 @@ class TestPatterns(TestWithReset):
         self.assertEqual(precious(['x']), ['x'])
         self.assertEqual(precious('x'), 'x')
 
+    def test_copy_annotations(self) -> None:
+        annotated = optional('foo')
+        unannotated = 'bar'
+        copied = copy_annotations(annotated, unannotated)
+
+        self.assertTrue(is_optional(annotated))
+        self.assertFalse(is_optional(unannotated))
+        self.assertTrue(is_optional(copied))
+        self.assertEqual(copied, unannotated)
+
+        annotated = exists(annotated)
+        copied = copy_annotations(annotated, copied)
+
+        self.assertTrue(is_optional(annotated))
+        self.assertTrue(is_exists(annotated))
+        self.assertTrue(is_optional(copied))
+        self.assertTrue(is_exists(copied))
+        self.assertEqual(copied, unannotated)
+
     def test_flatten(self) -> None:
         self.assertEqual(flatten('a', ['b', ['c']]), ['a', 'b', 'c'])
+
+
+class TestConversions(TestWithReset):
 
     def test_load_regexp(self) -> None:
         pattern = yaml.full_load('!r a.*b')
@@ -75,8 +104,9 @@ class TestPatterns(TestWithReset):
         pattern = yaml.full_load('!g a*b')
         self.assertEqual(str(pattern), "re.compile('a[^/]*b')")
 
-    def test_expand_strings(self) -> None:
-        self.assertEqual(expand_strings({'a': 1}, ['{a}.foo', '{a}.bar']), ['1.foo', '1.bar'])
+    def test_fmt(self) -> None:
+        self.assertEqual(fmt({'a': 1}, ['{a}.foo', '{a}.bar']), ['1.foo', '1.bar'])
+        self.assertEqual(fmt({'a': 1}, '{a}.foo'), '1.foo')
 
     def test_glob2re(self) -> None:
         self.check_2re(glob2re, string='', compiled='', match=[''], not_match=['a'])
@@ -172,13 +202,8 @@ class TestPatterns(TestWithReset):
                                          '        ^ missing }'),
                                capture2glob, 'foo{*bar')
 
-    def test_extract_strings(self) -> None:
-        self.assertEqual(extract_strings({'foo': 'x'}, '{foo}/{*bar}.txt', 'x/@a.txt'),
-                         [{'bar': '@a'}])
 
-        self.assertRaisesRegex(RuntimeError,
-                               r'string: x/y.png .* pattern: {foo}/{\*bar}.txt',
-                               extract_strings, {'foo': 'x'}, '{foo}/{*bar}.txt', 'x/y.png')
+class TestParamParsers(TestWithReset):
 
     def test_str2bool(self) -> None:
         self.assertTrue(str2bool('t'))
@@ -263,32 +288,38 @@ class TestPatterns(TestWithReset):
 class TestGlob(TestWithFiles):
 
     def test_no_match(self) -> None:
-        captured = capture_globs({'foo': 'x'}, optional('{foo}.txt'))
+        captured = glob_capture(optional('foo.txt'))
         self.assertEqual(captured.paths, [])
         self.assertEqual(captured.wildcards, [])
-        self.assertEqual(glob_strings({'foo': 'x'}, optional('{foo}.txt')), [])
+        self.assertEqual(glob_paths(optional('foo.txt')), [])
+        self.assertEqual(glob_extract(optional('foo.txt')), [])
 
         self.assertRaisesRegex(NonOptionalException,
-                               'No files .* glob: x.txt pattern: [{]foo[}].txt',
-                               capture_globs, {'foo': 'x'}, '{foo}.txt')
+                               'No files matched .* non-optional .* pattern: foo.txt',
+                               glob_capture, 'foo.txt')
 
-    def test_no_capture(self) -> None:
+    def test_fmtted_capture(self) -> None:
+        write_file('x.y.txt', '')
+        self.assertEqual(fmt_glob_paths(dict(foo='x'), '{foo}.{*bar}.txt'), ['x.y.txt'])
+        self.assertEqual(fmt_glob_extract(dict(foo='x'), '{foo}.{*bar}.txt'), [dict(bar='y')])
+
+    def test_glob_fmt(self) -> None:
         write_file('x.txt', '')
-        captured = capture_globs({'foo': 'x'}, '{foo}.txt')
-        self.assertEqual(captured.paths, ['x.txt'])
-        self.assertEqual(captured.wildcards, [{}])
-        self.assertEqual(glob_strings({'foo': 'x'}, '{foo}.txt'), ['x.txt'])
+        self.assertEqual(glob_fmt('{*foo}.txt', '{foo}.csv'), ['x.csv'])
 
-    def test_capture_string(self) -> None:
-        write_file('x.txt', '')
-        captured = capture_globs({}, '{*foo}.txt')
-        self.assertEqual(captured.paths, ['x.txt'])
-        self.assertEqual(captured.wildcards, [{'foo': 'x'}])
-        self.assertEqual(glob_strings({}, '{*foo}.txt'), ['x.txt'])
 
-    def test_capture_int(self) -> None:
-        write_file('12.txt', '')
-        captured = capture_globs({}, '{*foo}.txt')
-        self.assertEqual(captured.paths, ['12.txt'])
-        self.assertEqual(captured.wildcards, [{'foo': '12'}])
-        self.assertEqual(glob_strings({}, '{*foo}.txt'), ['12.txt'])
+class TestMatch(TestWithReset):
+
+    def test_no_match(self) -> None:
+        self.assertRaisesRegex(RuntimeError,
+                               'The string: bar.txt .* not match .* pattern: foo.txt',
+                               match_extract, 'foo.txt', 'bar.txt')
+
+    def test_fmtted_extract(self) -> None:
+        self.assertEqual(fmt_match_extract(dict(foo='x'), '{foo}.{*bar}.txt', 'x.y.txt'),
+                         [dict(bar='y')])
+
+    def test_match_fmt(self) -> None:
+        self.assertEqual(match_fmt('{*foo}.txt', '{foo}.csv', 'x.txt'), 'x.csv')
+        self.assertEqual(match_fmt('{*foo}.txt', '{foo}.csv', 'x.txt', 'y.txt'),
+                         ['x.csv', 'y.csv'])
