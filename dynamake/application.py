@@ -32,7 +32,6 @@ import ctypes
 import dynamake.patterns as dp
 import logging
 import os
-import re
 import sys
 import yaml
 
@@ -308,12 +307,12 @@ class NamesCollector(NodeVisitor):
             self._not_names.add(node.id)
 
 
-_DECORATOR_LINE = re.compile(r'(?m)^[@].*\n')
-
-
 def _invoked_names(function: Callable) -> Set[str]:
     collector = NamesCollector()
-    source = re.sub(_DECORATOR_LINE, '', dedent(getsource(function)))
+    lines = dedent(getsource(function)).split('\n')
+    while not lines[0].startswith('def ') and not lines[0].startswith('async def '):
+        lines = lines[1:]
+    source = '\n'.join(lines)
     collector.visit(parse(source))
     return collector.names()
 

@@ -1,14 +1,16 @@
 """
 Utility functions for dealing with strings.
 
-This is somewhat of a mixed bag and should arguably be split into several modules.
+This is somewhat of a mixed bag and should arguably be split into several modules. The ``Stat``
+functionality really doesn't belong here, but has cyclical dependencies with ``clean_path`` and
+``glob``.
 """
 
-# pylint: disable=too-many-lines,redefined-builtin
-
-from .stat import Stat
 from curses.ascii import isalnum
 from datetime import datetime
+from glob import glob as glob_files
+from sortedcontainers import SortedDict  # type: ignore
+from stat import S_ISDIR
 from termcolor import colored
 from typing import Any
 from typing import Callable
@@ -25,8 +27,13 @@ from yaml import Node
 
 import argparse
 import logging
+import os
 import re
+import shutil
 import yaml
+
+# pylint: disable=too-many-lines,redefined-builtin
+
 
 _REGEXP_ERROR_POSITION = re.compile(r'(.*) at position (\d+)')
 
@@ -873,6 +880,29 @@ def glob_fmt(pattern: str, *templates: Strings) -> List[str]:
     return results
 
 
+def fmt_glob_fmt(wildcards: Dict[str, Any], pattern: str, *templates: Strings) -> List[str]:
+    """
+    Similar to :py:func:`dynamake.patterns.glob_fmt`, but :py:func:`dynamake.patterns.fmt`
+    the pattern first.
+
+    This is not equivalent to ``glob_fmt(fmt(wildcards, pattern), ...)`` because ``fmt`` will be
+    confused by the ``{*captured_name}`` in the patterns. Instead, the pattern is first converted to
+    a clean ``re`` pattern, eliminating the ``{*captured_name}`` parts, and only then is the ``fmt``
+    applied.
+
+    In addition, the values in the ``wildcards`` are also available to the ``templates``. If these
+    values are also extracted by the ``pattern``, then the extracted values will be used instead.
+    """
+    results: List[str] = []
+    for extracted_wildcards in fmt_glob_extract(wildcards, pattern):
+        for key, value in wildcards.items():
+            if key not in extracted_wildcards:
+                extracted_wildcards[key] = value
+        for template in each_string(*templates):
+            results.append(copy_annotations(template, template.format(**extracted_wildcards)))
+    return results
+
+
 _SPACES = re.compile(r'\s+')
 _DOT_SUFFIX = re.compile('[.](com|net|org|io|gov|[0-9])')
 _PREFIX_DOT = re.compile('(Mr|St|Mrs|Ms|Dr|Inc|Ltd|Jr|Sr|Co)[.]')
@@ -1137,3 +1167,180 @@ class LoggingFormatter(logging.Formatter):
 
         seconds = record_datetime.strftime('%Y-%m-%d %H:%M:%S')
         return '%s.%03d' % (seconds, record.msecs)
+
+
+def clean_path(path: str) -> str:
+    """
+    Return a clean and hopefully "canonical" path.
+
+    We do not use absolute paths everywhere (as that would mess up the match patterns).
+    Instead we just convert each `//` to a single `/`. Perhaps more is needed.
+    """
+    previous_path = ''
+    next_path = path
+    while next_path != previous_path:
+        previous_path = next_path
+        next_path = copy_annotations(path, next_path.replace('//', '/'))
+
+    return next_path
+
+
+class Stat:
+    """
+    Cache stat calls for better performance.
+    """
+
+    _cache: SortedDict
+
+    @staticmethod
+    def reset() -> None:
+        """
+        Clear the cached data.
+        """
+        Stat._cache = SortedDict()
+
+    @staticmethod
+    def stat(path: str) -> os.stat_result:
+        """
+        Return the ``stat`` data for a file.
+        """
+        return Stat._result(path, throw=True)  # type: ignore
+
+    @staticmethod
+    def try_stat(path: str) -> Optional[os.stat_result]:
+        """
+        Return the ``stat`` data for a file.
+        """
+        result = Stat._result(path, throw=False)
+        if isinstance(result, BaseException):
+            return None
+        return result
+
+    @staticmethod
+    def exists(path: str) -> bool:
+        """
+        Test whether a file exists on disk.
+        """
+        result = Stat._result(path, throw=False)
+        return not isinstance(result, BaseException)
+
+    @staticmethod
+    def isfile(path: str) -> bool:
+        """
+        Whether a file exists and is not a directory.
+        """
+        result = Stat._result(path, throw=False)
+        return not isinstance(result, BaseException) and not S_ISDIR(result.st_mode)
+
+    @staticmethod
+    def isdir(path: str) -> bool:
+        """
+        Whether a file exists and is a directory.
+        """
+        result = Stat._result(path, throw=False)
+        return not isinstance(result, BaseException) and S_ISDIR(result.st_mode)
+
+    @staticmethod
+    def _result(path: str, *, throw: bool) -> Union[BaseException, os.stat_result]:
+        path = clean_path(path)
+        result = Stat._cache.get(path)
+
+        if result is not None and (not throw or not isinstance(result, BaseException)):
+            return result
+
+        try:
+            result = os.stat(path)
+        except OSError as exception:
+            result = exception
+
+        Stat._cache[path] = result
+
+        if throw and isinstance(result, BaseException):
+            raise result
+
+        return result
+
+    @staticmethod
+    def glob(pattern: str) -> List[str]:
+        """
+        Fast glob through the cache.
+
+        If the pattern is a file name we know about, we can just return the result without touching
+        the file system.
+        """
+
+        path = clean_path(pattern)
+        result = Stat._cache.get(path)
+
+        if isinstance(result, BaseException):
+            return []
+
+        if result is None:
+            paths = glob_files(pattern, recursive=True)
+            if paths != [pattern]:
+                return [clean_path(path) for path in paths]
+            result = Stat._result(pattern, throw=False)
+            assert not isinstance(result, BaseException)
+
+        return [pattern]
+
+    @staticmethod
+    def forget(path: str) -> None:
+        """
+        Forget the cached ``stat`` data about a file. If it is a directory,
+        also forget all the data about any files it contains.
+        """
+        path = clean_path(path)
+        index = Stat._cache.bisect_left(path)
+        while index < len(Stat._cache):
+            index_path = Stat._cache.iloc[index]
+            if os.path.commonpath([path, index_path]) != path:
+                return
+            Stat._cache.popitem(index)
+
+    @staticmethod
+    def rmdir(path: str) -> None:
+        """
+        Remove an empty directory.
+        """
+        os.rmdir(path)
+        Stat.forget(path)
+
+    @staticmethod
+    def remove(path: str) -> None:
+        """
+        Force remove of a file or a directory.
+        """
+        if Stat.isfile(path):
+            os.remove(path)
+        elif Stat.exists(path):
+            shutil.rmtree(path)
+        Stat.forget(path)
+
+    @staticmethod
+    def touch(path: str) -> None:
+        """
+        Set the last modified time of a file (or a directory) to now.
+        """
+        os.utime(path)
+        Stat.forget(path)
+
+    @staticmethod
+    def mkdir_create(path: str) -> None:
+        """
+        Create a new directory.
+        """
+        os.makedirs(path, exist_ok=False)
+        Stat.forget(path)
+
+    @staticmethod
+    def mkdir_exists(path: str) -> None:
+        """
+        Ensure a directory exists.
+        """
+        if not Stat.exists(path):
+            os.makedirs(path, exist_ok=True)
+            Stat.forget(path)
+
+
+Stat.reset()

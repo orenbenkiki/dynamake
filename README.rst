@@ -207,8 +207,8 @@ For example, inside each step, you can do the following:
    **Inside a step, do not simply ``await`` co-routines that are not provided by DynaMake.**
 
    DynaMake tracks the current step, and invoking ``await`` of some other co-routines will confuse
-   it. Use :py:func:`dynamake.make.wait_for` to ``await`` on external co-routines. That is,
-   write ``await done(something())`` rather than ``await something()``.
+   it. Use :py:func:`dynamake.make.done` to ``await`` on external co-routines. That is, write
+   ``await done(something())`` rather than ``await something()``.
 
 * Use Python code to examine the file system (it is recommended to use
   :py:class:`dynamake.stat.Stat` for cached ``stat`` operations), analyze the content of
@@ -251,12 +251,14 @@ A more generic script might be:
     @dm.step(output='obj/{*name}.o')
     async def make_object(**kwargs: str) -> None:
         source_path = 'src/{name}.c'.format(**kwargs)
+        source_path = dm.fmt(kwargs, 'src/{name}.c')  # Same as above
+        source_path = dm.e('src/{name}.c')  # Same as above
         require_included_files(source_path)
         await spawn('cc', '-o', dm.output(), source_path)
 
     @dm.step(output='bin/main')
     async def make_executable() -> None:
-        object_paths = dm.glob_format('src/{*name}.c', 'obj/{name}.o')
+        object_paths = dm.glob_fmt('src/{*name}.c', 'obj/{name}.o')
         dm.require(object_paths)
         await dm.spawn('ld', '-o', dm.output(), object_paths)
 
@@ -277,8 +279,11 @@ This demonstrates some additional concepts:
 
 * DynaMake provides many functions to deal with ``glob``-ing, capturing, and formatting lists
   of strings, listed in the :py:func:`dynamake.patterns` module. These make it convenient to perform
-  common operations (for example, using a ``glob`` to obtain a list of file names, then ``extract``
-  some part(s) of each, then ``format`` some other pattern using these values).
+  common operations. For example, ``:py:func:`dynamake.make.e`` is equivalent to
+  :py:func:`dynamake.patterns.fmt` using the ``kwargs`` of the current step. This is an extremely
+  common operation so we give it such a short function name. Another example is
+  :py:func:`dynamake.patterns.glob_fmt` which uses a ``glob`` to obtain a list of file names, then
+  ``extract`` some part(s) of each, then ``fmt`` some other pattern(s) using these values.
 
 * Most DynaMake functions accept :py:class:`Strings`, that is, either a single string, or a list of
   strings, or a list of list of strings, etc.; but they return either a single string or a flat list
@@ -311,12 +316,17 @@ which includes some non captured parts (whose name starts with ``_``). For examp
     async def unzip_message(**kwargs: str) -> None:
         dm.require('zipped_messages/{id}.zip'.format(**kwargs))
         await dm.shell('unzip ...')
-        await dm.shell('touch unzipped_messages/{id}/.all.done'.format(**kwargs))
+        await dm.eshell('touch unzipped_messages/{id}/.all.done')
 
 Note that only ``id`` will be set in ``kwargs``. DynaMake assumes that the same invocation will
 generate all ``_part`` values in one call. This demonstrates another point: if a step specifies
 multiple ``output`` patterns, each must capture the same named argument(s) (in this case ``name``),
 but may include different (or no) non-captured path parts.
+
+The :py:func:`dynamake.make.eshell` is equivalent to ``shell(e(...))``, that is, it automatically
+formats all the string(s) using the step's ``kwargs``. DynaMake defines several additional such
+functions with an ``e`` prefix, for example :py:func:`dynamake.make.erequire` and
+:py:func:`dynamake.make.eglob_paths`.
 
 Requiring *any* of the specific output files will cause the step to be invoked and ensure *all*
 outputs are up-to-date. A common trick, demonstrated above, it to have an additional final file
@@ -338,8 +348,8 @@ And that all parts need to be collected together:
     async def collect_parts(**kwargs) -> None:
         dm.require('unzipped_messages/{id}/.all.done'.format(**kwargs))
         await dm.sync()
-        all_parts = dm.glob_expand('unzipped_messages/{id}/{*part}.txt'.format(**kwargs),
-                                   'processed_messages/{id}/{*part}.txt'.format(**kwargs))
+        all_parts = dm.eglob_fmt('unzipped_messages/{id}/{*part}.txt',
+                                 'processed_messages/{id}/{*part}.txt')
         await dm.shell('cat', sorted(all_parts), '>', dm.output())
 
 This sort of flow can only be approximated using static build tools. Typically this is done using
