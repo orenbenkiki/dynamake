@@ -25,7 +25,7 @@ from dynamake.make import sync
 from dynamake.make import with_config
 from dynamake.patterns import optional
 from dynamake.patterns import phony
-from dynamake.stat import Stat
+from dynamake.patterns import Stat
 from testfixtures import LogCapture  # type: ignore
 from tests import TestWithFiles
 from tests import TestWithReset
@@ -2406,9 +2406,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '[.1] make_all: call'),
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
             ('dynamake', 'WHY', '[.1] make_all: must run actions to satisfy the phony output: all'),
-            ('dynamake', 'TRACE', '[.1] make_all: fail'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
-            ('dynamake', 'TRACE', '[.] make: fail'),
         ])
 
     def test_request_too_much_resources(self) -> None:
@@ -2430,7 +2428,5 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '[.1] make_all: synced'),
             ('dynamake', 'WHY',
              '[.1] make_all: must run actions to satisfy the phony output: all'),
-            ('dynamake', 'TRACE', '[.1] make_all: fail'),
             ('dynamake', 'DEBUG', '[.] make: sync'),
-            ('dynamake', 'TRACE', '[.] make: fail'),
         ])

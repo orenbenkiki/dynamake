@@ -7,7 +7,6 @@ Utilities for dynamic make.
 from .application import *  # pylint: disable=redefined-builtin,wildcard-import,unused-wildcard-import
 from .config import Config
 from .patterns import *  # pylint: disable=redefined-builtin,wildcard-import,unused-wildcard-import
-from .stat import Stat
 from argparse import ArgumentParser
 from argparse import Namespace
 from datetime import datetime
@@ -285,6 +284,7 @@ class Step:
         self.output: List[str] = []
 
         for capture in dp.each_string(output):
+            capture = clean_path(capture)
             self.output.append(capture)
             Step.by_regexp.append((capture2re(capture), self))
 
@@ -545,7 +545,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         self.oldest_output_mtime_ns = 0
 
         #: The reason to abort this invocation, if any.
-        self.exception: Optional[BaseException] = None
+        self.exception: Optional[StepException] = None
 
         #: The old persistent actions (from the disk) for ensuring rebuild when actions change.
         self.old_persistent_actions: List[PersistentAction] = []
@@ -658,6 +658,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Require a file to be up-to-date before executing any actions or completing the current
         invocation.
         """
+        path = clean_path(path)
+
         Invocation.current = self
 
         Prog.logger.debug('%s build the required: %s', self.log_prefix, path)
@@ -753,7 +755,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             await self.done(self.sync())
             await self.done(self.collect_final_outputs())
 
-        except BaseException as exception:  # pylint: disable=broad-except
+        except StepException as exception:  # pylint: disable=broad-except
             self.exception = exception
 
         finally:
@@ -1056,7 +1058,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         # There are input files:
 
-        if self.oldest_output_mtime_ns <= self.newest_input_mtime_ns:
+        if self.oldest_output_path is not None \
+                and self.oldest_output_mtime_ns <= self.newest_input_mtime_ns:
             # Some output file is not newer than some input file.
             Prog.logger.log(Make.WHY,
                             '%s must run actions '
@@ -1239,7 +1242,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if self.async_actions:
             Prog.logger.debug('%s sync', self.log_prefix)
-            results: List[Optional[BaseException]] = \
+            results: List[Optional[StepException]] = \
                 await self.done(asyncio.gather(*self.async_actions))
             if self.exception is None:
                 for exception in results:
@@ -1442,14 +1445,25 @@ def step(output: Strings) -> Callable[[Callable], Callable]:
     return _wrap
 
 
-def require(path: str) -> None:
+def require(*paths: Strings) -> None:
     """
     Require an input file for the step.
 
     This queues an async build of the input file using the appropriate step,
     and immediately returns.
     """
-    Invocation.current.require(path)
+    for path in dp.each_string(*paths):
+        Invocation.current.require(path)
+
+
+def erequire(*templates: Strings) -> None:
+    """
+    Similar to :py:func:`dynamake.make.require`, but first :py:func:`dynamake.make.e`-xpands each
+    parameter.
+
+    That is, ``erequire(...)`` is the same as ``require(e(...))``.
+    """
+    require(e(*templates))
 
 
 async def sync() -> Optional[BaseException]:
@@ -1478,6 +1492,16 @@ def _run_shell(*command: str) -> Any:
     return asyncio.create_subprocess_shell(' '.join(command))
 
 
+async def eshell(*templates: Strings) -> None:
+    """
+    Similar to :py:func:`dynamake.make.shell`, but first :py:func:`dynamake.make.e`-xpands each
+    parameter.
+
+    That is, ``eshell(...)`` is the same as ``shell(e(...))``.
+    """
+    await shell(e(*templates))
+
+
 async def spawn(*command: Strings, **resources: int) -> None:
     """
     Execute an external program with arguments.
@@ -1487,6 +1511,16 @@ async def spawn(*command: Strings, **resources: int) -> None:
     current = Invocation.current
     await current.done(current.run_action('spawn', asyncio.create_subprocess_exec,
                                           *command, **resources))
+
+
+async def espawn(*templates: Strings) -> None:
+    """
+    Similar to :py:func:`dynamake.make.spawn`, but first :py:func:`dynamake.make.e`-xpands each
+    parameter.
+
+    That is, ``espawn(...)`` is the same as ``spawn(e(...))``.
+    """
+    await spawn(e(*templates))
 
 
 async def submit(*command: Strings, **resources: int) -> None:
@@ -1511,6 +1545,16 @@ async def submit(*command: Strings, **resources: int) -> None:
         await shell(*wrapper, **resources)
     else:
         await spawn(*command, **resources)
+
+
+async def esubmit(*templates: Strings) -> None:
+    """
+    Similar to :py:func:`dynamake.make.submit`, but first :py:func:`dynamake.make.e`-xpands each
+    parameter.
+
+    That is, ``esubmit(...)`` is the same as ``submit(e(...))``.
+    """
+    await submit(e(*templates))
 
 
 def config_param(name: str, default: Any) -> Any:
@@ -1648,7 +1692,7 @@ def make(parser: ArgumentParser, *,
         require(target)
     try:
         result: Optional[BaseException] = run(Invocation.top.sync())
-    except BaseException as exception:  # pylint: disable=broad-except
+    except StepException as exception:  # pylint: disable=broad-except
         result = exception
 
     if result is None:
@@ -1660,6 +1704,86 @@ def make(parser: ArgumentParser, *,
         if not Prog.is_test:
             sys.exit(1)
         raise result
+
+
+# pylint: disable=function-redefined
+# pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+@overload
+def e(string: str) -> str: ...  # pylint: disable=invalid-name
+
+
+@overload
+def e(not_string: NotString) -> List[str]: ...  # pylint: disable=invalid-name
+
+
+@overload
+def e(first: Strings, second: Strings,  # pylint: disable=invalid-name
+      *strings: Strings) -> List[str]: ...
+
+
+# pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+def e(*strings: Any) -> Any:  # type: ignore # pylint: disable=invalid-name
+    """
+    Similar to :py:func:`dynamake.patterns.fmt` but automatically uses the named arguments
+    of the current step.
+
+    That is, ``dm.e(...)`` is the same as ``dm.fmt(dm.step_kwargs(), ...)``.
+    """
+    return fmt(step_kwargs(), *strings)
+
+# pylint: enable=function-redefined
+
+
+def eglob_capture(*patterns: Strings) -> Captured:
+    """
+    Similar to :py:func:`dynamake.patterns.fmt_glob_capture` but automatically uses the
+    named arguments of the current step.
+
+    That is, ``dm.eglob_capture(...)`` is the same as dm.fmt_glob_capture(dm.step_kwargs(), ...)``.
+    """
+    return fmt_glob_capture(step_kwargs(), *patterns)
+
+
+def eglob_paths(*patterns: Strings) -> List[str]:
+    """
+    Similar to :py:func:`dynamake.patterns.fmt_glob_paths` but automatically uses the
+    named arguments of the current step.
+
+    That is, ``dm.eglob_paths(...)`` is the same as dm.fmt_glob_paths(dm.step_kwargs(), ...)``.
+    """
+    return fmt_glob_paths(step_kwargs(), *patterns)
+
+
+def eglob_fmt(pattern: str, *templates: Strings) -> List[str]:
+    """
+    Similar to :py:func:`dynamake.patterns.fmt_glob_fmt` but automatically uses the
+    named arguments of the current step.
+
+    That is, ``dm.eglob_fmt(...)`` is the same as dm.fmt_glob_fmt(dm.step_kwargs(), ...)``.
+    """
+    return fmt_glob_fmt(step_kwargs(), pattern, *templates)
+
+
+def eglob_extract(*patterns: Strings) -> List[Dict[str, Any]]:
+    """
+    Similar to :py:func:`dynamake.patterns.fmt_glob_extract` but automatically uses the
+    named arguments of the current step.
+
+    That is, ``dm.eglob_extract(...)`` is the same as dm.fmt_glob_extract(dm.step_kwargs(), ...)``.
+    """
+    return fmt_glob_extract(step_kwargs(), *patterns)
+
+
+def step_kwargs() -> Dict[str, Any]:
+    """
+    Return the named arguments of the current step.
+
+    These are the captured names extracted from the output file(s) that the current
+    step was invoked to build.
+    """
+    return Invocation.current.kwargs
 
 
 async def done(awaitable: Awaitable) -> Any:
@@ -1701,6 +1825,7 @@ def reset_make() -> None:
     Config.reset()
     Invocation.reset()
     Step.reset()
+    Stat.reset()
     _define_parameters()
 
 
