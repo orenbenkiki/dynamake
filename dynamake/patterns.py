@@ -805,7 +805,7 @@ def fmt_glob_capture(wildcards: Dict[str, Any], *patterns: Strings) -> Captured:
 
         # Sorted to make tests deterministic.
         for path in sorted(paths):
-            path = copy_annotations(pattern, path)
+            path = copy_annotations(pattern, clean_path(path))
             captured.paths.append(path)
             captured.wildcards.append(_capture_string(pattern, regexp, path))
 

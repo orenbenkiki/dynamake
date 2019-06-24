@@ -254,13 +254,13 @@ A more generic script might be:
         source_path = dm.fmt(kwargs, 'src/{name}.c')  # Same as above
         source_path = dm.e('src/{name}.c')  # Same as above
         require_included_files(source_path)
-        await spawn('cc', '-o', dm.output(), source_path)
+        await dm.espawn('cc', '-o', 'obj/{name}.o', source_path)
 
     @dm.step(output='bin/main')
     async def make_executable() -> None:
         object_paths = dm.glob_fmt('src/{*name}.c', 'obj/{name}.o')
         dm.require(object_paths)
-        await dm.spawn('ld', '-o', dm.output(), object_paths)
+        await dm.spawn('ld', '-o', 'bin/main.o', object_paths)
 
 This demonstrates some additional concepts:
 
@@ -291,8 +291,7 @@ This demonstrates some additional concepts:
   this in your own functions, for example in ``require_included_files``.
 
 * The ``output`` of a step is also ``Strings``, that is, may be a list of files that are created
-  by the actions in the step. You can access the expanded list of outputs using
-  :py:func:`dynamake.make.output`. In contrast, many tools (most notably, ``make``) can't handle the
+  by the actions in the step. In contrast, many tools (most notably, ``make``) can't handle the
   notion of multiple outputs from a single step.
 
 * The ``require_included_files`` is an example of how a step can examine the content of some
@@ -350,7 +349,7 @@ And that all parts need to be collected together:
         await dm.sync()
         all_parts = dm.eglob_fmt('unzipped_messages/{id}/{*part}.txt',
                                  'processed_messages/{id}/{*part}.txt')
-        await dm.shell('cat', sorted(all_parts), '>', dm.output())
+        await dm.eshell('cat', sorted(all_parts), '>', 'collected_messages/{id}.txt')
 
 This sort of flow can only be approximated using static build tools. Typically this is done using
 explicit build phases, instead of a unified build script. This results in brittle build systems,
@@ -538,7 +537,7 @@ A quick example of how such parameters can be used is:
     @dm.step(output='obj/{*name}.o')
     async def make_object(mode: str = dm.env(), **kwargs: str) -> None:
         dm.require('src/{name}.c'.format(**kwargs))
-        await spawn('cc', '-o', dm.output(), MODE_FLAGS[mode], source_path)
+        await dm.espawn('cc', '-o', 'obj/{name}.o', MODE_FLAGS[mode], source_path)
 
 That is, constructing a new :py:class:`dynamake.application.Param` specifies the default value and
 command line option(s) for the parameter, and using :py:func:`dynamake.application.env` as the
@@ -580,7 +579,7 @@ For example, let's allow configuring the compilation flags in the above example(
     @dm.step(output='obj/{*name}.o')
     async def make_object(**kwargs: str) -> None:
         dm.require('src/{name}.c'.format(**kwargs))
-        await spawn('cc', '-o', dm.output(), dm.config_param('flags'), source_path)
+        await dm.espawn('cc', '-o', 'obj/{name}.o', dm.config_param('flags'), source_path)
 
 And create a YAML configuration file as follows:
 
