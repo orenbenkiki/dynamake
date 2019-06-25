@@ -36,9 +36,9 @@ def _exit(status: int) -> None:
 class TestWithReset(TestCase):
 
     def setUp(self) -> None:
+        Prog._is_test = True  # pylint: disable=protected-access
         _reset_test_dates()
         reset_make()
-        Prog.is_test = True
         Prog.logger.setLevel('DEBUG')
         logging.getLogger('asyncio').setLevel('WARN')
 

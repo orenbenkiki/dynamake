@@ -11,6 +11,7 @@ from argparse import ArgumentParser
 from argparse import Namespace
 from datetime import datetime
 from inspect import iscoroutinefunction
+from threading import current_thread
 from typing import Any
 from typing import Awaitable
 from typing import Callable
@@ -453,13 +454,15 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Invocation.active = {}
         Invocation.current = None  # type: ignore
         Invocation.top = Invocation(None)
-        Invocation.current = Invocation.top
+        Invocation.top._become_current()  # pylint: disable=protected-access
         Invocation.up_to_date = {}
         Invocation.phony = set()
         Invocation.poisoned = set()
         Invocation.actions_count = 0
 
-    def __init__(self, step: Optional[Step], **kwargs: Any) -> None:  # pylint: disable=redefined-outer-name
+    def __init__(self,  # pylint: disable=too-many-statements
+                 step: Optional[Step],  # pylint: disable=redefined-outer-name
+                 **kwargs: Any) -> None:
         """
         Track the invocation of an async step.
         """
@@ -490,20 +493,24 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if self.parent is None:
             #: A short unique stack to identify invocations in the log.
-            self.stack: str = '.'
+            self.stack: str = '#0'
 
             #: Context for formatting action wrappers (run prefix and suffix).
             self.context: Dict[str, Any] = {}
         else:
             self.parent.sub_count += 1
-            if self.parent.stack == '.':
-                self.stack = '.%s' % self.parent.sub_count
+            if self.parent.stack == '#0':
+                self.stack = '#%s' % self.parent.sub_count
             else:
                 self.stack = '%s.%s' % (self.parent.stack, self.parent.sub_count)
             self.context = self.parent.context.copy()
 
-        #: The prefix for log messages.
-        self.log_prefix = '[%s] %s:' % (self.stack, self.name)
+        if Prog._is_test:  # pylint: disable=protected-access
+            self._log = self.stack + ' - ' + self.name
+        else:
+            self._log = self.name
+
+        self._verify_no_loop()
 
         #: A condition variable to wait on for this invocation.
         self.condition: Optional[asyncio.Condition] = None
@@ -577,6 +584,15 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         #: The persistent configuration for the step, if the file is used.
         self.file_config_values: Optional[Dict[str, Any]] = None
 
+    def _verify_no_loop(self) -> None:
+        call_chain = [self.name]
+        parent = self.parent
+        while parent is not None:
+            call_chain.append(parent.name)
+            if self.name == parent.name:
+                raise RuntimeError('step invokes itself: ' + ' -> '.join(reversed(call_chain)))
+            parent = parent.parent
+
     def read_old_persistent_actions(self) -> None:
         """
         Read the old persistent data from the disk file.
@@ -586,8 +602,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.actions.yaml')
         if not os.path.exists(path):
             Prog.logger.log(Make.WHY,
-                            '%s must run actions because missing the persistent actions: %s',
-                            self.log_prefix, path)
+                            '%s - Must run actions because missing the persistent actions: %s',
+                            self._log, path)
             self.must_run_action = True
             return
 
@@ -596,11 +612,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 data = yaml.full_load(file.read())
             self.old_persistent_actions = PersistentAction.from_data(data['actions'])
             self.old_persistent_outputs = data['outputs']
-            Prog.logger.debug('%s read the persistent actions: %s', self.log_prefix, path)
+            Prog.logger.debug('%s - Read the persistent actions: %s', self._log, path)
 
         except BaseException:  # pylint: disable=broad-except
-            Prog.logger.warn('%s must run actions because read the invalid persistent actions: %s',
-                             self.log_prefix, path)
+            Prog.logger.warn('%s - Must run actions '
+                             'because read the invalid persistent actions: %s',
+                             self._log, path)
             self.must_run_action = True
 
     def remove_old_persistent_data(self) -> None:
@@ -609,12 +626,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.actions.yaml')
         if os.path.exists(path):
-            Prog.logger.debug('%s remove the persistent actions: %s', self.log_prefix, path)
+            Prog.logger.debug('%s - Remove the persistent actions: %s', self._log, path)
             os.remove(path)
 
         path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.config.yaml')
         if os.path.exists(path):
-            Prog.logger.debug('%s remove the persistent configuration: %s', self.log_prefix, path)
+            Prog.logger.debug('%s - Remove the persistent configuration: %s', self._log, path)
             os.remove(path)
 
         if '/' not in self.name:
@@ -631,7 +648,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         This is only done on a successful build.
         """
         path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.actions.yaml')
-        Prog.logger.debug('%s write the persistent actions: %s', self.log_prefix, path)
+        Prog.logger.debug('%s - Write the persistent actions: %s', self._log, path)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w') as file:
             data = dict(actions=self.new_persistent_actions[-1].into_data(),
@@ -658,21 +675,21 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Require a file to be up-to-date before executing any actions or completing the current
         invocation.
         """
+        self._become_current()
+
         path = clean_path(path)
 
-        Invocation.current = self
-
-        Prog.logger.debug('%s build the required: %s', self.log_prefix, path)
+        Prog.logger.debug('%s - Build the required: %s', self._log, path)
 
         self.all_inputs.append(path)
 
         if path in Invocation.poisoned:
-            self.abort('%s the required: %s has failed to build' % (self.log_prefix, path))
+            self.abort('%s - The required: %s has failed to build' % (self._log, path))
             return
 
         origin = Invocation.up_to_date.get(path)
         if origin is not None:
-            Prog.logger.debug('%s the required: %s was built', self.log_prefix, path)
+            Prog.logger.debug('%s - The required: %s was built', self._log, path)
             if self.new_persistent_actions:
                 self.new_persistent_actions[-1].require(path, origin)
             return
@@ -684,10 +701,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         if step is None:
             stat = Stat.try_stat(path)
             if stat is None:
-                self.log_and_abort("%s don't know how to make the required: %s"
-                                   % (self.log_prefix, path))
+                self.log_and_abort("%s - Don't know how to make the required: %s"
+                                   % (self._log, path))
                 return
-            Prog.logger.debug('%s the required: %s is a source file', self.log_prefix, path)
+            Prog.logger.debug('%s - The required: %s is a source file', self._log, path)
             Invocation.up_to_date[path] = ''
             if self.new_persistent_actions:
                 self.new_persistent_actions[-1].require(path, '')
@@ -696,9 +713,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         invocation = Invocation(step, **kwargs)
         if self.new_persistent_actions:
             self.new_persistent_actions[-1].require(path, invocation.name)
-        Prog.logger.debug('%s the required: %s '
+        Prog.logger.debug('%s - The required: %s '
                           'will be produced by the spawned: %s',
-                          self.log_prefix, path, invocation.log_prefix[:-1])
+                          self._log, path, invocation._log)  # pylint: disable=protected-access
         self.async_actions.append(asyncio.Task(invocation.run()))  # type: ignore
 
     def producer_of(self, path: str) -> Tuple[Optional[Step], Optional[Dict[str, Any]]]:
@@ -738,8 +755,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         if active is not None:
             return await self.done(self.wait_for(active))
 
-        Invocation.current = self
-        Prog.logger.log(Prog.TRACE, '%s call', self.log_prefix)
+        self._become_current()
+        Prog.logger.log(Prog.TRACE, '%s - Call', self._log)
 
         if Make.rebuild_changed_actions:
             self.new_persistent_actions.append(PersistentAction())
@@ -759,7 +776,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             self.exception = exception
 
         finally:
-            Invocation.current = self
+            self._become_current()
 
         if self.exception is None:
             if self.new_persistent_actions:
@@ -770,16 +787,16 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 if self.did_run_all_actions:
                     self.write_new_persistent_actions()
                 elif len(self.new_persistent_actions) < len(self.old_persistent_actions):
-                    Prog.logger.warn('%s skipped some action(s) '
+                    Prog.logger.warn('%s - Skipped some action(s) '
                                      'even though it has changed to remove some final action(s)',
-                                     self.log_prefix)
+                                     self._log)
 
-            Prog.logger.log(Prog.TRACE, '%s done', self.log_prefix)
+            Prog.logger.log(Prog.TRACE, '%s - Done', self._log)
 
         else:
             self.poison_all_outputs()
             self.remove_old_persistent_data()
-            Prog.logger.log(Prog.TRACE, '%s fail', self.log_prefix)
+            Prog.logger.log(Prog.TRACE, '%s - Fail', self._log)
 
         del Invocation.active[self.name]
         if self.condition is not None:
@@ -798,9 +815,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         This is used by other invocations that use this invocation's output(s) as their input(s).
         """
-        Invocation.current = self
+        self._become_current()
 
-        Prog.logger.debug('%s paused by waiting for: %s', self.log_prefix, active.log_prefix[:-1])
+        Prog.logger.debug('%s - Paused by waiting for: %s',
+                          self._log, active._log)  # pylint: disable=protected-access
 
         if active.condition is None:
             active.condition = asyncio.Condition()
@@ -809,8 +827,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         await self.done(active.condition.wait())
         active.condition.release()
 
-        Prog.logger.debug('%s resumed by completion of: %s',
-                          self.log_prefix, active.log_prefix[:-1])
+        Prog.logger.debug('%s - Resumed by completion of: %s',
+                          self._log, active._log)  # pylint: disable=protected-access
 
         return active.exception
 
@@ -831,12 +849,11 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 for path in sorted(dp.fmt_glob_paths(self.kwargs, pattern)):
                     self.initial_outputs.append(path)
                     if path == pattern:
-                        Prog.logger.debug('%s exists output: %s', self.log_prefix, path)
+                        Prog.logger.debug('%s - Exists output: %s', self._log, path)
                     else:
-                        Prog.logger.debug('%s exists output: %s -> %s',
-                                          self.log_prefix, pattern, path)
+                        Prog.logger.debug('%s - Exists output: %s -> %s', self._log, pattern, path)
             except dp.NonOptionalException:
-                Prog.logger.debug('%s missing the output(s): %s', self.log_prefix, pattern)
+                Prog.logger.debug('%s - Missing the output(s): %s', self._log, pattern)
                 self.missing_output = pattern
                 missing_outputs.append(dp.capture2re(pattern))
 
@@ -855,10 +872,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     continue
 
                 if Stat.exists(path):
-                    Prog.logger.debug('%s changed to abandon the output: %s', self.log_prefix, path)
+                    Prog.logger.debug('%s - Changed to abandon the output: %s', self._log, path)
                     self.abandoned_output = path
                 else:
-                    Prog.logger.debug('%s missing the old built output: %s', self.log_prefix, path)
+                    Prog.logger.debug('%s - Missing the old built output: %s', self._log, path)
                     self.missing_output = path
 
                 Stat.forget(path)
@@ -878,8 +895,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 self.oldest_output_mtime_ns = output_mtime_ns
 
         if Prog.logger.isEnabledFor(logging.DEBUG) and self.oldest_output_path is not None:
-            Prog.logger.debug('%s oldest output: %s time: %s',
-                              self.log_prefix, self.oldest_output_path,
+            Prog.logger.debug('%s - Oldest output: %s time: %s',
+                              self._log, self.oldest_output_path,
                               _datetime_from_nanoseconds(self.oldest_output_mtime_ns))
 
     async def collect_final_outputs(self) -> None:  # pylint: disable=too-many-branches
@@ -890,7 +907,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         If successful, this marks all the outputs as up-to-date so that steps that depend on them
         will immediately proceed.
         """
-        Invocation.current = self
+        self._become_current()
 
         missing_outputs = False
         assert self.step is not None
@@ -912,14 +929,14 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                         self.built_outputs.append(path)
 
                         if did_wait:
-                            Prog.logger.warn('%s waited: %s seconds for the output: %s',
-                                             self.log_prefix, round(waited, 2), path)
+                            Prog.logger.warn('%s - Waited: %s seconds for the output: %s',
+                                             self._log, round(waited, 2), path)
 
                         if Make.touch_success_outputs and not dp.is_exists(path):
                             if not did_sleep:
                                 await self.done(asyncio.sleep(0.01))
                                 did_sleep = True
-                            Prog.logger.debug('%s touch the output: %s', self.log_prefix, path)
+                            Prog.logger.debug('%s - Touch the output: %s', self._log, path)
                             Stat.touch(path)
 
                         Invocation.up_to_date[path] = self.name
@@ -927,18 +944,18 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
                         if Prog.logger.isEnabledFor(logging.DEBUG):
                             if path == pattern:
-                                Prog.logger.debug('%s has the output: %s time: %s',
-                                                  self.log_prefix, path,
+                                Prog.logger.debug('%s - Has the output: %s time: %s',
+                                                  self._log, path,
                                                   _datetime_from_nanoseconds(mtime_ns))
                             else:
-                                Prog.logger.debug('%s has the output: %s -> %s time: %s',
-                                                  self.log_prefix, pattern, path,
+                                Prog.logger.debug('%s - Has the output: %s -> %s time: %s',
+                                                  self._log, pattern, path,
                                                   _datetime_from_nanoseconds(mtime_ns))
 
                     break
 
                 except dp.NonOptionalException:
-                    Invocation.current = self
+                    self._become_current()
                     if Make.wait_nfs_outputs and waited < Make.nfs_outputs_timeout:
                         await self.done(asyncio.sleep(next_wait))
                         did_sleep = True
@@ -947,12 +964,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                         did_wait = True
                         continue
 
-                    Prog.logger.error('%s missing the output(s): %s', self.log_prefix, pattern)
+                    Prog.logger.error('%s - Missing the output(s): %s', self._log, pattern)
                     missing_outputs = True
                     break
 
         if missing_outputs:
-            self.abort('%s missing some output(s)' % self.log_prefix)
+            self.abort('%s - Missing some output(s)' % self._log)
 
     def remove_stale_outputs(self) -> None:
         """
@@ -963,7 +980,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         for path in sorted(self.initial_outputs):
             if self.should_remove_stale_outputs and not is_precious(path):
                 if self.is_first_action:  # TODO: Warn if otherwise (keeping the stale output)?
-                    Prog.logger.debug('%s remove the stale output: %s', self.log_prefix, path)
+                    Prog.logger.debug('%s - Remove the stale output: %s', self._log, path)
                     self.remove_output(path)
             Stat.forget(path)
 
@@ -978,7 +995,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             path = os.path.dirname(path)
             try:
                 Stat.rmdir(path)
-                Prog.logger.debug('%s remove the empty directory: %s', self.log_prefix, path)
+                Prog.logger.debug('%s - Remove the empty directory: %s', self._log, path)
             except OSError:
                 return
 
@@ -999,7 +1016,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             for path in sorted(dp.fmt_glob_paths(self.kwargs, dp.optional(pattern))):
                 Invocation.poisoned.add(path)
                 if Make.remove_failed_outputs and not is_precious(path):
-                    Prog.logger.debug('%s remove the failed output: %s', self.log_prefix, path)
+                    Prog.logger.debug('%s - Remove the failed output: %s', self._log, path)
                     self.remove_output(path)
 
     def should_run_action(self) -> bool:  # pylint: disable=too-many-return-statements
@@ -1012,26 +1029,26 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if self.phony_outputs:
             # Either no output files (pure action) or missing output files.
-            Prog.logger.log(Make.WHY, '%s must run actions to satisfy the phony output: %s',
-                            self.log_prefix, self.phony_outputs[0])
+            Prog.logger.log(Make.WHY, '%s - Must run actions to satisfy the phony output: %s',
+                            self._log, self.phony_outputs[0])
             return True
 
         if self.phony_inputs:
-            Prog.logger.log(Make.WHY, '%s must run actions '
-                            'because has rebuilt the required phony: %s',
-                            self.log_prefix, self.phony_inputs[0])
+            Prog.logger.log(Make.WHY,
+                            '%s - Must run actions because has rebuilt the required phony: %s',
+                            self._log, self.phony_inputs[0])
             return True
 
         if self.missing_output is not None:
             Prog.logger.log(Make.WHY,
-                            '%s must run actions to create the missing output(s): %s',
-                            self.log_prefix, self.missing_output)
+                            '%s - Must run actions to create the missing output(s): %s',
+                            self._log, self.missing_output)
             return True
 
         if self.abandoned_output is not None:
             Prog.logger.log(Make.WHY,
-                            '%s must run actions since it has changed to abandon the output: %s',
-                            self.log_prefix, self.abandoned_output)
+                            '%s - Must run actions since it has changed to abandon the output: %s',
+                            self._log, self.abandoned_output)
             return True
 
         if self.new_persistent_actions:
@@ -1039,8 +1056,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             index = len(self.new_persistent_actions) - 1
             if index >= len(self.old_persistent_actions):
                 Prog.logger.log(Make.WHY,
-                                '%s must run actions since it has changed to add action(s)',
-                                self.log_prefix)
+                                '%s - Must run actions since it has changed to add action(s)',
+                                self._log)
                 return True
             new_action = self.new_persistent_actions[index]
             old_action = self.old_persistent_actions[index]
@@ -1051,9 +1068,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if self.newest_input_path is None:
             # No input files (pure computation).
-            Prog.logger.debug('%s can skip actions '
+            Prog.logger.debug('%s - Can skip actions '
                               'because all the outputs exist and there are no newer inputs',
-                              self.log_prefix)
+                              self._log)
             return False
 
         # There are input files:
@@ -1062,17 +1079,17 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 and self.oldest_output_mtime_ns <= self.newest_input_mtime_ns:
             # Some output file is not newer than some input file.
             Prog.logger.log(Make.WHY,
-                            '%s must run actions '
+                            '%s - Must run actions '
                             'because the output: %s '
                             'is not newer than the input: %s',
-                            self.log_prefix, self.oldest_output_path,
+                            self._log, self.oldest_output_path,
                             self.newest_input_path)
             return True
 
         # All output files are newer than all input files.
-        Prog.logger.debug('%s can skip actions '
+        Prog.logger.debug('%s - Can skip actions '
                           'because all the outputs exist and are newer than all the inputs',
-                          self.log_prefix)
+                          self._log)
         return False
 
     def different_actions(self, old_action: PersistentAction, new_action: PersistentAction) -> bool:
@@ -1084,9 +1101,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         if old_action.kind != new_action.kind \
                 or old_action.command != new_action.command:
             Prog.logger.log(Make.WHY,
-                            '%s must run actions '
+                            '%s - Must run actions '
                             'because it has changed the %s command: %s into the %s command: %s',
-                            self.log_prefix,
+                            self._log,
                             old_action.kind, ' '.join(old_action.command or 'none'),
                             new_action.kind, ' '.join(new_action.command or 'none'))
             return True
@@ -1101,15 +1118,15 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         for new_path in sorted(new_required.keys()):
             if new_path not in old_required:
                 Prog.logger.log(Make.WHY,
-                                '%s must run actions because it has changed to require: %s',
-                                self.log_prefix, new_path)
+                                '%s - Must run actions because it has changed to require: %s',
+                                self._log, new_path)
                 return True
 
         for old_path in sorted(old_required.keys()):
             if old_path not in new_required:
                 Prog.logger.log(Make.WHY,
-                                '%s must run actions because it has changed to not require: %s',
-                                self.log_prefix, old_path)
+                                '%s - Must run actions because it has changed to not require: %s',
+                                self._log, old_path)
                 return True
 
         for path in sorted(new_required.keys()):
@@ -1117,10 +1134,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             new_invocation = new_required[path]
             if old_invocation != new_invocation:
                 Prog.logger.log(Make.WHY,
-                                '%s must run actions '
+                                '%s - Must run actions '
                                 'because the producer of the required: %s '
                                 'has changed from: %s into: %s',
-                                self.log_prefix, path,
+                                self._log, path,
                                 (old_invocation or 'source file'),
                                 (new_invocation or 'source file'))
                 return True
@@ -1132,31 +1149,43 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         Spawn a action to actually create some files.
         """
-        Invocation.current = self
+        self._become_current()
 
         await self.done(self.sync())
 
         run_parts = []
         log_parts = []
+        is_silent = None
         for part in dp.each_string(*command):
+            if is_silent is None:
+                if part.startswith('@'):
+                    is_silent = True
+                    if part == '@':
+                        continue
+                    part = part[1:]
+                else:
+                    is_silent = False
+
             run_parts.append(part)
+
             if kind != 'shell':
                 part = dp.copy_annotations(part, shlex.quote(part))
             log_parts.append(dp.color(part))
+
         log_command = ' '.join(log_parts)
 
         if self.exception is not None:
-            Prog.logger.debug("%s can't run: %s", self.log_prefix, log_command)
+            Prog.logger.debug("%s - Can't run: %s", self._log, log_command)
             raise self.exception
 
         if self.new_persistent_actions:
             self.new_persistent_actions[-1].run_action(kind, run_parts)
 
         if not self.should_run_action():
-            if Make.log_skipped_actions:
-                Prog.logger.info('%s skip: %s', self.log_prefix, log_command)
+            if Make.log_skipped_actions and not is_silent:
+                Prog.logger.info('%s - Skip: %s', self._log, log_command)
             else:
-                Prog.logger.debug('%s skip: %s', self.log_prefix, log_command)
+                Prog.logger.debug('%s - Skip: %s', self._log, log_command)
             self.did_run_all_actions = False
             self.is_first_action = False
             if self.new_persistent_actions:
@@ -1177,7 +1206,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             self.must_run_action = True
             self.is_first_action = False
 
-            Prog.logger.info('%s run: %s', self.log_prefix, log_command)
+            if is_silent:
+                Prog.logger.debug('%s - Run: %s', self._log, log_command)
+            else:
+                Prog.logger.info('%s - Run: %s', self._log, log_command)
 
             sub_process = await self.done(runner(*run_parts))
             exit_status = await self.done(sub_process.wait())
@@ -1188,44 +1220,44 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 self.new_persistent_actions.append(PersistentAction(persistent_action))
 
             if exit_status != 0:
-                self.log_and_abort('%s failure: %s' % (self.log_prefix, log_command))
+                self.log_and_abort('%s - Failure: %s' % (self._log, log_command))
                 return
 
-            Prog.logger.log(Prog.TRACE, '%s success: %s', self.log_prefix, log_command)
+            Prog.logger.log(Prog.TRACE, '%s - Success: %s', self._log, log_command)
         finally:
-            Invocation.current = self
+            self._become_current()
             if resources:
                 if Prog.logger.isEnabledFor(logging.DEBUG):
-                    Prog.logger.debug('%s free resources: %s',
-                                      self.log_prefix, _dict_to_str(resources))
+                    Prog.logger.debug('%s - Free resources: %s',
+                                      self._log, _dict_to_str(resources))
                 Resources.free(resources)
                 if Prog.logger.isEnabledFor(logging.DEBUG):
-                    Prog.logger.debug('%s available resources: %s',
-                                      self.log_prefix, _dict_to_str(Resources.available))
+                    Prog.logger.debug('%s - Available resources: %s',
+                                      self._log, _dict_to_str(Resources.available))
                 await self.done(Resources.condition.acquire())
                 Resources.condition.notify_all()
                 Resources.condition.release()
 
     async def _use_resources(self, amounts: Dict[str, int]) -> None:
-        Invocation.current = self
+        self._become_current()
 
         while True:
             if Resources.have(amounts):
                 if Prog.logger.isEnabledFor(logging.DEBUG):
-                    Prog.logger.debug('%s grab resources: %s',
-                                      self.log_prefix, _dict_to_str(amounts))
+                    Prog.logger.debug('%s - Grab resources: %s',
+                                      self._log, _dict_to_str(amounts))
                 Resources.grab(amounts)
                 if Prog.logger.isEnabledFor(logging.DEBUG):
-                    Prog.logger.debug('%s available resources: %s',
-                                      self.log_prefix, _dict_to_str(Resources.available))
+                    Prog.logger.debug('%s - Available resources: %s',
+                                      self._log, _dict_to_str(Resources.available))
                 return
 
             if Prog.logger.isEnabledFor(logging.DEBUG):
                 if Prog.logger.isEnabledFor(logging.DEBUG):
-                    Prog.logger.debug('%s available resources: %s',
-                                      self.log_prefix, _dict_to_str(Resources.available))
-                    Prog.logger.debug('%s paused by waiting for resources: %s',
-                                      self.log_prefix, _dict_to_str(amounts))
+                    Prog.logger.debug('%s - Available resources: %s',
+                                      self._log, _dict_to_str(Resources.available))
+                    Prog.logger.debug('%s - Paused by waiting for resources: %s',
+                                      self._log, _dict_to_str(amounts))
 
             await self.done(Resources.condition.acquire())
             await self.done(Resources.condition.wait())
@@ -1238,10 +1270,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         This is implicitly called before running a action.
         """
-        Invocation.current = self
+        self._become_current()
 
         if self.async_actions:
-            Prog.logger.debug('%s sync', self.log_prefix)
+            Prog.logger.debug('%s - Sync', self._log)
             results: List[Optional[StepException]] = \
                 await self.done(asyncio.gather(*self.async_actions))
             if self.exception is None:
@@ -1251,7 +1283,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                         break
             self.async_actions = []
 
-        Prog.logger.debug('%s synced', self.log_prefix)
+        Prog.logger.debug('%s - Synced', self._log)
 
         failed_inputs = False
         self.phony_inputs = []
@@ -1262,8 +1294,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     level = logging.ERROR
                 else:
                     level = logging.DEBUG
-                Prog.logger.log(level, '%s the required: %s has failed to build',
-                                self.log_prefix, path)
+                Prog.logger.log(level, '%s - The required: %s has failed to build',
+                                self._log, path)
                 Invocation.poisoned.add(path)
                 failed_inputs = True
                 continue
@@ -1272,7 +1304,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 assert dp.is_optional(path)
                 continue
 
-            Prog.logger.debug('%s has the required: %s', self.log_prefix, path)
+            Prog.logger.debug('%s - Has the required: %s', self._log, path)
 
             if path in Invocation.phony:
                 self.phony_inputs.append(path)
@@ -1287,14 +1319,14 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 self.newest_input_mtime_ns = result.st_mtime_ns
 
         if failed_inputs:
-            self.abort('%s failed to build the required target(s)' % self.log_prefix)
+            self.abort('%s - Failed to build the required target(s)' % self._log)
             return self.exception
 
         if self.exception is None \
                 and Prog.logger.isEnabledFor(logging.DEBUG) \
                 and self.oldest_output_path is not None:
-            Prog.logger.debug('%s newest input: %s time: %s',
-                              self.log_prefix, self.newest_input_path,
+            Prog.logger.debug('%s - Newest input: %s time: %s',
+                              self._log, self.newest_input_path,
                               _datetime_from_nanoseconds(self.newest_input_mtime_ns))
 
         return self.exception
@@ -1335,24 +1367,25 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if not os.path.exists(self.config_path):
             Prog.logger.log(Make.WHY,
-                            '%s must run actions '
+                            '%s - Must run actions '
                             'because creating the missing persistent configuration: %s',
-                            self.log_prefix, self.config_path)
+                            self._log, self.config_path)
         else:
             with open(self.config_path, 'r') as file:
                 old_config_text = file.read()
             if new_config_text == old_config_text:
-                Prog.logger.debug('%s use the same persistent configuration: %s',
-                                  self.log_prefix, self.config_path)
+                Prog.logger.debug('%s - Use the same persistent configuration: %s',
+                                  self._log, self.config_path)
                 return self.config_path
 
             Prog.logger.log(Make.WHY,
-                            '%s must run actions because changed the persistent configuration: %s',
-                            self.log_prefix, self.config_path)
-            Prog.logger.debug('%s from the old persistent configuration:\n%s',
-                              self.log_prefix, old_config_text)
-            Prog.logger.debug('%s to the new persistent configuration:\n%s',
-                              self.log_prefix, new_config_text)
+                            '%s - Must run actions '
+                            'because changed the persistent configuration: %s',
+                            self._log, self.config_path)
+            Prog.logger.debug('%s - From the old persistent configuration:\n%s',
+                              self._log, old_config_text)
+            Prog.logger.debug('%s - To the new persistent configuration:\n%s',
+                              self._log, new_config_text)
 
         self.must_run_action = True
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
@@ -1381,15 +1414,19 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Await some non-DynaMake function.
         """
         result = await awaitable
-        Invocation.current = self
+        self._become_current()
         return result
+
+    def _become_current(self) -> None:
+        Invocation.current = self
+        current_thread().name = self.stack
 
 
 _OLD_DATES: Dict[int, float] = {}
 
 
 def _datetime_from_nanoseconds(nanoseconds: int) -> str:
-    if not Prog.is_test:
+    if not Prog._is_test:  # pylint: disable=protected-access
         seconds = datetime.fromtimestamp(nanoseconds // 1000000000).strftime('%Y-%m-%d %H:%M:%S')
         fractions = '%09d' % (nanoseconds % 1000000000)
         return '%s.%s' % (seconds, fractions)
@@ -1480,7 +1517,8 @@ async def shell(*command: Strings, **resources: int) -> None:
     """
     Execute a shell command.
 
-    The caller is responsible for all quotations.
+    The caller is responsible for all quotations. If the first character of the command is ``@``
+    then it is "silent", that is, it is logged in the DEBUG level and not the INFO level.
 
     This first waits until all input files requested so far are ready.
     """
@@ -1505,6 +1543,9 @@ async def eshell(*templates: Strings) -> None:
 async def spawn(*command: Strings, **resources: int) -> None:
     """
     Execute an external program with arguments.
+
+    If the first character of the command is ``@`` then it is "silent", that is, it is logged in the
+    DEBUG level and not the INFO level.
 
     This first waits until all input files requested so far are ready.
     """
@@ -1533,18 +1574,29 @@ async def submit(*command: Strings, **resources: int) -> None:
     etc.
     """
     current = Invocation.current
+    current.context['action_id'] = Invocation.actions_count
+
     prefix = current.config_param('run_prefix', [])
     suffix = current.config_param('run_suffix', [])
-    if prefix or suffix:
-        current.context['action_id'] = Invocation.actions_count
-        prefix = [dp.phony(part.format(**current.context)) for part in dp.each_string(prefix)]
-        wrapped = \
-            [dp.copy_annotations(part, shlex.quote(part)) for part in dp.each_string(*command)]
-        suffix = [dp.phony(part.format(**current.context)) for part in dp.each_string(suffix)]
-        wrapper = prefix + wrapped + suffix
-        await shell(*wrapper, **resources)
-    else:
+    if not prefix and not suffix:
         await spawn(*command, **resources)
+        return
+
+    parts = list(dp.each_string(*command))
+    if prefix and parts and parts[0].startswith('@'):
+        if parts[0] == '@':
+            parts = parts[1:]
+        else:
+            parts[0] = parts[0][1:]
+
+        if not prefix[0].startswith('@'):
+            prefix[0] = '@' + prefix[0]
+
+    prefix = [dp.phony(part.format(**current.context)) for part in dp.each_string(prefix)]
+    wrapped = [dp.copy_annotations(part, shlex.quote(part)) for part in parts]
+    suffix = [dp.phony(part.format(**current.context)) for part in dp.each_string(suffix)]
+
+    await shell(*prefix, *wrapped, *suffix, **resources)
 
 
 async def esubmit(*templates: Strings) -> None:
@@ -1557,11 +1609,11 @@ async def esubmit(*templates: Strings) -> None:
     await submit(e(*templates))
 
 
-def config_param(name: str, default: Any) -> Any:
+def config_param(name: str, default: Any, *, keep_in_file: bool = False) -> Any:
     """
     Access the value of a parameter from the step-specific configuration.
     """
-    return Invocation.current.config_param(name, default)
+    return Invocation.current.config_param(name, default, keep_in_file)
 
 
 def config_file() -> str:
@@ -1680,11 +1732,13 @@ def make(parser: ArgumentParser, *,
 
     targets = [path for path in args.TARGET if path is not None] or dp.flatten(default_targets)
 
-    Prog.logger.log(Prog.TRACE, '[.] make: %s', ' '.join(targets))
+    Prog.logger.log(Prog.TRACE, '%s - Targets: %s',
+                    Invocation.top._log, ' '.join(targets))  # pylint: disable=protected-access
     if Prog.logger.isEnabledFor(logging.DEBUG):
         for value in Resources.available.values():
             if value > 0:
-                Prog.logger.debug('[.] make: available resources: %s',
+                Prog.logger.debug('%s - Available resources: %s',
+                                  Invocation.top._log,  # pylint: disable=protected-access
                                   _dict_to_str(Resources.available))
                 break
     # TODO: Switch to `asyncio.run(sync())` in Python 3.7.
@@ -1696,12 +1750,14 @@ def make(parser: ArgumentParser, *,
         result = exception
 
     if result is None:
-        Prog.logger.log(Prog.TRACE, '[.] make: done')
-        if not Prog.is_test:
+        Prog.logger.log(Prog.TRACE, '%s - Done',
+                        Invocation.top._log)  # pylint: disable=protected-access
+        if not Prog._is_test:  # pylint: disable=protected-access
             sys.exit(0)
     else:
-        Prog.logger.log(Prog.TRACE, '[.] make: fail')
-        if not Prog.is_test:
+        Prog.logger.log(Prog.TRACE, '%s - Fail',
+                        Invocation.top._log)  # pylint: disable=protected-access
+        if not Prog._is_test:  # pylint: disable=protected-access
             sys.exit(1)
         raise result
 

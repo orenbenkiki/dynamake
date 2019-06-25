@@ -172,11 +172,11 @@ class TestParameters(TestWithReset):
 
     def test_serial(self) -> None:
         results = serial(2, _call_in_parallel, kwargs=lambda index: {'index': index})
-        self.assertEqual(results, [('MainThread', 0), ('MainThread', 1)])
+        self.assertEqual(results, [('#0', 0), ('#0', 1)])
 
     def test_parallel(self) -> None:
         results = parallel(2, _call_in_parallel, kwargs=lambda index: {'index': index})
-        self.assertEqual(sorted(results), [('Fork-1.Thread-1', 0), ('Fork-1.Thread-2', 1)])
+        self.assertEqual(sorted(results), [('#1.1', 0), ('#1.2', 1)])
 
     def test_overrides(self) -> None:
         Prog.logger.setLevel('WARN')
