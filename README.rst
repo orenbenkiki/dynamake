@@ -97,7 +97,7 @@ This of course results in less reliable rebuilds.
 Python
 ......
 
-DynaMake was initially created to address the needs to automating scientific computation pipelines
+DynaMake was initially created to address the needs of automating scientific computation pipelines
 (specifically in bio-informatics, specifically in single-cell RNA sequencing, not that it matters).
 However, it is a general-purpose build tool, which may be useful for a wide range of users.
 

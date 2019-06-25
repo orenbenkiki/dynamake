@@ -150,7 +150,7 @@ class Func:  # pylint: disable=too-many-instance-attributes
 
         def _wrapper_function(*args: Any, **kwargs: Any) -> Any:
             kwargs = self.invocation_kwargs(*args, **kwargs)
-            Prog.logger.log(Prog.TRACE, 'call: %s.%s', function.__module__, function.__qualname__)
+            Prog.logger.log(Prog.TRACE, 'Call: %s.%s', function.__module__, function.__qualname__)
             return function(**kwargs)
 
         #: The wrapper we place around the real function.
@@ -334,6 +334,9 @@ class Param:  # pylint: disable=too-many-instance-attributes
     Describe a configurable parameter used by one or more computation function.
     """
 
+    #: The name of the predefines parameters.
+    BUILTIN = ['log_level', 'log_context', 'jobs']
+
     def __init__(self, *, name: str, default: Any, parser: Callable[[str], Any], description: str,
                  short: Optional[str] = None, group: Optional[str] = None,
                  order: Optional[int] = None, metavar: Optional[str] = None) -> None:
@@ -390,8 +393,7 @@ class Prog:
     #: The log level for tracing calls.
     TRACE = (logging.DEBUG + logging.INFO) // 2
 
-    #: Whether we are running in a unit test.
-    is_test: bool
+    _is_test: bool = False
 
     @staticmethod
     def reset() -> None:
@@ -402,7 +404,6 @@ class Prog:
         Prog.DEFAULT_CONFIG = None
         Prog.current = Prog()
         Prog.logger = logging.getLogger('prog')
-        Prog.is_test = False
 
     def __init__(self) -> None:
         """
@@ -430,7 +431,8 @@ class Prog:
                                    % (parameter_name, function.__module__, function.__qualname__))
 
         for parameter_name in self.parameters:
-            if parameter_name not in Func.names_by_parameter and parameter_name != 'jobs':
+            if parameter_name not in Func.names_by_parameter \
+                    and parameter_name not in Param.BUILTIN:
                 raise RuntimeError('The parameter: %s is not used by any configurable function'
                                    % parameter_name)
 
@@ -612,12 +614,6 @@ class Prog:
         group.add_argument('--module', '-m', metavar='MODULE', action='append',
                            help='A Python module to load (containing function definitions)')
 
-        group.add_argument('--log_context', '-lc', metavar='STR',
-                           help='Context to include in log messages')
-
-        group.add_argument('--log_level', '-ll', metavar='LEVEL', default='WARN',
-                           help='The log level to use (default: WARN)')
-
         global_parameters = [(parameter.order, parameter.name)
                              for parameter in self.parameters.values()
                              if parameter.group == 'global options']
@@ -670,20 +666,22 @@ class Prog:
         name = sys.argv[0].split('/')[-1]
         if 'command' in vars(args):
             name += ' ' + args.command
-        if not Prog.is_test:
-            handler = logging.StreamHandler(sys.stderr)
 
-            context = vars(args).get('log_context')
-            if context:
-                log_format = '%(asctime)s - ' + context + ' - ' + name \
-                    + ' - %(threadName)s - %(levelname)s - %(message)s'
-            else:
-                log_format = '%(asctime)s - ' + name \
-                    + ' - %(threadName)s - %(levelname)s - %(message)s'
-            formatter = dp.LoggingFormatter(log_format)
-            handler.setFormatter(formatter)
+        handler = logging.StreamHandler(sys.stderr)
+        log_format = '%(asctime)s - ' + name
+
+        context = self.get_parameter('log_context')
+        if context:
+            log_format += ' - ' + context
+
+        current_thread().name = '#0'
+        log_format += ' - %(threadName)s - %(levelname)s - %(message)s'
+
+        if not Prog._is_test:
+            handler.setFormatter(dp.LoggingFormatter(log_format))
             Prog.logger.addHandler(handler)
-        Prog.logger.setLevel(vars(args).get('log_level', 'WARN'))
+
+        Prog.logger.setLevel(self.get_parameter('log_level'))
 
     @staticmethod
     def call_with_args(args: Namespace) -> Any:
@@ -838,7 +836,7 @@ class Parallel:
             Parallel._process_index.value += 1
             process_index = Parallel._process_index.value
         fork_index = Parallel._fork_index.value
-        current_thread().name = 'Fork-%s.Thread-%s' % (fork_index, process_index)
+        current_thread().name = '#%s.%s' % (fork_index, process_index)
 
 
 def parallel(invocations: int, function: Callable, *fixed_args: Any,
@@ -903,7 +901,7 @@ def override(**values: Any) -> Iterator[None]:
     as if the parameter ``foo`` was configured to have the specified ``value``.
     """
     for name in values:
-        if name not in Prog.current.parameter_values and name != 'jobs':
+        if name not in Prog.current.parameter_values and name not in Param.BUILTIN:
             raise RuntimeError('Unknown override parameter: %s' % name)
     old_values = Prog.current.parameter_values
     old_explicit_parameters = Prog.current.explicit_parameters.copy()
@@ -926,9 +924,16 @@ def _define_parameters() -> None:
         except ValueError:
             from_env = -1
         if from_env < 0:
-            Prog.logger.warn('ignoring invalid value: %s for: DYNAMAKE_JOBS' % dynamake_jobs)
+            Prog.logger.warn('Ignoring invalid value: %s for: DYNAMAKE_JOBS' % dynamake_jobs)
         else:
             default_jobs = from_env
+
+    Param(name='log_level', short='ll', metavar='STR', default='WARN',
+          parser=str, group='global options', description='The log level to use')
+
+    Param(name='log_context', short='lc', metavar='STR', default=None,
+          parser=str, group='global options',
+          description='Optional context to include in log messages')
 
     Param(name='jobs', short='j', metavar='INT', default=default_jobs,
           parser=dp.str2int(min=0), group='global options',
