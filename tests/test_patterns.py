@@ -13,6 +13,7 @@ from dynamake.patterns import fmt
 from dynamake.patterns import fmt_glob_extract
 from dynamake.patterns import fmt_glob_paths
 from dynamake.patterns import fmt_match_extract
+from dynamake.patterns import fmts
 from dynamake.patterns import glob2re
 from dynamake.patterns import glob_capture
 from dynamake.patterns import glob_extract
@@ -107,6 +108,10 @@ class TestConversions(TestWithReset):
     def test_fmt(self) -> None:
         self.assertEqual(fmt({'a': 1}, ['{a}.foo', '{a}.bar']), ['1.foo', '1.bar'])
         self.assertEqual(fmt({'a': 1}, '{a}.foo'), '1.foo')
+
+    def test_fmts(self) -> None:
+        self.assertEqual(fmts([{'a': 1}, {'a': 2}], '{a}.txt', '{a}.csv'),
+                         ['1.txt', '1.csv', '2.txt', '2.csv'])
 
     def test_glob2re(self) -> None:
         self.check_2re(glob2re, string='', compiled='', match=[''], not_match=['a'])
