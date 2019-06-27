@@ -1399,10 +1399,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         assert 'step' not in self.kwargs
         assert self.step is not None
-        context = self.kwargs.copy()
-        context.update(self.context)
-        context['step'] = self.step.name()
-        self.file_config_values = Config.values_for_context(context)
+        full_context = self.kwargs.copy()
+        full_context.update(self.context)
+        full_context['step'] = self.step.name()
+        self.file_config_values = Config.values_for_context(full_context)
         self.full_config_values = {}
         for name, value in self.file_config_values.items():
             if name[-1] == '?':
@@ -1607,6 +1607,21 @@ async def esubmit(*templates: Strings) -> None:
     That is, ``esubmit(...)`` is the same as ``submit(e(...))``.
     """
     await submit(e(*templates))
+
+
+def context() -> Dict[str, Any]:
+    """
+    Access the context of the current build step.
+
+    Modifications to this context will be visible in the context of steps invoked to create required
+    input files.
+
+    .. note::
+
+        If a required file was already built (or started to be built) for another step, then it will
+        use the original requiring step context.
+    """
+    return Invocation.current.context
 
 
 def config_param(name: str, default: Any, *, keep_in_file: bool = False) -> Any:
