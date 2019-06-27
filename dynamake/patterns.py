@@ -393,35 +393,48 @@ def is_emphasized(string: str) -> bool:
 # pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
 
 @overload
-def fmt(wildcards: Dict[str, Any], string: str) -> str: ...
+def fmt(wildcards: Dict[str, Any], template: str) -> str: ...
 
 
 @overload
-def fmt(wildcards: Dict[str, Any], not_string: NotString) -> List[str]: ...
+def fmt(wildcards: Dict[str, Any], not_template: NotString) -> List[str]: ...
 
 
 @overload
 def fmt(wildcards: Dict[str, Any],
-        first: Strings, second: Strings, *strings: Strings) -> List[str]: ...
+        first: Strings, second: Strings, *templates: Strings) -> List[str]: ...
 
 
 # pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
 
-def fmt(wildcards: Any, *strings: Any) -> Any:  # type: ignore
+def fmt(wildcards: Any, *templates: Any) -> Any:  # type: ignore
     """
-    Similar to ``str.format``, but will format any number of strings in one call.
+    Similar to ``str.format``, but will format any number of templates in one call.
 
-    In addition, this will preserve the annotations of the strings, if any.
+    In addition, this will preserve the annotations of the templates, if any.
     """
     results = \
-        [copy_annotations(string, string.format(**wildcards)) for string in each_string(*strings)]
-    if len(strings) == 1 and isinstance(strings[0], str):
+        [copy_annotations(template, template.format(**wildcards))
+         for template in each_string(*templates)]
+    if len(templates) == 1 and isinstance(templates[0], str):
         assert len(results) == 1
         return results[0]
     return results
 
 
 # pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
+
+def fmts(wildcards_list: List[Dict[str, Any]], *templates: Any) -> List[str]:
+    """
+    Similar to :py:func:`dynamake.patterns.fmt`, except expands the ``templates`` for each of the
+    provided ``wildcards``.
+    """
+    results: List[str] = []
+    for wildcards in wildcards_list:
+        results += fmt(wildcards, *templates)
+    return results
+
 
 @overload
 def optional(pattern: str) -> str: ...
