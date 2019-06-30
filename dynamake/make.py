@@ -846,16 +846,18 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 Invocation.phony.add(path)
                 continue
             try:
-                for path in sorted(dp.fmt_glob_paths(self.kwargs, pattern)):
+                formatted_pattern = dp.fmt_capture(self.kwargs, pattern)
+                for path in sorted(dp.glob_paths(formatted_pattern)):
                     self.initial_outputs.append(path)
                     if path == pattern:
                         Prog.logger.debug('%s - Exists output: %s', self._log, path)
                     else:
-                        Prog.logger.debug('%s - Exists output: %s -> %s', self._log, pattern, path)
+                        Prog.logger.debug('%s - Exists output: %s -> %s',
+                                          self._log, pattern, path)
             except dp.NonOptionalException:
                 Prog.logger.debug('%s - Missing the output(s): %s', self._log, pattern)
-                self.missing_output = pattern
-                missing_outputs.append(dp.capture2re(pattern))
+                self.missing_output = formatted_pattern
+                missing_outputs.append(dp.capture2re(formatted_pattern))
 
         if self.new_persistent_actions:
             for path in self.old_persistent_outputs:
@@ -925,7 +927,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             did_wait = False
             while True:
                 try:
-                    for path in sorted(dp.fmt_glob_paths(self.kwargs, pattern)):
+                    formatted_pattern = dp.fmt_capture(self.kwargs, pattern)
+                    for path in sorted(dp.glob_paths(formatted_pattern)):
                         self.built_outputs.append(path)
 
                         if did_wait:
@@ -943,7 +946,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                         mtime_ns = Stat.stat(path).st_mtime_ns
 
                         if Prog.logger.isEnabledFor(logging.DEBUG):
-                            if path == pattern:
+                            if path == formatted_pattern:
                                 Prog.logger.debug('%s - Has the output: %s time: %s',
                                                   self._log, path,
                                                   _datetime_from_nanoseconds(mtime_ns))
@@ -1013,7 +1016,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         for pattern in sorted(self.step.output):
             if dp.is_phony(pattern):
                 continue
-            for path in sorted(dp.fmt_glob_paths(self.kwargs, dp.optional(pattern))):
+            formatted_pattern = dp.fmt_capture(self.kwargs, dp.optional(pattern))
+            for path in sorted(dp.glob_paths(dp.optional(formatted_pattern))):
                 Invocation.poisoned.add(path)
                 if Make.remove_failed_outputs and not is_precious(path):
                     Prog.logger.debug('%s - Remove the failed output: %s', self._log, path)
@@ -1809,42 +1813,46 @@ def e(*strings: Any) -> Any:  # type: ignore # pylint: disable=invalid-name
 
 def eglob_capture(*patterns: Strings) -> Captured:
     """
-    Similar to :py:func:`dynamake.patterns.fmt_glob_capture` but automatically uses the
-    named arguments of the current step.
+    Similar to :py:func:`dynamake.patterns.glob_capture` but automatically uses the named arguments
+    of the current step.
 
-    That is, ``dm.eglob_capture(...)`` is the same as dm.fmt_glob_capture(dm.step_kwargs(), ...)``.
+    That is, ``dm.eglob_capture(...)`` is the same as
+    ``dm.glob_capture(*fmt_capture(dm.step_kwargs(), ...))``.
     """
-    return fmt_glob_capture(step_kwargs(), *patterns)
+    return glob_capture(*fmt_capture(step_kwargs(), *patterns))
 
 
 def eglob_paths(*patterns: Strings) -> List[str]:
     """
-    Similar to :py:func:`dynamake.patterns.fmt_glob_paths` but automatically uses the
-    named arguments of the current step.
+    Similar to :py:func:`dynamake.patterns.glob_paths` but automatically uses the named arguments of
+    the current step.
 
-    That is, ``dm.eglob_paths(...)`` is the same as dm.fmt_glob_paths(dm.step_kwargs(), ...)``.
+    That is, ``dm.eglob_paths(...)`` is the same as ``dm.glob_paths(*fmt_capture(dm.step_kwargs(),
+    ...))``.
     """
-    return fmt_glob_paths(step_kwargs(), *patterns)
+    return glob_paths(*fmt_capture(step_kwargs(), *patterns))
 
 
-def eglob_fmt(pattern: str, *templates: Strings) -> List[str]:
+def eglob_fmt(pattern: str, *patterns: Strings) -> List[str]:
     """
-    Similar to :py:func:`dynamake.patterns.fmt_glob_fmt` but automatically uses the
-    named arguments of the current step.
+    Similar to :py:func:`dynamake.patterns.glob_fmt` but automatically uses the named arguments of
+    the current step.
 
-    That is, ``dm.eglob_fmt(...)`` is the same as dm.fmt_glob_fmt(dm.step_kwargs(), ...)``.
+    That is, ``dm.eglob_fmt(...)`` is the same as ``dm.glob_fmt(*fmt_capture(dm.step_kwargs(),
+    ...))``.
     """
-    return fmt_glob_fmt(step_kwargs(), pattern, *templates)
+    return glob_fmt(fmt_capture(step_kwargs(), pattern), *fmt_capture(step_kwargs(), *patterns))
 
 
 def eglob_extract(*patterns: Strings) -> List[Dict[str, Any]]:
     """
-    Similar to :py:func:`dynamake.patterns.fmt_glob_extract` but automatically uses the
-    named arguments of the current step.
+    Similar to :py:func:`dynamake.patterns.glob_extract` but automatically uses the named arguments
+    of the current step.
 
-    That is, ``dm.eglob_extract(...)`` is the same as dm.fmt_glob_extract(dm.step_kwargs(), ...)``.
+    That is, ``dm.eglob_extract(...)`` is the same as
+    ``dm.glob_extract(*fmt_capture(dm.step_kwargs(), ...))``.
     """
-    return fmt_glob_extract(step_kwargs(), *patterns)
+    return glob_extract(*fmt_capture(step_kwargs(), *patterns))
 
 
 def step_kwargs() -> Dict[str, Any]:
