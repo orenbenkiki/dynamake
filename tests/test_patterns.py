@@ -10,9 +10,7 @@ from dynamake.patterns import emphasized
 from dynamake.patterns import exists
 from dynamake.patterns import flatten
 from dynamake.patterns import fmt
-from dynamake.patterns import fmt_glob_extract
-from dynamake.patterns import fmt_glob_paths
-from dynamake.patterns import fmt_match_extract
+from dynamake.patterns import fmt_capture
 from dynamake.patterns import fmts
 from dynamake.patterns import glob2re
 from dynamake.patterns import glob_capture
@@ -156,6 +154,25 @@ class TestConversions(TestWithReset):
 
         self.check_2re(capture2re, string='foo{*bar:[0-9]}baz', compiled=r'foo(?P<bar>[0-9])baz',
                        match=['foo1baz'], not_match=['foo12baz', 'fooQbaz'])
+
+    def test_fmt_capture(self) -> None:
+        self.assertEqual(fmt_capture(dict(foo='x', bar='y'),
+                                     '{foo}.{*bar:[a-z]}.{*_baz}.{**_vaz:[a-z]}.{{txt}}'),
+                         'x.y.{*_baz}.{**_vaz:[a-z]}.{{txt}}')
+
+        self.assertEqual(fmt_capture({}, 'foo', 'bar'), ['foo', 'bar'])
+
+        self.assertRaisesRegex(RuntimeError,
+                               'empty captured name',
+                               fmt_capture, {}, '{}')
+
+        self.assertRaisesRegex(RuntimeError,
+                               'missing }',
+                               fmt_capture, dict(foo='x'), '{foo')
+
+        self.assertRaisesRegex(RuntimeError,
+                               'invalid captured name character',
+                               fmt_capture, {}, '{$')
 
     def test_nonterminated_capture(self) -> None:
         self.assertRaisesRegex(RuntimeError,
@@ -303,11 +320,6 @@ class TestGlob(TestWithFiles):
                                'No files matched .* non-optional .* pattern: foo.txt',
                                glob_capture, 'foo.txt')
 
-    def test_fmtted_capture(self) -> None:
-        write_file('x.y.txt', '')
-        self.assertEqual(fmt_glob_paths(dict(foo='x'), '{foo}.{*bar}.txt'), ['x.y.txt'])
-        self.assertEqual(fmt_glob_extract(dict(foo='x'), '{foo}.{*bar}.txt'), [dict(bar='y')])
-
     def test_glob_fmt(self) -> None:
         write_file('x.txt', '')
         self.assertEqual(glob_fmt('{*foo}.txt', '{foo}.csv'), ['x.csv'])
@@ -319,10 +331,6 @@ class TestMatch(TestWithReset):
         self.assertRaisesRegex(RuntimeError,
                                'The string: bar.txt .* not match .* pattern: foo.txt',
                                match_extract, 'foo.txt', 'bar.txt')
-
-    def test_fmtted_extract(self) -> None:
-        self.assertEqual(fmt_match_extract(dict(foo='x'), '{foo}.{*bar}.txt', 'x.y.txt'),
-                         [dict(bar='y')])
 
     def test_match_fmt(self) -> None:
         self.assertEqual(match_fmt('{*foo}.txt', '{foo}.csv', 'x.txt'), 'x.csv')
