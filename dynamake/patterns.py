@@ -22,6 +22,7 @@ from typing import overload
 from typing import Sequence
 from typing import Union
 from typing.re import Pattern  # type: ignore # pylint: disable=import-error
+from yaml import Dumper
 from yaml import Loader
 from yaml import Node
 
@@ -427,6 +428,13 @@ class AnnotatedStr(str):
 
     #: Whether this was annotated by :py:func:`dynamake.patterns.emphasized`.
     emphasized = False
+
+
+def _dump_str(dumper: Dumper, data: AnnotatedStr) -> Node:
+    return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+
+
+yaml.add_representer(AnnotatedStr, _dump_str)
 
 
 def copy_annotations(source: str, target: str) -> str:

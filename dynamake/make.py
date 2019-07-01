@@ -778,6 +778,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             self._become_current()
 
         if self.exception is None:
+            assert not self.async_actions
             if self.new_persistent_actions:
                 if len(self.new_persistent_actions) > 1 \
                         and self.new_persistent_actions[-1].is_empty():
@@ -793,6 +794,11 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             Prog.logger.log(Prog.TRACE, '%s - Done', self._log)
 
         else:
+            while self.async_actions:
+                try:
+                    await self.done(self.async_actions.pop())
+                except StepException:
+                    pass
             self.poison_all_outputs()
             self.remove_old_persistent_data()
             Prog.logger.log(Prog.TRACE, '%s - Fail', self._log)
@@ -1760,9 +1766,9 @@ def make(parser: ArgumentParser, *,
                                   _dict_to_str(Resources.available))
                 break
     # TODO: Switch to `asyncio.run(sync())` in Python 3.7.
-    for target in targets:
-        require(target)
     try:
+        for target in targets:
+            require(target)
         result: Optional[BaseException] = run(Invocation.top.sync())
     except StepException as exception:  # pylint: disable=broad-except
         result = exception
@@ -1773,8 +1779,7 @@ def make(parser: ArgumentParser, *,
         if not Prog._is_test:  # pylint: disable=protected-access
             sys.exit(0)
     else:
-        Prog.logger.log(Prog.TRACE, '%s - Fail',
-                        Invocation.top._log)  # pylint: disable=protected-access
+        Prog.logger.error('%s - Fail', Invocation.top._log)  # pylint: disable=protected-access
         if not Prog._is_test:  # pylint: disable=protected-access
             sys.exit(1)
         raise result

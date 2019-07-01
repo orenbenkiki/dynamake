@@ -487,7 +487,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - Remove '
              'the persistent actions: .dynamake/make_all.actions.yaml'),
             ('dynamake', 'TRACE', '#1 - make_all - Fail'),
-            ('dynamake', 'TRACE', '#0 - make - Fail'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
     def test_copy(self) -> None:
@@ -695,7 +695,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'ERROR', '#1 - no_op - Missing the output(s): all'),
             ('dynamake', 'TRACE', '#1 - no_op - Fail'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'TRACE', '#0 - make - Fail'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
     def test_remove_empty_directories(self) -> None:
@@ -738,7 +738,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_foo - Remove the failed output: foo/bar'),
             ('dynamake', 'DEBUG', '#1 - make_foo - Remove the empty directory: foo'),
             ('dynamake', 'TRACE', '#1 - make_foo - Fail'),
-            ('dynamake', 'TRACE', '#0 - make - Fail'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
     def test_remove_stale_outputs(self) -> None:
@@ -872,7 +872,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'ERROR', '#1 - make_all - Failure: false'),
             ('dynamake', 'TRACE', '#1 - make_all - Fail'),
-            ('dynamake', 'TRACE', '#0 - make - Fail'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
     def test_continue_on_failure(self) -> None:
@@ -957,7 +957,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#1 - make_all - Fail'),
             ('dynamake', 'DEBUG', '#0 - make - Synced'),
             ('dynamake', 'DEBUG', '#0 - make - The required: all has failed to build'),
-            ('dynamake', 'TRACE', '#0 - make - Fail'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
     def test_remove_failed_outputs(self) -> None:
@@ -990,7 +990,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'ERROR', '#1 - make_all - Failure: echo @ > all ; false'),
             ('dynamake', 'DEBUG', '#1 - make_all - Remove the failed output: all'),
             ('dynamake', 'TRACE', '#1 - make_all - Fail'),
-            ('dynamake', 'TRACE', '#0 - make - Fail'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
         sys.argv += ['--remove_failed_outputs', 'false']
@@ -1020,7 +1020,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'ERROR', '#1 - make_all - Failure: echo @ > all ; false'),
             ('dynamake', 'TRACE', '#1 - make_all - Fail'),
-            ('dynamake', 'TRACE', '#0 - make - Fail'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
         self.expect_file('all', '@\n')
@@ -1150,7 +1150,7 @@ class TestMain(TestWithFiles):
              "#1 - make_all - Don't know how to make the required: foo"),
             ('dynamake', 'TRACE', '#1 - make_all - Fail'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'TRACE', '#0 - make - Fail'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
         sys.argv += ['foo']
@@ -1159,6 +1159,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#0 - make - Targets: foo'),
             ('dynamake', 'DEBUG', '#0 - make - Build the required: foo'),
             ('dynamake', 'ERROR', "#0 - make - Don't know how to make the required: foo"),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
     def test_slow_outputs(self) -> None:
@@ -1225,7 +1226,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'ERROR', '#1.1 - make_foo - Missing the output(s): foo'),
             ('dynamake', 'TRACE', '#1.1 - make_foo - Fail'),
             ('dynamake', 'TRACE', '#1 - make_all - Fail'),
-            ('dynamake', 'TRACE', '#0 - make - Fail'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
         def _register_with_input() -> None:
@@ -1254,7 +1255,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'ERROR', '#1.1 - make_foo - Missing the output(s): foo'),
             ('dynamake', 'TRACE', '#1.1 - make_foo - Fail'),
             ('dynamake', 'TRACE', '#1 - make_all - Fail'),
-            ('dynamake', 'TRACE', '#0 - make - Fail'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
         def _register_with_output() -> None:
@@ -1283,7 +1284,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'ERROR', '#1 - make_all - The required: foo has failed to build'),
             ('dynamake', 'TRACE', '#1 - make_all - Fail'),
-            ('dynamake', 'TRACE', '#0 - make - Fail'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
         def _register_with_both() -> None:
@@ -1345,7 +1346,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - Remove '
              'the persistent actions: .dynamake/make_all.actions.yaml'),
             ('dynamake', 'TRACE', '#1 - make_all - Fail'),
-            ('dynamake', 'TRACE', '#0 - make - Fail'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
         self.check(_register, error='make_all - Failure: false', log=[
@@ -1363,7 +1364,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'ERROR', '#1 - make_all - Failure: false'),
             ('dynamake', 'TRACE', '#1 - make_all - Fail'),
-            ('dynamake', 'TRACE', '#0 - make - Fail'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
     def test_remove_parameterized_persistent_data(self) -> None:
@@ -1395,7 +1396,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all/name=all - Remove '
              'the persistent actions: .dynamake/make_all/name=all.actions.yaml'),
             ('dynamake', 'TRACE', '#1 - make_all/name=all - Fail'),
-            ('dynamake', 'TRACE', '#0 - make - Fail'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
         self.check(_register, error='make_all/name=all - Failure: false', log=[
@@ -1414,7 +1415,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'ERROR', '#1 - make_all/name=all - Failure: false'),
             ('dynamake', 'TRACE', '#1 - make_all/name=all - Fail'),
-            ('dynamake', 'TRACE', '#0 - make - Fail'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
     def test_add_final_action(self) -> None:
