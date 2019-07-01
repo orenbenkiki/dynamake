@@ -785,7 +785,11 @@ class Parallel:
                overrides: Optional[Callable[[int], Dict[str, Any]]] = None,
                **fixed_kwargs: Any) -> List[Any]:
         assert Prog.current is not None
-        processes_count = processes()
+
+        processes_count = min(processes(), invocations)
+        assert processes_count >= 0
+        if processes_count == 0:
+            return []
 
         previous_process_index = Parallel._process_index
         previous_function = Parallel._function
