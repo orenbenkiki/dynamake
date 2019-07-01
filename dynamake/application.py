@@ -2,6 +2,7 @@
 Utilities for configurable applications.
 """
 
+from .patterns import *  # pylint: disable=redefined-builtin,wildcard-import,unused-wildcard-import
 from argparse import _ArgumentGroup
 from argparse import ArgumentParser
 from argparse import Namespace
@@ -29,7 +30,6 @@ from typing import Set
 from typing import Tuple
 
 import ctypes
-import dynamake.patterns as dp
 import logging
 import os
 import sys
@@ -550,7 +550,7 @@ class Prog:
         for command_name in functions:
             func = Prog._verify_function(command_name, True)
             description = func.wrapped.__doc__
-            sentence = dp.first_sentence(description)
+            sentence = first_sentence(description)
             command_parser = subparsers.add_parser(func.name, help=sentence,
                                                    description=description,
                                                    formatter_class=RawDescriptionHelpFormatter)
@@ -678,7 +678,7 @@ class Prog:
         log_format += ' - %(threadName)s - %(levelname)s - %(message)s'
 
         if not Prog._is_test:
-            handler.setFormatter(dp.LoggingFormatter(log_format))
+            handler.setFormatter(LoggingFormatter(log_format))
             Prog.logger.addHandler(handler)
 
         Prog.logger.setLevel(self.get_parameter('log_level'))
@@ -706,8 +706,8 @@ class Prog:
                                'does not contain a top-level mapping' % path)
 
         for name, value in data.items():
-            is_optional = name.endswith('?')
-            if is_optional:
+            is_optional_value = name.endswith('?')
+            if is_optional_value:
                 name = name[:-1]
                 if name in data:
                     raise RuntimeError('Conflicting entries for both: %s '
@@ -716,7 +716,7 @@ class Prog:
                                        % (name, name, path))
 
             if name not in self.parameter_values:
-                if is_optional:
+                if is_optional_value:
                     continue
                 raise RuntimeError('Unknown parameter: %s '
                                    'specified in the configuration file: %s'
@@ -940,7 +940,7 @@ def _define_parameters() -> None:
           description='Optional context to include in log messages')
 
     Param(name='jobs', short='j', metavar='INT', default=default_jobs,
-          parser=dp.str2int(min=0), group='global options',
+          parser=str2int(min=0), group='global options',
           description='The maximal number of parallel threads and/or processes')
 
 
@@ -964,6 +964,7 @@ def reset_application() -> None:
     """
     Reset all the current state, for tests.
     """
+    Stat.reset()
     Func.reset()
     Prog.reset()
     Parallel.reset()
