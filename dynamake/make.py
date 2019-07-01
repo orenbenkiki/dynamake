@@ -6,7 +6,6 @@ Utilities for dynamic make.
 
 from .application import *  # pylint: disable=redefined-builtin,wildcard-import,unused-wildcard-import
 from .config import Config
-from .patterns import *  # pylint: disable=redefined-builtin,wildcard-import,unused-wildcard-import
 from argparse import ArgumentParser
 from argparse import Namespace
 from datetime import datetime
@@ -1904,7 +1903,6 @@ def reset_make() -> None:
     Config.reset()
     Invocation.reset()
     Step.reset()
-    Stat.reset()
     _define_parameters()
 
 
