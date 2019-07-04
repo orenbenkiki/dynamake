@@ -948,9 +948,10 @@ def glob_paths(*patterns: Strings) -> List[str]:
         if not some_paths and not is_optional(pattern):
             raise NonOptionalException(glob, pattern)
 
-        paths += sorted(some_paths)
+        for path in some_paths:
+            paths.append(clean_path(path))
 
-    return paths
+    return sorted(paths)
 
 
 def glob_extract(*patterns: Strings) -> List[Dict[str, Any]]:
@@ -1273,7 +1274,6 @@ def clean_path(path: str) -> str:
     while next_path != previous_path:
         previous_path = next_path
         next_path = copy_annotations(path, next_path.replace('//', '/'))
-
     return next_path
 
 
