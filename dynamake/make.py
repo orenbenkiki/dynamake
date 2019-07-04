@@ -852,7 +852,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 continue
             try:
                 formatted_pattern = dp.fmt_capture(self.kwargs, pattern)
-                for path in sorted(dp.glob_paths(formatted_pattern)):
+                for path in dp.glob_paths(formatted_pattern):
                     self.initial_outputs.append(path)
                     if path == pattern:
                         Prog.logger.debug('%s - Exists output: %s', self._log, path)
@@ -933,7 +933,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             while True:
                 try:
                     formatted_pattern = dp.fmt_capture(self.kwargs, pattern)
-                    for path in sorted(dp.glob_paths(formatted_pattern)):
+                    for path in dp.glob_paths(formatted_pattern):
                         self.built_outputs.append(path)
 
                         if did_wait:
@@ -1022,7 +1022,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             if dp.is_phony(pattern):
                 continue
             formatted_pattern = dp.fmt_capture(self.kwargs, dp.optional(pattern))
-            for path in sorted(dp.glob_paths(dp.optional(formatted_pattern))):
+            for path in dp.glob_paths(dp.optional(formatted_pattern)):
                 Invocation.poisoned.add(path)
                 if Make.remove_failed_outputs and not is_precious(path):
                     Prog.logger.debug('%s - Remove the failed output: %s', self._log, path)
@@ -1340,7 +1340,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         return self.exception
 
-    def config_param(self, name: str, default: Any = None, keep_in_file: bool = False) -> Any:
+    def config_param(self, name: str, default: Any = None,
+                     *, keep_in_file: bool = False, is_required: bool = False) -> Any:
         """
         Access the value of a parameter from the step-specific configuration.
 
@@ -1353,6 +1354,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         assert self.full_config_values is not None
         assert self.file_config_values is not None
         value = self.full_config_values.get(name, default)
+        if is_required and value is None:
+            self.log_and_abort('%s - No value for the step configuration parameter: %s'
+                               % (self._log, name))
 
         if not keep_in_file:
             for name_in_file in [name, name + '?']:
@@ -1633,11 +1637,13 @@ def context() -> Dict[str, Any]:
     return Invocation.current.context
 
 
-def config_param(name: str, default: Any, *, keep_in_file: bool = False) -> Any:
+def config_param(name: str, default: Any = None,
+                 *, keep_in_file: bool = False, is_required: bool = False) -> Any:
     """
     Access the value of a parameter from the step-specific configuration.
     """
-    return Invocation.current.config_param(name, default, keep_in_file)
+    return Invocation.current.config_param(name, default, keep_in_file=keep_in_file,
+                                           is_required=is_required)
 
 
 def config_file() -> str:
