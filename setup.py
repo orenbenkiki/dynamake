@@ -201,6 +201,7 @@ setup(name='dynamake',
       author_email='oren@ben-kiki.org',
       license='MIT',
       packages=find_packages(exclude=['tests']),
+      package_data={'dynamake': ['py.typed']},
       entry_points={'console_scripts': [
           'dynamain=dynamain.bin.main:main',
           'dynamake=dynamake.bin.make:make',
