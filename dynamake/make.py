@@ -163,6 +163,12 @@ class StepException(Exception):
     """
 
 
+class RestartException(Exception):
+    """
+    Indicates a step needs to be re-run, this time executing all actions.
+    """
+
+
 class Make:
     """
     Global build configuration and state.
@@ -353,6 +359,7 @@ class PersistentAction:
         """
         Set the executed command of the action.
         """
+        assert kind in ['shell', 'spawn']
         self.command = [word for word in command if not dp.is_phony(word)]
         self.kind = kind
         self.start = datetime.now()
@@ -379,7 +386,13 @@ class PersistentAction:
             data = []
 
         datum: Dict[str, Any] = dict(required=self.required)
-        if self.kind != 'phony':
+
+        if self.kind == 'phony':
+            assert self.start is None
+            assert self.end is None
+        else:
+            assert self.start is not None
+            assert self.end is not None
             datum[self.kind] = self.command
             datum['start'] = str(self.start)
             datum['end'] = str(self.end)
@@ -566,11 +579,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         #: Whether we already decided to run actions.
         self.must_run_action = False
 
-        #: Whether we haven't run (or skipped) the first action yet.
-        self.is_first_action = True
-
-        #: Whether we run all actions seen so far.
-        self.did_run_all_actions = True
+        #: Whether we actually skipped all actions so far.
+        self.did_skip_actions = False
 
         #: Whether we should remove stale outputs before running the next action.
         self.should_remove_stale_outputs = Make.remove_stale_outputs
@@ -583,6 +593,34 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         #: The persistent configuration for the step, if the file is used.
         self.file_config_values: Optional[Dict[str, Any]] = None
+
+    def _restart(self) -> None:
+        if self.parent is None:
+            self.context = {}
+        else:
+            self.context = self.parent.context.copy()
+
+        self.phony_inputs = []
+        self.all_inputs = []
+        self.newest_input_path = None
+
+        assert not self.async_actions
+
+        self.abandoned_output = None
+        self.oldest_output_path = None
+
+        assert self.exception is None
+
+        if self.new_persistent_actions:
+            self.new_persistent_actions = [PersistentAction()]
+
+        self.must_run_action = True
+        self.did_skip_actions = False
+        assert self.should_remove_stale_outputs == Make.remove_stale_outputs
+
+        self.full_config_values = None
+        self.config_path = None
+        self.file_config_values = None
 
     def _verify_no_loop(self) -> None:
         call_chain = [self.name]
@@ -768,7 +806,11 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         try:
             assert self.step is not None
-            await self.done(self.step.func.wrapped(**self.kwargs))
+            try:
+                await self.done(self.step.func.wrapped(**self.kwargs))
+            except RestartException:
+                self._restart()
+                await self.done(self.step.func.wrapped(**self.kwargs))
             await self.done(self.sync())
             await self.done(self.collect_final_outputs())
 
@@ -785,7 +827,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                         and self.new_persistent_actions[-1].is_empty():
                     self.new_persistent_actions.pop()
 
-                if self.did_run_all_actions:
+                if not self.did_skip_actions:
                     self.write_new_persistent_actions()
                 elif len(self.new_persistent_actions) < len(self.old_persistent_actions):
                     Prog.logger.warn('%s - Skipped some action(s) '
@@ -988,9 +1030,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         for path in sorted(self.initial_outputs):
             if self.should_remove_stale_outputs and not is_precious(path):
-                if self.is_first_action:  # TODO: Warn if otherwise (keeping the stale output)?
-                    Prog.logger.debug('%s - Remove the stale output: %s', self._log, path)
-                    self.remove_output(path)
+                Prog.logger.debug('%s - Remove the stale output: %s', self._log, path)
+                self.remove_output(path)
             Stat.forget(path)
 
         self.should_remove_stale_outputs = False
@@ -1164,6 +1205,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         await self.done(self.sync())
 
         run_parts = []
+        persistent_parts = []
         log_parts = []
         is_silent = None
         for part in dp.each_string(*command):
@@ -1177,6 +1219,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     is_silent = False
 
             run_parts.append(part)
+            if not dp.is_phony(part):
+                persistent_parts.append(part)
 
             if kind != 'shell':
                 part = dp.copy_annotations(part, shlex.quote(part))
@@ -1189,19 +1233,25 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             raise self.exception
 
         if self.new_persistent_actions:
-            self.new_persistent_actions[-1].run_action(kind, run_parts)
+            self.new_persistent_actions[-1].run_action(kind, persistent_parts)
 
         if not self.should_run_action():
             if Make.log_skipped_actions and not is_silent:
                 Prog.logger.info('%s - Skip: %s', self._log, log_command)
             else:
                 Prog.logger.debug('%s - Skip: %s', self._log, log_command)
-            self.did_run_all_actions = False
-            self.is_first_action = False
+            self.did_skip_actions = True
             if self.new_persistent_actions:
                 self.new_persistent_actions.append(  #
                     PersistentAction(self.new_persistent_actions[-1]))
             return
+
+        if self.did_skip_actions:
+            self.must_run_action = True
+            Prog.logger.debug('Must restart step to run skipped action(s)')
+            raise RestartException('To run skipped action(s)')
+
+        self.must_run_action = True
 
         Invocation.actions_count += 1
 
@@ -1213,8 +1263,6 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             self.remove_stale_outputs()
 
             self.oldest_output_path = None
-            self.must_run_action = True
-            self.is_first_action = False
 
             if is_silent:
                 Prog.logger.debug('%s - Run: %s', self._log, log_command)

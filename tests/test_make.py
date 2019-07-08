@@ -1476,15 +1476,23 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - Newest input: None time: 0'),
             ('dynamake', 'WHY',
              '#1 - make_all - Must run actions since it has changed to add action(s)'),
-            ('dynamake', 'INFO', '#1 - make_all - Run: true'),
+            ('dynamake', 'DEBUG', 'Must restart step to run skipped action(s)'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Remove the stale output: all'),
+            ('dynamake', 'INFO', '#1 - make_all - Run: touch all'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
+            ('dynamake', 'TRACE', '#1 - make_all - Success: touch all'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
+            ('dynamake', 'INFO', '#1 - make_all - Run: true'),
             ('dynamake', 'TRACE', '#1 - make_all - Success: true'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 1'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 2'),
+            ('dynamake', 'DEBUG',
+             '#1 - make_all - Write the persistent actions: .dynamake/make_all.actions.yaml'),
             ('dynamake', 'TRACE', '#1 - make_all - Done'),
             ('dynamake', 'DEBUG', '#0 - make - Synced'),
             ('dynamake', 'DEBUG', '#0 - make - Has the required: all'),
-            ('dynamake', 'TRACE', '#0 - make - Done'),
+            ('dynamake', 'TRACE', '#0 - make - Done')
         ])
 
     def test_abandon_early_action(self) -> None:

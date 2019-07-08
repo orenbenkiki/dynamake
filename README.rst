@@ -177,14 +177,21 @@ not exist, or if ``foo`` is newer than ``bar``:
     @dm.step(output='foo')
     async def copy_bar_to_foo() -> None:
         dm.require('bar')
-        await dm.shell('cp foo bar')
+        await dm.shell('cp bar foo')
 
 This is essentially equivalent to the ``make`` rule:
 
 .. code-block:: make
 
     foo: bar
-            cp foo bar
+            cp bar foo
+
+That is, DynaMake will only execute the shell command ``cp bar foo`` if the ``foo`` file is missing
+or is older than the ``bar`` file. In general, DynaMake will skip actions unless it finds a
+sufficient reason to execute them. If there are multiple actions in a step, and DynaMake skipped
+some to discover that a later action needs to be executed, then DynaMake restarts the step, and this
+time executes all actions. That is, step functions are (should be) "idempotent"; re-running a step
+multiple times should have no effect.
 
 The Python version is more verbose, so if this was all there was to it, ``make`` would have been
 preferable. However, DynaMake allows one to specify scripts that are impossible in ``make``,
@@ -448,15 +455,6 @@ option which is then handled by the provided ``make`` main function.
 
 * ``--remove_stale_outputs`` controls whether DynaMake removes all (non-``precious``) outputs
   before executing the first action of a step. By default this is ``True``.
-
-.. note::
-
-    **Removal of stale outputs is not guaranteed when there are multiple actions.**
-
-    If DynaMake skips running the first action, but later discovers it needs to run a following
-    action of the same step, then it will not remove the stale output file(s), as it has no way of
-    telling which of these files are created by which of the actions. In general it is recommended
-    that each step will contain exactly one action.
 
 * ``--wait_nfs_outputs`` controls whether DynaMake will wait before pronouncing that an output
   file has not been created by the step action(s). This may be needed if the action executes on a
