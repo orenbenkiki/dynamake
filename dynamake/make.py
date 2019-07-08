@@ -10,6 +10,7 @@ from argparse import ArgumentParser
 from argparse import Namespace
 from datetime import datetime
 from inspect import iscoroutinefunction
+from textwrap import dedent
 from threading import current_thread
 from typing import Any
 from typing import Awaitable
@@ -1743,6 +1744,8 @@ def make(parser: ArgumentParser, *,
     parser.add_argument('TARGET', nargs='*',
                         help='The file or target to make (default: %s)' % ' '.join(default_targets))
     group = Prog.current.add_global_parameters(parser)
+    group.add_argument('--list_steps', '-ls', default=False, action='store_true',
+                       help='List the build steps and their targets, and exit.')
     group.add_argument('--step_config', '-sc', metavar='FILE', action='append',
                        help='Load a step parameters configuration YAML file')
 
@@ -1760,8 +1763,14 @@ def make(parser: ArgumentParser, *,
 
     _collect_parameters()
 
-    targets = [path for path in args.TARGET if path is not None] or dp.flatten(default_targets)
+    if args.list_steps:
+        _list_steps()
 
+    _build_targets([path for path in args.TARGET if path is not None]
+                   or dp.flatten(default_targets))
+
+
+def _build_targets(targets: List[str]) -> None:
     Prog.logger.log(Prog.TRACE, '%s - Targets: %s',
                     Invocation.top._log, ' '.join(targets))  # pylint: disable=protected-access
     if Prog.logger.isEnabledFor(logging.DEBUG):
@@ -1789,6 +1798,34 @@ def make(parser: ArgumentParser, *,
         if not Prog._is_test:  # pylint: disable=protected-access
             sys.exit(1)
         raise result
+
+
+def _list_steps() -> None:
+    is_first = True
+    for name, step_data in sorted(Step.by_name.items()):
+        if not is_first:
+            print()
+        is_first = False
+        doc = step_data.func.wrapped.__doc__
+        if doc:
+            print('# ' + dedent(doc).strip().replace('\n', '\n# '))
+        print('%s:' % name)
+        for output in sorted(step_data.output):
+            properties = []
+            if dp.is_exists(output):
+                properties.append('exists')
+            if dp.is_optional(output):
+                properties.append('optional')
+            if dp.is_phony(output):
+                properties.append('phony')
+            if dp.is_precious(output):
+                properties.append('precious')
+            if properties:
+                print('- %s: %s' % (output, ', '.join(properties)))
+            else:
+                print('- %s' % output)
+    if not Prog._is_test:  # pylint: disable=protected-access
+        sys.exit(0)
 
 
 # pylint: disable=function-redefined
