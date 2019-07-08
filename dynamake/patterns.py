@@ -1274,6 +1274,8 @@ def clean_path(path: str) -> str:
     while next_path != previous_path:
         previous_path = next_path
         next_path = copy_annotations(path, next_path.replace('//', '/'))
+    while next_path.endswith('/'):
+        next_path = next_path[:-1]
     return next_path
 
 
