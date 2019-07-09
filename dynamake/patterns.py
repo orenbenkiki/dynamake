@@ -264,29 +264,23 @@ def _fmt_capture(kwargs: Dict[str, Any], capture: str) -> str:  # pylint: disabl
             results.append('{{')
             index += 1
 
-        elif char == '{' and _is_next('*'):
-            index += 1
-            stars = 1
-            if _is_next('*'):
+        elif char == '{':
+            stars = 0
+            while _is_next('*'):
                 index += 1
                 stars += 1
-            if _is_next('_'):
-                results.append('{')
-                results.append(stars * '*')
-                _parse_regexp(True)
-                _expect_close()
-                results.append('}')
-            else:
-                name = _parse_name(':}')
+            name = _parse_name(':}')
+            if name in kwargs:
                 results.append(kwargs[name].replace('{', '{{').replace('}', '}}'))
                 _parse_regexp(False)
                 _expect_close()
-
-        elif char == '{':
-            name = _parse_name('}')
-            results.append(kwargs[name].replace('{', '{{').replace('}', '}}'))
-            _parse_regexp(False)
-            _expect_close()
+            else:
+                results.append('{')
+                results.append(stars * '*')
+                results.append(name)
+                _parse_regexp(True)
+                _expect_close()
+                results.append('}')
 
         else:
             results.append(char)
