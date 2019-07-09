@@ -1914,7 +1914,7 @@ def eglob_capture(*patterns: Strings) -> Captured:
     That is, ``dm.eglob_capture(...)`` is the same as
     ``dm.glob_capture(*fmt_capture(dm.step_kwargs(), ...))``.
     """
-    return glob_capture(*fmt_capture(step_kwargs(), *patterns))
+    return glob_capture(fmt_capture(step_kwargs(), *patterns))
 
 
 def eglob_paths(*patterns: Strings) -> List[str]:
@@ -1922,10 +1922,10 @@ def eglob_paths(*patterns: Strings) -> List[str]:
     Similar to :py:func:`dynamake.patterns.glob_paths` but automatically uses the named arguments of
     the current step.
 
-    That is, ``dm.eglob_paths(...)`` is the same as ``dm.glob_paths(*fmt_capture(dm.step_kwargs(),
+    That is, ``dm.eglob_paths(...)`` is the same as ``dm.glob_paths*fmt_capture(dm.step_kwargs(),
     ...))``.
     """
-    return glob_paths(*fmt_capture(step_kwargs(), *patterns))
+    return glob_paths(fmt_capture(step_kwargs(), *patterns))
 
 
 def eglob_fmt(pattern: str, *patterns: Strings) -> List[str]:
@@ -1933,10 +1933,10 @@ def eglob_fmt(pattern: str, *patterns: Strings) -> List[str]:
     Similar to :py:func:`dynamake.patterns.glob_fmt` but automatically uses the named arguments of
     the current step.
 
-    That is, ``dm.eglob_fmt(...)`` is the same as ``dm.glob_fmt(*fmt_capture(dm.step_kwargs(),
+    That is, ``dm.eglob_fmt(...)`` is the same as ``dm.glob_fmt(fmt_capture(dm.step_kwargs(),
     ...))``.
     """
-    return glob_fmt(fmt_capture(step_kwargs(), pattern), *fmt_capture(step_kwargs(), *patterns))
+    return glob_fmt(fmt_capture(step_kwargs(), pattern), fmt_capture(step_kwargs(), *patterns))
 
 
 def eglob_extract(*patterns: Strings) -> List[Dict[str, Any]]:
@@ -1945,9 +1945,9 @@ def eglob_extract(*patterns: Strings) -> List[Dict[str, Any]]:
     of the current step.
 
     That is, ``dm.eglob_extract(...)`` is the same as
-    ``dm.glob_extract(*fmt_capture(dm.step_kwargs(), ...))``.
+    ``dm.glob_extract(fmt_capture(dm.step_kwargs(), ...))``.
     """
-    return glob_extract(*fmt_capture(step_kwargs(), *patterns))
+    return glob_extract(fmt_capture(step_kwargs(), *patterns))
 
 
 def step_kwargs() -> Dict[str, Any]:
