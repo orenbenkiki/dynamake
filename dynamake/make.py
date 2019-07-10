@@ -459,6 +459,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
     #: A running counter of the executed actions.
     actions_count: int
 
+    #: A running counter of the skipped actions.
+    skipped_count: int
+
     @staticmethod
     def reset() -> None:
         """
@@ -472,6 +475,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Invocation.phony = set()
         Invocation.poisoned = set()
         Invocation.actions_count = 0
+        Invocation.skipped_count = 0
 
     def __init__(self,  # pylint: disable=too-many-statements
                  step: Optional[Step],  # pylint: disable=redefined-outer-name
@@ -581,6 +585,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         #: Whether we actually skipped all actions so far.
         self.did_skip_actions = False
+
+        #: Whether we actually run any actions.
+        self.did_run_actions = False
 
         #: Whether we should remove stale outputs before running the next action.
         self.should_remove_stale_outputs = Make.remove_stale_outputs
@@ -739,8 +746,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         if step is None:
             stat = Stat.try_stat(path)
             if stat is None:
-                self.log_and_abort("%s - Don't know how to make the required: %s"
-                                   % (self._log, path))
+                if dp.is_optional(path):
+                    Prog.logger.debug('%s - The optional required: %s '
+                                      "does not exist and can't be built", self._log, path)
+                else:
+                    self.log_and_abort("%s - Don't know how to make the required: %s"
+                                       % (self._log, path))
                 return
             Prog.logger.debug('%s - The required: %s is a source file', self._log, path)
             Invocation.up_to_date[path] = ''
@@ -785,7 +796,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         return producer, kwargs
 
-    async def run(self) -> Optional[BaseException]:  # pylint: disable=too-many-branches
+    async def run(self) -> Optional[BaseException]:  # pylint: disable=too-many-branches,too-many-statements
         """
         Actually run the invocation.
         """
@@ -834,7 +845,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                                      'even though it has changed to remove some final action(s)',
                                      self._log)
 
-            Prog.logger.log(Prog.TRACE, '%s - Done', self._log)
+            if self.did_run_actions:
+                Prog.logger.log(Prog.TRACE, '%s - Done', self._log)
+            elif self.did_skip_actions:
+                Prog.logger.log(Prog.TRACE, '%s - Skipped', self._log)
+            else:
+                Prog.logger.log(Prog.TRACE, '%s - Complete', self._log)
 
         else:
             while self.async_actions:
@@ -895,15 +911,21 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 continue
             try:
                 formatted_pattern = dp.fmt_capture(self.kwargs, pattern)
-                for path in dp.glob_paths(formatted_pattern):
-                    self.initial_outputs.append(path)
-                    if path == pattern:
-                        Prog.logger.debug('%s - Exists output: %s', self._log, path)
-                    else:
-                        Prog.logger.debug('%s - Exists output: %s -> %s',
-                                          self._log, pattern, path)
+                paths = dp.glob_paths(formatted_pattern)
+                if not paths:
+                    Prog.logger.debug('%s - Nonexistent optional output(s): %s',
+                                      self._log, pattern)
+                else:
+                    for path in paths:
+                        self.initial_outputs.append(path)
+                        if path == pattern:
+                            Prog.logger.debug('%s - Existing output: %s', self._log, path)
+                        else:
+                            Prog.logger.debug('%s - Existing output: %s -> %s',
+                                              self._log, pattern, path)
             except dp.NonOptionalException:
-                Prog.logger.debug('%s - Missing the output(s): %s', self._log, pattern)
+                Prog.logger.debug('%s - Nonexistent required output(s): %s',
+                                  self._log, pattern)
                 self.missing_output = formatted_pattern
                 missing_outputs.append(dp.capture2re(formatted_pattern))
 
@@ -976,32 +998,38 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             while True:
                 try:
                     formatted_pattern = dp.fmt_capture(self.kwargs, pattern)
-                    for path in dp.glob_paths(formatted_pattern):
-                        self.built_outputs.append(path)
+                    paths = dp.glob_paths(formatted_pattern)
+                    if not paths:
+                        # TODO: Should we wait here for NFS timeout? We don't, so we might record
+                        # partial outputs on the persistent action.
+                        Prog.logger.debug('%s - Did not make the optional output(s): %s',
+                                          self._log, pattern)
+                    else:
+                        for path in paths:
+                            self.built_outputs.append(path)
+                            if did_wait:
+                                Prog.logger.warn('%s - Waited: %s seconds for the output: %s',
+                                                 self._log, round(waited, 2), path)
 
-                        if did_wait:
-                            Prog.logger.warn('%s - Waited: %s seconds for the output: %s',
-                                             self._log, round(waited, 2), path)
+                            if Make.touch_success_outputs and not dp.is_exists(path):
+                                if not did_sleep:
+                                    await self.done(asyncio.sleep(0.01))
+                                    did_sleep = True
+                                Prog.logger.debug('%s - Touch the output: %s', self._log, path)
+                                Stat.touch(path)
 
-                        if Make.touch_success_outputs and not dp.is_exists(path):
-                            if not did_sleep:
-                                await self.done(asyncio.sleep(0.01))
-                                did_sleep = True
-                            Prog.logger.debug('%s - Touch the output: %s', self._log, path)
-                            Stat.touch(path)
+                            Invocation.up_to_date[path] = self.name
+                            mtime_ns = Stat.stat(path).st_mtime_ns
 
-                        Invocation.up_to_date[path] = self.name
-                        mtime_ns = Stat.stat(path).st_mtime_ns
-
-                        if Prog.logger.isEnabledFor(logging.DEBUG):
-                            if path == formatted_pattern:
-                                Prog.logger.debug('%s - Has the output: %s time: %s',
-                                                  self._log, path,
-                                                  _datetime_from_nanoseconds(mtime_ns))
-                            else:
-                                Prog.logger.debug('%s - Has the output: %s -> %s time: %s',
-                                                  self._log, pattern, path,
-                                                  _datetime_from_nanoseconds(mtime_ns))
+                            if Prog.logger.isEnabledFor(logging.DEBUG):
+                                if path == formatted_pattern:
+                                    Prog.logger.debug('%s - Has the output: %s time: %s',
+                                                      self._log, path,
+                                                      _datetime_from_nanoseconds(mtime_ns))
+                                else:
+                                    Prog.logger.debug('%s - Has the output: %s -> %s time: %s',
+                                                      self._log, pattern, path,
+                                                      _datetime_from_nanoseconds(mtime_ns))
 
                     break
 
@@ -1244,6 +1272,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             if self.new_persistent_actions:
                 self.new_persistent_actions.append(  #
                     PersistentAction(self.new_persistent_actions[-1]))
+            Invocation.skipped_count += 1
             return
 
         if self.did_skip_actions:
@@ -1252,6 +1281,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             raise RestartException('To run skipped action(s)')
 
         self.must_run_action = True
+        self.did_run_actions = True
 
         Invocation.actions_count += 1
 
@@ -1837,8 +1867,15 @@ def _build_targets(targets: List[str]) -> None:
         result = exception
 
     if result is None:
-        Prog.logger.log(Prog.TRACE, '%s - Done',
-                        Invocation.top._log)  # pylint: disable=protected-access
+        if Invocation.actions_count > 0:
+            Prog.logger.log(Prog.TRACE, '%s - Done',
+                            Invocation.top._log)  # pylint: disable=protected-access
+        elif Invocation.skipped_count > 0:
+            Prog.logger.log(Prog.TRACE, '%s - Skipped',
+                            Invocation.top._log)  # pylint: disable=protected-access
+        else:
+            Prog.logger.log(Prog.TRACE, '%s - Complete',
+                            Invocation.top._log)  # pylint: disable=protected-access
         if not Prog._is_test:  # pylint: disable=protected-access
             sys.exit(0)
     else:
