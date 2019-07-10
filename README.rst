@@ -400,11 +400,12 @@ annotations are used by DynaMake to modify the handling of required and output f
 cases, control formatting.
 
 * :py:func:`dynamake.patterns.optional` indicates that an output need not exist at the end of the
-  step, or a required file need not exist for the following actions to succeed. That is,
-  invoking ``require(optional('foo'))`` will invoke the step that provides ``foo``. If this step
-  does not in fact create ``foo``, but specifies ``output=optional('foo')``, then DynaMake will
-  accept this and continue. If either of the steps did not special the ``optional`` annotation, then
-  DynaMake will complain and abort the build.
+  step, or a required file need not exist for the following actions to succeed. That is, invoking
+  ``require(optional('foo'))`` will invoke the step that provides ``foo``. If there is no such step,
+  then ``foo`` need not exist on the disk. If this step exists, and succeeds, but does not in fact
+  create ``foo``, and specifies ``output=optional('foo')``, then DynaMake will accept this and
+  continue. If either of the steps did not specify the ``optional`` annotation, then DynaMake will
+  complain and abort the build.
 
 * :py:func:`dynamake.patterns.exists` ignores the modification time of an input or an output,
   instead just considering whether it exists. That is, invoking ``require(exists('foo'))``
