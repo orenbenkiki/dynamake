@@ -165,8 +165,6 @@ class Func:  # pylint: disable=too-many-instance-attributes
         Return the complete named arguments for an invocation based on the configuration parameter
         values.
         """
-        assert Prog.current is not None
-
         for name, value in zip(self.parameter_names, args):
             if name not in kwargs:
                 kwargs[name] = value
@@ -175,14 +173,14 @@ class Func:  # pylint: disable=too-many-instance-attributes
             if name in kwargs:
                 continue
             if name in self.parameter_defaults \
-                    and name not in Prog.current.explicit_parameters:
+                    and name not in Prog.explicit_parameters:
                 kwargs[name] = self.parameter_defaults[name]
                 continue
-            if name not in Prog.current.parameter_values:
+            if name not in Prog.parameter_values:
                 raise RuntimeError('Missing value for the required parameter: %s '
                                    'of the function: %s.%s'
                                    % (name, self.wrapped.__module__, self.wrapped.__qualname__))
-            kwargs[name] = Prog.current.parameter_values[name]
+            kwargs[name] = Prog.parameter_values[name]
         return kwargs
 
     @staticmethod
@@ -379,7 +377,7 @@ class Param:  # pylint: disable=too-many-instance-attributes
 
 class Prog:
     """
-    Hold all the configurable parameters for a (hopefully small) program execution.
+    Hold all the configurable parameters for a program execution.
     """
 
     #: The default module to load.
@@ -388,18 +386,24 @@ class Prog:
     #: The default configuration to load, if any.
     DEFAULT_CONFIG: Optional[str]
 
-    #: The global arguments currently in effect.
-    current: 'Prog'
-
     #: A configured logger for the program.
     logger: logging.Logger
 
     #: The log level for tracing calls.
     TRACE = (logging.DEBUG + logging.INFO) // 2
 
-    #: A function to invoke before any parallel function call, to setup global state (e.g., random
+    #: Function(s) to invoke before any parallel function call, to setup global state (e.g., random
     #: number generation).
-    on_parallel_call: Optional[Callable[[], None]] = None
+    on_parallel_calls: List[Callable[[], None]]
+
+    #: The known parameters.
+    parameters: Dict[str, Param]
+
+    #: The value for each parameter.
+    parameter_values: Dict[str, Any]
+
+    #: The names of the explicitly set parameters.
+    explicit_parameters: Set[str]
 
     _is_test: bool = False
 
@@ -410,35 +414,25 @@ class Prog:
         """
         Prog.DEFAULT_MODULE = 'DynaMods'
         Prog.DEFAULT_CONFIG = None
-        Prog.current = Prog()
         Prog.logger = logging.getLogger('prog')
+        Prog.on_parallel_calls = []
+        Prog.parameters = {}
+        Prog.parameter_values = {}
+        Prog.explicit_parameters = set()
 
-    def __init__(self) -> None:
-        """
-        Create an empty collection of parameters.
-        """
-
-        #: The known parameters.
-        self.parameters: Dict[str, Param] = {}
-
-        #: The value for each parameter.
-        self.parameter_values: Dict[str, Any] = {}
-
-        #: The names of the explicitly set parameters.
-        self.explicit_parameters: Set[str] = set()
-
-    def verify(self) -> None:
+    @staticmethod
+    def verify() -> None:
         """
         Verify the collection of parameters.
         """
         for parameter_name, function_names in Func.names_by_parameter.items():
-            if parameter_name not in self.parameters:
+            if parameter_name not in Prog.parameters:
                 function = Func.by_name[function_names[0]].wrapped
                 raise RuntimeError('An unknown parameter: %s '
                                    'is used by the configurable function: %s.%s'
                                    % (parameter_name, function.__module__, function.__qualname__))
 
-        for parameter_name in self.parameters:
+        for parameter_name in Prog.parameters:
             if parameter_name not in Func.names_by_parameter \
                     and parameter_name not in Param.BUILTIN:
                 raise RuntimeError('The parameter: %s is not used by any configurable function'
@@ -452,18 +446,19 @@ class Prog:
         This is invoked automatically when a :py:class:`dynamake.application.Param` object is
         created.
         """
-        if parameter.name in Prog.current.parameters:
+        if parameter.name in Prog.parameters:
             raise RuntimeError('Multiple definitions for the parameter: %s' % parameter.name)
-        Prog.current.parameters[parameter.name] = parameter
-        Prog.current.parameter_values[parameter.name] = parameter.default
+        Prog.parameters[parameter.name] = parameter
+        Prog.parameter_values[parameter.name] = parameter.default
 
-    def get_parameter(self, name: str) -> Any:
+    @staticmethod
+    def get_parameter(name: str) -> Any:
         """
         Access the value of some parameter.
         """
-        if name not in self.parameter_values:
+        if name not in Prog.parameter_values:
             raise RuntimeError('Unknown parameter: %s' % name)
-        return self.parameter_values[name]
+        return Prog.parameter_values[name]
 
     @staticmethod
     def load_modules() -> None:
@@ -492,12 +487,13 @@ class Prog:
         If a list of functions is provided, it is used instead of the automatic list of top-level
         functions (annotated with ``@config(top=True)``).
         """
-        Prog.current._add_parameters_to_parser(parser,  # pylint: disable=protected-access
-                                               functions)
+        Prog._add_parameters_to_parser(parser,  # pylint: disable=protected-access
+                                       functions)
 
-    def _add_parameters_to_parser(self, parser: ArgumentParser,
+    @staticmethod
+    def _add_parameters_to_parser(parser: ArgumentParser,
                                   functions: Optional[List[str]] = None) -> None:
-        self.add_global_parameters(parser)
+        Prog.add_global_parameters(parser)
         if functions is None:
             functions = Func.top_functions()
 
@@ -519,7 +515,7 @@ class Prog:
             func = Prog._verify_function(function_name, False)
             used_parameters.update(func.indirect_parameter_names)
 
-        for name, parameter in self.parameters.items():
+        for name, parameter in Prog.parameters.items():
             if name in used_parameters:
                 text = parameter.description + ' (default: %s)' % parameter.default
                 if parameter.short:
@@ -538,13 +534,14 @@ class Prog:
         functions (annotated with ``@config(top=True)``). For each such command argument, add a
         sub-parser with the parameters relevant for the specific function.
         """
-        Prog.current._add_commands_to_parser(parser, functions)  # pylint: disable=protected-access
+        Prog._add_commands_to_parser(parser, functions)  # pylint: disable=protected-access
 
-    def _add_commands_to_parser(self, parser: ArgumentParser,  # pylint: disable=too-many-locals
+    @staticmethod
+    def _add_commands_to_parser(parser: ArgumentParser,  # pylint: disable=too-many-locals
                                 functions: Optional[List[str]] = None) -> None:
         verify_reachability = Func.collect_indirect_invocations and functions is None
 
-        self.add_global_parameters(parser)
+        Prog.add_global_parameters(parser)
         if functions is None:
             functions = Func.top_functions()
 
@@ -562,7 +559,7 @@ class Prog:
             command_parser = subparsers.add_parser(func.name, help=sentence,
                                                    description=description,
                                                    formatter_class=RawDescriptionHelpFormatter)
-            self.add_sorted_parameters(command_parser,
+            Prog.add_sorted_parameters(command_parser,
                                        predicate=lambda name, func=func:  # type: ignore
                                        name in func.indirect_parameter_names)
 
@@ -578,7 +575,8 @@ class Prog:
                                    % (func.wrapped.__module__,
                                       func.wrapped.__qualname__))
 
-    def add_sorted_parameters(self, parser: ArgumentParser, *,
+    @staticmethod
+    def add_sorted_parameters(parser: ArgumentParser, *,
                               predicate: Optional[Callable[[str], bool]] = None,
                               extra_help: Optional[Callable[[str], str]] = None) -> None:
         """
@@ -586,7 +584,7 @@ class Prog:
         additional help string for each one.
         """
         keys = [(parameter.group, parameter.order, name)
-                for name, parameter in self.parameters.items()
+                for name, parameter in Prog.parameters.items()
                 if (predicate is None or predicate(name)) and parameter.group != 'global options']
         current_group_name: Optional[str] = None
         current_group_arguments = None
@@ -594,7 +592,7 @@ class Prog:
             if current_group_arguments is None or current_group_name != group_name:
                 current_group_arguments = parser.add_argument_group(group_name)
                 current_group_name = group_name
-            parameter = self.parameters[parameter_name]
+            parameter = Prog.parameters[parameter_name]
             text = parameter.description.replace('%', '%%') \
                 + ' (default: %s)' % parameter.default
             if extra_help is not None:
@@ -607,12 +605,13 @@ class Prog:
                 current_group_arguments.add_argument('--' + parameter_name, help=text,
                                                      metavar=parameter.metavar)
 
-    def add_global_parameters(self, parser: ArgumentParser) -> _ArgumentGroup:
+    @staticmethod
+    def add_global_parameters(parser: ArgumentParser) -> _ArgumentGroup:
         """
         Add the parameters that are not tied to specific functions.
         """
         Func.finalize()
-        Prog.current.verify()
+        Prog.verify()
 
         group = parser.add_argument_group('global options')
 
@@ -623,10 +622,10 @@ class Prog:
                            help='A Python module to load (containing function definitions)')
 
         global_parameters = [(parameter.order, parameter.name)
-                             for parameter in self.parameters.values()
+                             for parameter in Prog.parameters.values()
                              if parameter.group == 'global options']
         for _, parameter_name in sorted(global_parameters):
-            parameter = self.parameters[parameter_name]
+            parameter = Prog.parameters[parameter_name]
             text = parameter.description.replace('%', '%%') + ' (default: %s)' % parameter.default
             if parameter.short:
                 group.add_argument('--' + parameter_name, '-' + parameter.short,
@@ -653,29 +652,30 @@ class Prog:
         """
         Update the values based on loaded configuration files and/or explicit command line flags.
         """
-        Prog.current._parse_args(args)  # pylint: disable=protected-access
+        Prog._parse_args(args)  # pylint: disable=protected-access
 
-    def _parse_args(self, args: Namespace) -> None:
+    @staticmethod
+    def _parse_args(args: Namespace) -> None:
         if Prog.DEFAULT_CONFIG is not None and os.path.exists(Prog.DEFAULT_CONFIG):
-            self.load(Prog.DEFAULT_CONFIG)
+            Prog.load_config(Prog.DEFAULT_CONFIG)
         for path in (args.config or []):
-            self.load(path)
+            Prog.load_config(path)
 
-        for name, parameter in self.parameters.items():
+        for name, parameter in Prog.parameters.items():
             value = vars(args).get(name)
             if value is not None:
                 try:
-                    self.parameter_values[name] = parameter.parser(value)
-                    self.explicit_parameters.add(name)
+                    Prog.parameter_values[name] = parameter.parser(value)
+                    Prog.explicit_parameters.add(name)
                 except BaseException:
                     raise RuntimeError('Invalid value: %s for the parameter: %s'
                                        % (vars(args)[name], name))
 
-        random_seed = self.parameter_values.get('random_seed')
+        random_seed = Prog.parameter_values.get('random_seed')
         if random_seed is not None:
             if random_seed == 0:
                 random_seed = int(time.monotonic() * 1_000_000_000)
-                Prog.current.parameter_values['random_seed'] = random_seed
+                Prog.parameter_values['random_seed'] = random_seed
                 Prog.logger.info('Using time based random seed: %s', random_seed)
             random.seed(random_seed)
 
@@ -686,7 +686,7 @@ class Prog:
         handler = logging.StreamHandler(sys.stderr)
         log_format = '%(asctime)s - ' + name
 
-        context = self.get_parameter('log_context')
+        context = Prog.get_parameter('log_context')
         if context:
             log_format += ' - ' + context
 
@@ -697,7 +697,7 @@ class Prog:
             handler.setFormatter(LoggingFormatter(log_format))
             Prog.logger.addHandler(handler)
 
-        Prog.logger.setLevel(self.get_parameter('log_level'))
+        Prog.logger.setLevel(Prog.get_parameter('log_level'))
 
     @staticmethod
     def call_with_args(args: Namespace) -> Any:
@@ -707,7 +707,8 @@ class Prog:
         """
         return Func.by_name[args.command].wrapper()
 
-    def load(self, path: str) -> None:
+    @staticmethod
+    def load_config(path: str) -> None:
         """
         Load a configuration file.
         """
@@ -731,7 +732,7 @@ class Prog:
                                        'in the configuration file: %s'
                                        % (name, name, path))
 
-            if name not in self.parameter_values:
+            if name not in Prog.parameter_values:
                 if is_optional_value:
                     continue
                 raise RuntimeError('Unknown parameter: %s '
@@ -740,13 +741,13 @@ class Prog:
 
             if isinstance(value, str):
                 try:
-                    value = self.parameters[name].parser(value)
+                    value = Prog.parameters[name].parser(value)
                 except BaseException:
                     raise RuntimeError('Invalid value: %s for the parameter: %s'
                                        % (value, name))
 
-            self.parameter_values[name] = value
-            self.explicit_parameters.add(name)
+            Prog.parameter_values[name] = value
+            Prog.explicit_parameters.add(name)
 
 
 class Parallel:
@@ -800,8 +801,6 @@ class Parallel:
                kwargs: Optional[Callable[[int], Dict[str, Any]]] = None,
                overrides: Optional[Callable[[int], Dict[str, Any]]] = None,
                **fixed_kwargs: Any) -> List[Any]:
-        assert Prog.current is not None
-
         processes_count = min(processes(), invocations)
         assert processes_count >= 0
         if processes_count == 0:
@@ -828,7 +827,7 @@ class Parallel:
         Parallel._indexed_overrides = \
             [{} if overrides is None else overrides(index) for index in range(invocations)]
 
-        random_seed = Prog.current.parameter_values.get('random_seed')
+        random_seed = Prog.parameter_values.get('random_seed')
         if random_seed is not None:
             for index, index_overrides in enumerate(Parallel._indexed_overrides):
                 index_overrides['random_seed'] = random_seed + index
@@ -852,9 +851,9 @@ class Parallel:
         assert Parallel._function is not None
         overrides = Parallel._indexed_overrides[index]
         with override(jobs=1, **overrides):
-            if Prog.current.on_parallel_call is not None:
-                Prog.current.on_parallel_call()
-            random_seed = Prog.current.parameter_values.get('random_seed')
+            for on_parallel_call in Prog.on_parallel_calls:
+                on_parallel_call()
+            random_seed = Prog.parameter_values.get('random_seed')
             if random_seed is not None:
                 random.seed(random_seed)
             return Parallel._function(*Parallel._fixed_args,
@@ -932,18 +931,18 @@ def override(**values: Any) -> Iterator[None]:
     as if the parameter ``foo`` was configured to have the specified ``value``.
     """
     for name in values:
-        if name not in Prog.current.parameter_values and name not in Param.BUILTIN:
+        if name not in Prog.parameter_values and name not in Param.BUILTIN:
             raise RuntimeError('Unknown override parameter: %s' % name)
-    old_values = Prog.current.parameter_values
-    old_explicit_parameters = Prog.current.explicit_parameters.copy()
-    Prog.current.parameter_values = Prog.current.parameter_values.copy()
-    Prog.current.parameter_values.update(values)
-    Prog.current.explicit_parameters.update(values.keys())
+    old_values = Prog.parameter_values
+    old_explicit_parameters = Prog.explicit_parameters.copy()
+    Prog.parameter_values = Prog.parameter_values.copy()
+    Prog.parameter_values.update(values)
+    Prog.explicit_parameters.update(values.keys())
     try:
         yield None
     finally:
-        Prog.current.parameter_values = old_values
-        Prog.current.explicit_parameters = old_explicit_parameters
+        Prog.parameter_values = old_values
+        Prog.explicit_parameters = old_explicit_parameters
 
 
 def _define_parameters() -> None:
@@ -978,8 +977,7 @@ def processes() -> int:
     This is restricted by the ``--jobs`` command line option, and is reduced to
     one when nested inside a parallel call.
     """
-    assert Prog.current is not None
-    processes_count = Prog.current.get_parameter('jobs')
+    processes_count = Prog.get_parameter('jobs')
     cpus = os.cpu_count()
     assert cpus is not None
     if processes_count == 0:
@@ -994,7 +992,7 @@ def use_random_seed() -> None:
     Invoke this at the module's top-level, so it will be invoked when imported, similarly to
     defining the parameters using :py:class:`dynamake.application.Param`.
     """
-    if 'random_seed' in Prog.current.parameters:
+    if 'random_seed' in Prog.parameters:
         return
     Param(name='random_seed', metavar='INT', default=123456, parser=str2int(min=0),
           group='global options', description="""

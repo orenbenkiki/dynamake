@@ -149,7 +149,7 @@ class TestParameters(TestWithReset):
         self.assertRaisesRegex(RuntimeError,
                                'unknown parameter: foo .* '
                                'function: .*.test_missing_parameter.<locals>.use_foo',
-                               Prog.current.verify)
+                               Prog.verify)
 
     def test_conflicting_parameter(self) -> None:
         Param(name='foo', default=1, parser=int, description='The number of foos')
@@ -163,14 +163,12 @@ class TestParameters(TestWithReset):
         Param(name='foo', default=1, parser=int, description='The number of foos')
         self.assertRaisesRegex(RuntimeError,
                                'parameter: foo .* not used',
-                               Prog.current.verify)
+                               Prog.verify)
 
     def test_unknown_parameter(self) -> None:
-        parameters = Prog()
-
         self.assertRaisesRegex(RuntimeError,
                                'Unknown parameter: bar',
-                               parameters.get_parameter, 'bar')
+                               Prog.get_parameter, 'bar')
 
     def test_serial(self) -> None:
         results = serial(2, _call_in_parallel, kwargs=lambda index: {'index': index})

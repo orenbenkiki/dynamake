@@ -61,8 +61,7 @@ class Resources:
         """
         Reset all the current state, for tests.
         """
-        assert Prog.current is not None
-        Resources.total = dict(jobs=int(Prog.current.get_parameter('jobs')))
+        Resources.total = dict(jobs=int(Prog.get_parameter('jobs')))
         Resources.available = Resources.total.copy()
         Resources.default = dict(jobs=1)
         Resources.condition = asyncio.Condition()
@@ -145,7 +144,7 @@ def resource_parameters(**default_amounts: int) -> None:
     does not specify an explicit value.
     """
     for name, amount in default_amounts.items():
-        total = int(Prog.current.get_parameter(name))
+        total = int(Prog.get_parameter(name))
         if amount > total:
             raise RuntimeError('The default amount: %s '
                                'of the resource: %s '
@@ -1798,16 +1797,16 @@ def _define_parameters() -> None:
 
 
 def _collect_parameters() -> None:
-    Resources.available['jobs'] = Resources.total['jobs'] = int(Prog.current.get_parameter('jobs'))
-    Make.failure_aborts_build = Prog.current.get_parameter('failure_aborts_build')
-    Make.remove_stale_outputs = Prog.current.get_parameter('remove_stale_outputs')
-    Make.wait_nfs_outputs = Prog.current.get_parameter('wait_nfs_outputs')
-    Make.nfs_outputs_timeout = Prog.current.get_parameter('nfs_outputs_timeout')
-    Make.touch_success_outputs = Prog.current.get_parameter('touch_success_outputs')
-    Make.remove_failed_outputs = Prog.current.get_parameter('remove_failed_outputs')
-    Make.remove_empty_directories = Prog.current.get_parameter('remove_empty_directories')
-    Make.log_skipped_actions = Prog.current.get_parameter('log_skipped_actions')
-    Make.rebuild_changed_actions = Prog.current.get_parameter('rebuild_changed_actions')
+    Resources.available['jobs'] = Resources.total['jobs'] = int(Prog.get_parameter('jobs'))
+    Make.failure_aborts_build = Prog.get_parameter('failure_aborts_build')
+    Make.remove_stale_outputs = Prog.get_parameter('remove_stale_outputs')
+    Make.wait_nfs_outputs = Prog.get_parameter('wait_nfs_outputs')
+    Make.nfs_outputs_timeout = Prog.get_parameter('nfs_outputs_timeout')
+    Make.touch_success_outputs = Prog.get_parameter('touch_success_outputs')
+    Make.remove_failed_outputs = Prog.get_parameter('remove_failed_outputs')
+    Make.remove_empty_directories = Prog.get_parameter('remove_empty_directories')
+    Make.log_skipped_actions = Prog.get_parameter('log_skipped_actions')
+    Make.rebuild_changed_actions = Prog.get_parameter('rebuild_changed_actions')
 
 
 def make(parser: ArgumentParser, *,
@@ -1826,13 +1825,13 @@ def make(parser: ArgumentParser, *,
     default_targets = dp.flatten(default_targets)
     parser.add_argument('TARGET', nargs='*',
                         help='The file or target to make (default: %s)' % ' '.join(default_targets))
-    group = Prog.current.add_global_parameters(parser)
+    group = Prog.add_global_parameters(parser)
     group.add_argument('--list_steps', '-ls', default=False, action='store_true',
                        help='List the build steps and their targets, and exit.')
     group.add_argument('--step_config', '-sc', metavar='FILE', action='append',
                        help='Load a step parameters configuration YAML file')
 
-    Prog.current.add_sorted_parameters(parser, extra_help=_extra_parameter_help)
+    Prog.add_sorted_parameters(parser, extra_help=_extra_parameter_help)
     args = parser.parse_args()
     Prog.parse_args(args)
 
