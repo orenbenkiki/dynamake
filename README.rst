@@ -428,6 +428,8 @@ cases, control formatting.
   command line option of a program should not impact its outputs, and therefore should not trigger a
   rebuild.
 
+  TODO: Clarify distinction between phony and optional (especially when using persistent state).
+
 * :py:func:`dynamake.patterns.emphasized` is used by ``shell`` and ``spawn``. Arguments
   so annotated are printed in **bold** in the log file. This makes it easier to see the important
   bits of long command lines.
