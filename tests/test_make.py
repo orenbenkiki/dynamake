@@ -2165,6 +2165,38 @@ class TestMain(TestWithFiles):
 
         self.expect_file('all', '2\n')
 
+    def test_unused_config_param(self) -> None:
+        def _register() -> None:
+            @step(output=phony('all'))
+            async def make_all() -> None:  # pylint: disable=unused-variable
+                config_param('foo')
+
+        write_file('DynaMake.yaml', """
+            - when: { step: make_all }
+              then:
+                foo: 0
+                bar: 1
+                baz?: 2
+        """)
+
+        self.check(_register, error='Unused step configuration parameter.s.: bar', log=[
+            ('dynamake', 'TRACE', '#0 - make - Targets: all'),
+            ('dynamake', 'DEBUG', '#0 - make - Available resources: jobs=56'),
+            ('dynamake', 'DEBUG', '#0 - make - Build the required: all'),
+            ('dynamake', 'DEBUG',
+             '#0 - make - The required: all will be produced by the spawned: #1 - make_all'),
+            ('dynamake', 'TRACE', '#1 - make_all - Call'),
+            ('dynamake', 'WHY',
+             '#1 - make_all - Must run actions because missing '
+             'the persistent actions: .dynamake/make_all.actions.yaml'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
+            ('dynamake', 'DEBUG',
+             '#1 - make_all - Write the persistent actions: .dynamake/make_all.actions.yaml'),
+            ('dynamake', 'ERROR', '#1 - make_all - Unused step configuration parameter(s): bar'),
+            ('dynamake', 'DEBUG', '#0 - make - Sync'),
+            ('dynamake', 'ERROR', '#0 - make - Fail'),
+        ])
+
     def test_config_file(self) -> None:
         def _register() -> None:
             @step(output='all')
