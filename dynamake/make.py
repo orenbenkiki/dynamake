@@ -592,14 +592,30 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         #: Whether we should remove stale outputs before running the next action.
         self.should_remove_stale_outputs = Make.remove_stale_outputs
 
-        #: The full configuration for the step, if used.
-        self.full_config_values: Optional[Dict[str, Any]] = None
-
         #: The path to the persistent configuration file, if it is used.
         self.config_path: Optional[str] = None
 
-        #: The persistent configuration for the step, if the file is used.
-        self.file_config_values: Optional[Dict[str, Any]] = None
+        #: The full configuration for the step.
+        self.full_config_values: Dict[str, Any] = {}
+
+        #: The persistent configuration for the step.
+        self.file_config_values: Dict[str, Any] = {}
+
+        self._compute_config_values()
+
+    def _compute_config_values(self) -> None:
+        if self.step is None:
+            return
+        assert 'step' not in self.kwargs
+        full_context = self.kwargs.copy()
+        full_context.update(self.context)
+        full_context['step'] = self.step.name()
+        self.file_config_values = Config.values_for_context(full_context)
+        self.full_config_values = {}
+        for name, value in self.file_config_values.items():
+            if name[-1] == '?':
+                name = name[:-1]
+            self.full_config_values[name] = value
 
     def _restart(self) -> None:
         if self.parent is None:
@@ -625,9 +641,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         self.did_skip_actions = False
         assert self.should_remove_stale_outputs == Make.remove_stale_outputs
 
-        self.full_config_values = None
         self.config_path = None
-        self.file_config_values = None
+        self._compute_config_values()
 
     def _verify_no_loop(self) -> None:
         call_chain = [self.name]
@@ -845,6 +860,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                                      'even though it has changed to remove some final action(s)',
                                      self._log)
 
+            self._verify_used_config()
             if self.did_run_actions:
                 Prog.logger.log(Prog.TRACE, '%s - Done', self._log)
             elif self.did_skip_actions:
@@ -1429,9 +1445,6 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         affect the internals of the build step, the resulting actions will not be triggered unless
         they actually changed as well.
         """
-        self._ensure_config_values()
-        assert self.full_config_values is not None
-        assert self.file_config_values is not None
         value = self.full_config_values.get(name, default)
         if is_required and value is None:
             self.log_and_abort('%s - No value for the step configuration parameter: %s'
@@ -1449,10 +1462,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Use the step-specific configuration file in the following step action(s).
         """
         if self.config_path is not None:
-            assert self.file_config_values is not None
             return self.config_path
 
-        self._ensure_config_values()
         new_config_text = yaml.dump(self.file_config_values)
 
         self.config_path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.config.yaml')
@@ -1485,21 +1496,14 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             file.write(new_config_text)
         return self.config_path
 
-    def _ensure_config_values(self) -> None:
-        if self.full_config_values is not None:
+    def _verify_used_config(self) -> None:
+        if self.config_path is not None:
             return
-
-        assert 'step' not in self.kwargs
-        assert self.step is not None
-        full_context = self.kwargs.copy()
-        full_context.update(self.context)
-        full_context['step'] = self.step.name()
-        self.file_config_values = Config.values_for_context(full_context)
-        self.full_config_values = {}
-        for name, value in self.file_config_values.items():
-            if name[-1] == '?':
-                name = name[:-1]
-            self.full_config_values[name] = value
+        unused_parameters = \
+            sorted([name for name in self.file_config_values if not name.endswith('?')])
+        if unused_parameters:
+            self.log_and_abort('%s - Unused step configuration parameter(s): %s'
+                               % (self._log, ', '.join(unused_parameters)))
 
     async def done(self, awaitable: Awaitable) -> Any:
         """
@@ -1524,37 +1528,38 @@ def _datetime_from_nanoseconds(nanoseconds: int) -> str:
         return '%s.%s' % (seconds, fractions)
 
     global _OLD_DATES
-    stamp = _OLD_DATES.get(nanoseconds, None)
-    if stamp is not None:
-        return str(stamp)
+    quantized = _OLD_DATES.get(nanoseconds, None)
+    if quantized is not None:
+        return str(quantized)
 
-    higher_time = None
-    higher_stamp = None
-    lower_time = None
-    lower_stamp = None
-    for time, stamp in _OLD_DATES.items():
-        if time < nanoseconds:
-            if lower_time is None or lower_time < time:
-                lower_time = time
-                lower_stamp = stamp
-        if time > nanoseconds:
-            if higher_time is None or higher_time < time:
-                higher_time = time
-                higher_stamp = stamp
+    higher_nanoseconds = None
+    higher_quantized = None
+    lower_nanoseconds = None
+    lower_quantized = None
 
-    if lower_stamp is None:
-        if higher_stamp is None:
-            stamp = 1
+    for old_nanoseconds, old_quantized in _OLD_DATES.items():
+        if old_nanoseconds < nanoseconds:
+            if lower_nanoseconds is None or lower_nanoseconds < old_nanoseconds:
+                lower_nanoseconds = old_nanoseconds
+                lower_quantized = old_quantized
+        if old_nanoseconds > nanoseconds:
+            if higher_nanoseconds is None or higher_nanoseconds < old_nanoseconds:
+                higher_nanoseconds = nanoseconds
+                higher_quantized = old_quantized
+
+    if lower_quantized is None:
+        if higher_quantized is None:
+            quantized = 1
         else:
-            stamp = higher_stamp - 1
+            quantized = higher_quantized - 1
     else:
-        if higher_stamp is None:
-            stamp = lower_stamp + 1
+        if higher_quantized is None:
+            quantized = lower_quantized + 1
         else:
-            stamp = (lower_stamp + higher_stamp) / 2
+            quantized = (lower_quantized + higher_quantized) / 2
 
-    _OLD_DATES[nanoseconds] = stamp
-    return str(stamp)
+    _OLD_DATES[nanoseconds] = quantized
+    return str(quantized)
 
 
 def _reset_test_dates() -> None:

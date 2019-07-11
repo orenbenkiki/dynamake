@@ -32,8 +32,12 @@ from typing import Tuple
 import ctypes
 import logging
 import os
+import random
 import sys
+import time
 import yaml
+
+# pylint: disable=too-many-lines
 
 
 class Env:
@@ -335,7 +339,7 @@ class Param:  # pylint: disable=too-many-instance-attributes
     """
 
     #: The name of the predefines parameters.
-    BUILTIN = ['log_level', 'log_context', 'jobs']
+    BUILTIN = ['log_level', 'log_context', 'jobs', 'random_seed']
 
     def __init__(self, *, name: str, default: Any, parser: Callable[[str], Any], description: str,
                  short: Optional[str] = None, group: Optional[str] = None,
@@ -392,6 +396,10 @@ class Prog:
 
     #: The log level for tracing calls.
     TRACE = (logging.DEBUG + logging.INFO) // 2
+
+    #: A function to invoke before any parallel function call, to setup global state (e.g., random
+    #: number generation).
+    on_parallel_call: Optional[Callable[[], None]] = None
 
     _is_test: bool = False
 
@@ -663,6 +671,14 @@ class Prog:
                     raise RuntimeError('Invalid value: %s for the parameter: %s'
                                        % (vars(args)[name], name))
 
+        random_seed = self.parameter_values.get('random_seed')
+        if random_seed is not None:
+            if random_seed == 0:
+                random_seed = int(time.monotonic() * 1_000_000_000)
+                Prog.current.parameter_values['random_seed'] = random_seed
+                Prog.logger.info('Using time based random seed: %s', random_seed)
+            random.seed(random_seed)
+
         name = sys.argv[0].split('/')[-1]
         if 'command' in vars(args):
             name += ' ' + args.command
@@ -812,6 +828,11 @@ class Parallel:
         Parallel._indexed_overrides = \
             [{} if overrides is None else overrides(index) for index in range(invocations)]
 
+        random_seed = Prog.current.parameter_values.get('random_seed')
+        if random_seed is not None:
+            for index, index_overrides in enumerate(Parallel._indexed_overrides):
+                index_overrides['random_seed'] = random_seed + index
+
         try:
             if processes_count == 1:
                 return [Parallel._call(index) for index in range(invocations)]
@@ -829,7 +850,13 @@ class Parallel:
     @staticmethod
     def _call(index: int) -> Any:  # TODO: Appears uncovered since runs in a separate thread.
         assert Parallel._function is not None
-        with override(jobs=1, **Parallel._indexed_overrides[index]):
+        overrides = Parallel._indexed_overrides[index]
+        with override(jobs=1, **overrides):
+            if Prog.current.on_parallel_call is not None:
+                Prog.current.on_parallel_call()
+            random_seed = Prog.current.parameter_values.get('random_seed')
+            if random_seed is not None:
+                random.seed(random_seed)
             return Parallel._function(*Parallel._fixed_args,
                                       **Parallel._fixed_kwargs,
                                       **Parallel._indexed_kwargs[index])
@@ -958,6 +985,23 @@ def processes() -> int:
     if processes_count == 0:
         return cpus
     return min(processes_count, cpus)
+
+
+def use_random_seed() -> None:
+    """
+    Specify that the code in the current module uses random numbers.
+
+    Invoke this at the module's top-level, so it will be invoked when imported, similarly to
+    defining the parameters using :py:class:`dynamake.application.Param`.
+    """
+    if 'random_seed' in Prog.current.parameters:
+        return
+    Param(name='random_seed', metavar='INT', default=123456, parser=str2int(min=0),
+          group='global options', description="""
+        The random seed to use. This allows for repeatable execution with identical
+        results. If this is zero then the current time will be used, which results in
+        an unrepeatable execution.
+    """)
 
 
 def reset_application() -> None:

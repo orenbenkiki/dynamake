@@ -750,7 +750,10 @@ this mechanisms:
 The usage pattern of the library is as follows:
 
 * First, one must declare all the parameters of all the configured functions by creating
-  :py:attr:`dynamake.application.Param` objects.
+  :py:attr:`dynamake.application.Param` objects. Some parameters are already defined and
+  managed for you, such as ``log_level`` to control logging and ``random_seed`` to
+  control the random number generation (the latter is only added if you invoke
+  :py:func:`dynamake.application.use_random_seed`).
 
 * All functions that use such parameters must be decorated with
   :py:func:`dynamake.make.config`. They must either be annotated as top level using ``top=True``, or
