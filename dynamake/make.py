@@ -726,12 +726,6 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.actions.yaml')
         Prog.logger.debug('%s - Write the persistent actions: %s', self._log, path)
 
-        for action in self.new_persistent_actions:
-            for name, partial_up_to_date in action.required.items():
-                full_up_to_date = Invocation.up_to_date[name]
-                assert full_up_to_date.producer == partial_up_to_date.producer
-                partial_up_to_date.mtime_ns = full_up_to_date.mtime_ns
-
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
         with open(path, 'w') as file:
@@ -1449,11 +1443,17 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if failed_inputs:
             self.abort('%s - Failed to build the required target(s)' % self._log)
+
+        if self.exception is not None:
             return self.exception
 
-        if self.exception is None \
-                and Prog.logger.isEnabledFor(logging.DEBUG) \
-                and self.oldest_output_path is not None:
+        for action in self.new_persistent_actions:
+            for name, partial_up_to_date in action.required.items():
+                full_up_to_date = Invocation.up_to_date[name]
+                assert full_up_to_date.producer == partial_up_to_date.producer
+                partial_up_to_date.mtime_ns = full_up_to_date.mtime_ns
+
+        if Prog.logger.isEnabledFor(logging.DEBUG) and self.oldest_output_path is not None:
             if self.newest_input_path is None:
                 Prog.logger.debug('%s - No inputs', self._log)
             else:
@@ -1461,7 +1461,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                                   self._log, self.newest_input_path,
                                   _datetime_from_nanoseconds(self.newest_input_mtime_ns))
 
-        return self.exception
+        return None
 
     def config_param(self, name: str, default: Any = None,
                      *, keep_in_file: bool = False, is_required: bool = False) -> Any:
