@@ -419,8 +419,9 @@ cases, control formatting.
 
 * :py:func:`dynamake.patterns.phony` marks an output as a non-file target. Typically the
   default top-level ``all`` target is ``phony``, as well as similar top-level targets such as
-  ``clean``. When a step has any ``phony`` output(s), its actions are always executed. Similarly, if
-  a step has any ``phony`` required input(s), its actions are also always executed.
+  ``clean``. When a step has any ``phony`` output(s), its actions are always executed, and a
+  synthetic modification time is assigned to it: one nanosecond newer than the newest required
+  input.
 
   If using persistent state to track actions (see below), this state will ignore any parts of
   invoked commands that are marked as ``phony``. This prevents changes irrelevant command line

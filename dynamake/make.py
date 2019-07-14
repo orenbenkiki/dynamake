@@ -318,6 +318,24 @@ class Step:
         return self.func.name
 
 
+class UpToDate:
+    """
+    Data for each up-to-date target.
+    """
+
+    def __init__(self, producer: str, mtime_ns: int = -1) -> None:
+        """
+        Record a new up-to-date target.
+        """
+        #: The step (with parameters) that updated the target.
+        self.producer = producer
+
+        #: The modified time of the target (in nanoseconds).
+        #:
+        #: This is negative until we know the correct time.
+        self.mtime_ns = mtime_ns
+
+
 class PersistentAction:
     """
     An action taken during step execution.
@@ -339,20 +357,17 @@ class PersistentAction:
         #: The time the command ended execution.
         self.end: Optional[datetime] = None
 
-        #: The called step (with parameters) for each required input of the command.
-        self.required: Dict[str, str] = {}
+        #: The up-to-date data for each input.
+        self.required: Dict[str, UpToDate] = {}
 
         #: The previous action of the step, if any.
         self.previous = previous
 
-    def require(self, path: str, origin: str) -> None:
+    def require(self, path: str, up_to_date: UpToDate) -> None:
         """
         Add a required input to the action.
-
-        The origin is empty for source files. Otherwise, it is the name of the step, with any
-        parameters.
         """
-        self.required[path] = origin
+        self.required[path] = up_to_date
 
     def run_action(self, kind: str, command: List[str]) -> None:
         """
@@ -384,7 +399,10 @@ class PersistentAction:
         else:
             data = []
 
-        datum: Dict[str, Any] = dict(required=self.required)
+        datum: Dict[str, Any] = \
+            dict(required={name: dict(producer=up_to_date.producer,
+                                      mtime=str(_datetime_from_nanoseconds(up_to_date.mtime_ns)))
+                           for name, up_to_date in self.required.items()})
 
         if self.kind == 'phony':
             assert self.start is None
@@ -418,7 +436,9 @@ class PersistentAction:
             action = PersistentAction()
             actions = [action]
 
-        action.required = datum['required']
+        action.required = {name: UpToDate(up_to_date['producer'],
+                                          _nanoseconds_from_datetime_str(up_to_date['mtime']))
+                           for name, up_to_date in datum['required'].items()}
 
         for kind in ['shell', 'spawn']:
             if kind in datum:
@@ -426,8 +446,8 @@ class PersistentAction:
 
         if action.kind != 'phony':
             action.command = datum[action.kind]
-            action.start = datetime.strptime(datum['start'], '%Y-%m-%d %H:%M:%S.%f')
-            action.end = datetime.strptime(datum['end'], '%Y-%m-%d %H:%M:%S.%f')
+            action.start = _datetime_from_str(datum['start'])
+            action.end = _datetime_from_str(datum['end'])
 
         return actions
 
@@ -449,8 +469,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
     #: The paths for phony targets.
     phony: Set[str]
 
-    #: The origin of targets that were built or otherwise proved to be up-to-date so far.
-    up_to_date: Dict[str, str]
+    #: The origin and time of targets that were built or otherwise proved to be up-to-date so far.
+    up_to_date: Dict[str, UpToDate]
 
     #: The files that failed to build and must not be used by other steps.
     poisoned: Set[str]
@@ -531,11 +551,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         #: A condition variable to wait on for this invocation.
         self.condition: Optional[asyncio.Condition] = None
 
-        #: The name of the phony inputs, if any.
-        self.phony_inputs: List[str] = []
-
         #: The required input targets (phony or files) the invocations depends on.
-        self.all_inputs: List[str] = []
+        self.required: List[str] = []
 
         #: The newest input file, if any.
         self.newest_input_path: Optional[str] = None
@@ -552,7 +569,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         #: The phony outputs, if any.
         self.phony_outputs: List[str] = []
 
-        #: The (non-phony) built outputs, if any.
+        #: The built outputs, if any.
         self.built_outputs: List[str] = []
 
         #: A pattern for some missing output file(s), if any.
@@ -622,9 +639,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         else:
             self.context = self.parent.context.copy()
 
-        self.phony_inputs = []
-        self.all_inputs = []
+        self.required = []
         self.newest_input_path = None
+        self.newest_input_mtime_ns = 0
 
         assert not self.async_actions
 
@@ -708,7 +725,15 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.actions.yaml')
         Prog.logger.debug('%s - Write the persistent actions: %s', self._log, path)
+
+        for action in self.new_persistent_actions:
+            for name, partial_up_to_date in action.required.items():
+                full_up_to_date = Invocation.up_to_date[name]
+                assert full_up_to_date.producer == partial_up_to_date.producer
+                partial_up_to_date.mtime_ns = full_up_to_date.mtime_ns
+
         os.makedirs(os.path.dirname(path), exist_ok=True)
+
         with open(path, 'w') as file:
             data = dict(actions=self.new_persistent_actions[-1].into_data(),
                         outputs=self.built_outputs)
@@ -740,17 +765,17 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         Prog.logger.debug('%s - Build the required: %s', self._log, path)
 
-        self.all_inputs.append(path)
+        self.required.append(path)
 
         if path in Invocation.poisoned:
             self.abort('%s - The required: %s has failed to build' % (self._log, path))
             return
 
-        origin = Invocation.up_to_date.get(path)
-        if origin is not None:
+        up_to_date = Invocation.up_to_date.get(path)
+        if up_to_date is not None:
             Prog.logger.debug('%s - The required: %s was built', self._log, path)
             if self.new_persistent_actions:
-                self.new_persistent_actions[-1].require(path, origin)
+                self.new_persistent_actions[-1].require(path, UpToDate(up_to_date.producer))
             return
 
         step, kwargs = self.producer_of(path)  # pylint: disable=redefined-outer-name
@@ -768,14 +793,15 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                                        % (self._log, path))
                 return
             Prog.logger.debug('%s - The required: %s is a source file', self._log, path)
-            Invocation.up_to_date[path] = ''
+            up_to_date = UpToDate('', stat.st_mtime_ns)
+            Invocation.up_to_date[path] = up_to_date
             if self.new_persistent_actions:
-                self.new_persistent_actions[-1].require(path, '')
+                self.new_persistent_actions[-1].require(path, up_to_date)
             return
 
         invocation = Invocation(step, **kwargs)
         if self.new_persistent_actions:
-            self.new_persistent_actions[-1].require(path, invocation.name)
+            self.new_persistent_actions[-1].require(path, UpToDate(invocation.name))
         Prog.logger.debug('%s - The required: %s '
                           'will be produced by the spawned: %s',
                           self._log, path, invocation._log)  # pylint: disable=protected-access
@@ -919,13 +945,13 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         assert self.step is not None
         missing_outputs = []
         for pattern in sorted(self.step.output):
-            if dp.is_phony(pattern):
-                path = dp.capture2glob(pattern).format(**self.kwargs)
-                self.phony_outputs.append(path)
-                Invocation.phony.add(path)
+            formatted_pattern = dp.fmt_capture(self.kwargs, pattern)
+            if dp.is_phony(formatted_pattern):
+                self.phony_outputs.append(formatted_pattern)
+                Invocation.phony.add(formatted_pattern)
                 continue
+
             try:
-                formatted_pattern = dp.fmt_capture(self.kwargs, pattern)
                 paths = dp.glob_paths(formatted_pattern)
                 if not paths:
                     Prog.logger.debug('%s - Nonexistent optional output(s): %s',
@@ -998,21 +1024,21 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         missing_outputs = False
         assert self.step is not None
-        for path in self.phony_outputs:
-            Invocation.up_to_date[path] = self.name
 
         did_sleep = False
         waited = 0.0
         next_wait = 0.1
 
         for pattern in sorted(self.step.output):  # pylint: disable=too-many-nested-blocks
+            formatted_pattern = dp.fmt_capture(self.kwargs, pattern)
             if dp.is_phony(pattern):
+                Invocation.up_to_date[formatted_pattern] = \
+                    UpToDate(self.name, self.newest_input_mtime_ns + 1)
                 continue
 
             did_wait = False
             while True:
                 try:
-                    formatted_pattern = dp.fmt_capture(self.kwargs, pattern)
                     paths = dp.glob_paths(formatted_pattern)
                     if not paths:
                         # TODO: Should we wait here for NFS timeout? We don't, so we might record
@@ -1033,8 +1059,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                                 Prog.logger.debug('%s - Touch the output: %s', self._log, path)
                                 Stat.touch(path)
 
-                            Invocation.up_to_date[path] = self.name
                             mtime_ns = Stat.stat(path).st_mtime_ns
+                            Invocation.up_to_date[path] = UpToDate(self.name, mtime_ns)
 
                             if Prog.logger.isEnabledFor(logging.DEBUG):
                                 if path == formatted_pattern:
@@ -1100,13 +1126,11 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         assert self.step is not None
 
-        for path in self.phony_outputs:
-            Invocation.poisoned.add(path)
-
         for pattern in sorted(self.step.output):
-            if dp.is_phony(pattern):
-                continue
             formatted_pattern = dp.fmt_capture(self.kwargs, dp.optional(pattern))
+            if dp.is_phony(formatted_pattern):
+                Invocation.poisoned.add(formatted_pattern)
+                continue
             for path in dp.glob_paths(dp.optional(formatted_pattern)):
                 Invocation.poisoned.add(path)
                 if Make.remove_failed_outputs and not is_precious(path):
@@ -1125,12 +1149,6 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             # Either no output files (pure action) or missing output files.
             Prog.logger.log(Make.WHY, '%s - Must run actions to satisfy the phony output: %s',
                             self._log, self.phony_outputs[0])
-            return True
-
-        if self.phony_inputs:
-            Prog.logger.log(Make.WHY,
-                            '%s - Must run actions because has rebuilt the required phony: %s',
-                            self._log, self.phony_inputs[0])
             return True
 
         if self.missing_output is not None:
@@ -1203,8 +1221,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             return True
         return False
 
-    def different_required(self, old_required: Dict[str, str],
-                           new_required: Dict[str, str]) -> bool:
+    def different_required(self, old_required: Dict[str, UpToDate],
+                           new_required: Dict[str, UpToDate]) -> bool:
         """
         Check whether the required inputs of the new action are different from the required inputs
         of the last build action.
@@ -1224,16 +1242,25 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 return True
 
         for path in sorted(new_required.keys()):
-            old_invocation = old_required[path]
-            new_invocation = new_required[path]
-            if old_invocation != new_invocation:
+            old_up_to_date = old_required[path]
+            new_up_to_date = new_required[path]
+            if old_up_to_date.producer != new_up_to_date.producer:
                 Prog.logger.log(Make.WHY,
                                 '%s - Must run actions '
                                 'because the producer of the required: %s '
                                 'has changed from: %s into: %s',
                                 self._log, path,
-                                (old_invocation or 'source file'),
-                                (new_invocation or 'source file'))
+                                (old_up_to_date.producer or 'source file'),
+                                (new_up_to_date.producer or 'source file'))
+                return True
+            if old_up_to_date.mtime_ns != new_up_to_date.mtime_ns:
+                Prog.logger.log(Make.WHY,
+                                '%s - Must run actions '
+                                'because the modification time of the required: %s '
+                                'has changed from: %s into: %s',
+                                self._log, path,
+                                _datetime_from_nanoseconds(old_up_to_date.mtime_ns),
+                                _datetime_from_nanoseconds(new_up_to_date.mtime_ns))
                 return True
 
         return False
@@ -1389,8 +1416,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Prog.logger.debug('%s - Synced', self._log)
 
         failed_inputs = False
-        self.phony_inputs = []
-        for path in sorted(self.all_inputs):
+        for path in sorted(self.required):
             if path in Invocation.poisoned \
                     or (not dp.is_optional(path) and path not in Invocation.up_to_date):
                 if self.exception is None:
@@ -1409,17 +1435,17 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
             Prog.logger.debug('%s - Has the required: %s', self._log, path)
 
-            if path in Invocation.phony:
-                self.phony_inputs.append(path)
-                continue
-
             if dp.is_exists(path):
                 continue
 
-            result = Stat.stat(path)
-            if self.newest_input_path is None or self.newest_input_mtime_ns < result.st_mtime_ns:
+            if path in Invocation.phony:
+                mtime_ns = Invocation.up_to_date[path].mtime_ns
+            else:
+                mtime_ns = Stat.stat(path).st_mtime_ns
+
+            if self.newest_input_path is None or self.newest_input_mtime_ns < mtime_ns:
                 self.newest_input_path = path
-                self.newest_input_mtime_ns = result.st_mtime_ns
+                self.newest_input_mtime_ns = mtime_ns
 
         if failed_inputs:
             self.abort('%s - Failed to build the required target(s)' % self._log)
@@ -1428,9 +1454,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         if self.exception is None \
                 and Prog.logger.isEnabledFor(logging.DEBUG) \
                 and self.oldest_output_path is not None:
-            Prog.logger.debug('%s - Newest input: %s time: %s',
-                              self._log, self.newest_input_path,
-                              _datetime_from_nanoseconds(self.newest_input_mtime_ns))
+            if self.newest_input_path is None:
+                Prog.logger.debug('%s - No inputs', self._log)
+            else:
+                Prog.logger.debug('%s - Newest input: %s time: %s',
+                                  self._log, self.newest_input_path,
+                                  _datetime_from_nanoseconds(self.newest_input_mtime_ns))
 
         return self.exception
 
@@ -1517,17 +1546,22 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         current_thread().name = self.stack
 
 
-_OLD_DATES: Dict[int, float] = {}
+_QUANTIZED_OF_NANOSECONDS: Dict[int, float] = {}
+_NANOSECONDS_OF_QUANTIZED: Dict[str, int] = {}
+
+
+def _datetime_from_str(string: str) -> datetime:
+    return datetime.strptime(string, '%Y-%m-%d %H:%M:%S.%f')
 
 
 def _datetime_from_nanoseconds(nanoseconds: int) -> str:
     if not Prog._is_test:  # pylint: disable=protected-access
-        seconds = datetime.fromtimestamp(nanoseconds // 1000000000).strftime('%Y-%m-%d %H:%M:%S')
-        fractions = '%09d' % (nanoseconds % 1000000000)
-        return '%s.%s' % (seconds, fractions)
+        seconds = datetime.fromtimestamp(nanoseconds // 1_000_000_000).strftime('%Y-%m-%d %H:%M:%S')
+        fraction = '%09d' % (nanoseconds % 1_000_000_000)
+        return '%s.%s' % (seconds, fraction)
 
-    global _OLD_DATES
-    quantized = _OLD_DATES.get(nanoseconds, None)
+    global _QUANTIZED_OF_NANOSECONDS
+    quantized = _QUANTIZED_OF_NANOSECONDS.get(nanoseconds, None)
     if quantized is not None:
         return str(quantized)
 
@@ -1536,7 +1570,7 @@ def _datetime_from_nanoseconds(nanoseconds: int) -> str:
     lower_nanoseconds = None
     lower_quantized = None
 
-    for old_nanoseconds, old_quantized in _OLD_DATES.items():
+    for old_nanoseconds, old_quantized in _QUANTIZED_OF_NANOSECONDS.items():
         if old_nanoseconds < nanoseconds:
             if lower_nanoseconds is None or lower_nanoseconds < old_nanoseconds:
                 lower_nanoseconds = old_nanoseconds
@@ -1557,13 +1591,30 @@ def _datetime_from_nanoseconds(nanoseconds: int) -> str:
         else:
             quantized = (lower_quantized + higher_quantized) / 2
 
-    _OLD_DATES[nanoseconds] = quantized
+    _QUANTIZED_OF_NANOSECONDS[nanoseconds] = quantized
+    _NANOSECONDS_OF_QUANTIZED[str(quantized)] = nanoseconds
     return str(quantized)
 
 
+def _nanoseconds_from_datetime_str(string: str) -> int:
+    if Prog._is_test:  # pylint: disable=protected-access
+        return _NANOSECONDS_OF_QUANTIZED[string]
+    seconds_string, nanoseconds_string = string.split('.')
+
+    seconds_datetime = _datetime_from_str(seconds_string + '.0')
+    seconds = int(seconds_datetime.timestamp())
+
+    nanoseconds_string = (nanoseconds_string + 9 * '0')[:9]
+    nanoseconds = int(nanoseconds_string)
+
+    return seconds * 1_000_000_000 + nanoseconds
+
+
 def _reset_test_dates() -> None:
-    global _OLD_DATES
-    _OLD_DATES = {}
+    global _QUANTIZED_OF_NANOSECONDS
+    global _NANOSECONDS_OF_QUANTIZED
+    _QUANTIZED_OF_NANOSECONDS = {}
+    _NANOSECONDS_OF_QUANTIZED = {}
 
 
 def step(output: Strings) -> Callable[[Callable], Callable]:
