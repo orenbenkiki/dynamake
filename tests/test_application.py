@@ -12,7 +12,6 @@ from dynamake.application import parallel
 from dynamake.application import Param
 from dynamake.application import Prog
 from dynamake.application import serial
-from dynamake.application import use_random_seed
 from dynamake.patterns import str2int
 from testfixtures import OutputCapture  # type: ignore
 from tests import TestWithFiles
@@ -427,13 +426,11 @@ class TestUniversalMain(TestWithFiles):
         output.compare('foo 1')
 
     def test_random_seed(self) -> None:
-        use_random_seed()
-
-        @config(top=True)
+        @config(top=True, random=True)
         def top() -> None:  # pylint: disable=unused-variable
             print(random.random())
 
-        sys.argv += ['--random_seed', '17', 'top']
+        sys.argv += ['top', '--random_seed', '17']
         with OutputCapture() as output:
             da_main(ArgumentParser(description='Test'))
 
@@ -441,8 +438,7 @@ class TestUniversalMain(TestWithFiles):
         output.compare('%s\n' % random.random())
 
     def test_random_parallel(self) -> None:
-        use_random_seed()
-
+        @config(random=True)
         def _roll() -> float:
             return random.random()
 
@@ -451,7 +447,7 @@ class TestUniversalMain(TestWithFiles):
             results = parallel(2, _roll)
             print(sorted(results))
 
-        sys.argv += ['--random_seed', '17', 'top']
+        sys.argv += ['top', '--random_seed', '17']
         with OutputCapture() as output:
             da_main(ArgumentParser(description='Test'))
 
