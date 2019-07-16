@@ -305,7 +305,7 @@ class Step:
         """
         Collect a build step function.
         """
-        func = Func.collect(wrapped, is_top=False)
+        func = Func.collect(wrapped, is_top=False, is_random=False)
         if not iscoroutinefunction(func.wrapped):
             raise RuntimeError('The step function: %s.%s is not a coroutine'
                                % (func.wrapped.__module__, func.wrapped.__qualname__))

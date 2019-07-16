@@ -99,7 +99,7 @@ class Func:  # pylint: disable=too-many-instance-attributes
         Func._is_finalized = False
         Func.collect_indirect_invocations = True
 
-    def __init__(self, wrapped: Callable, is_top: bool) -> None:
+    def __init__(self, wrapped: Callable, *, is_top: bool, is_random: bool) -> None:
         """
         Register a configurable function.
         """
@@ -115,6 +115,9 @@ class Func:  # pylint: disable=too-many-instance-attributes
 
         #: Whether this is a top-level function.
         self.is_top = is_top
+
+        #: Whether this function uses random numbers.
+        self.is_random = is_random
 
         #: The name used to locate the function.
         self.name = function.__name__
@@ -184,11 +187,19 @@ class Func:  # pylint: disable=too-many-instance-attributes
         return kwargs
 
     @staticmethod
-    def collect(wrapped: Callable, is_top: bool) -> 'Func':
+    def collect(wrapped: Callable, *, is_top: bool, is_random: bool) -> 'Func':
         """
         Collect a configurable function.
         """
-        configurable = Func(wrapped, is_top)
+        if is_random and 'random_seed' not in Prog.parameters:
+            Param(name='random_seed', metavar='INT', default=123456, parser=str2int(min=0),
+                  description="""
+                The random seed to use. This allows for repeatable execution with identical
+                results. If this is zero then the current time will be used, which results in
+                an unrepeatable execution.
+            """)
+
+        configurable = Func(wrapped, is_top=is_top, is_random=is_random)
 
         if configurable.name in Func.by_name:
             function = configurable.wrapped
@@ -226,9 +237,13 @@ class Func:  # pylint: disable=too-many-instance-attributes
             invoked_function_names: Set[str] = set()
             for called_name in caller.invoked_function_names:
                 called = Func.by_name.get(called_name)
-                if called is not None:
-                    called.invoker_function_names.add(caller_name)
-                    invoked_function_names.add(called_name)
+                if called is None:
+                    continue
+                if called.is_random:
+                    caller.is_random = True
+                called.invoker_function_names.add(caller_name)
+                invoked_function_names.add(called_name)
+
             caller.invoked_function_names = invoked_function_names
 
     @staticmethod
@@ -319,15 +334,19 @@ def _invoked_names(function: Callable) -> Set[str]:
     return collector.names()
 
 
-def config(top: bool = False) -> Callable[[Callable], Callable]:
+def config(*, random: bool = False,  # pylint: disable=redefined-outer-name
+           top: bool = False) -> Callable[[Callable], Callable]:
     """
     Decorator for configurable functions.
 
     If ``top`` is ``True``, this is a top-level function that can be directly invoked from the main
     function.
+
+    If ``random`` is ``True``, the code uses random numbers. This activates the implicit
+    ``random_seed`` parameter.
     """
     def _wrap(wrapped: Callable) -> Callable:
-        return Func.collect(wrapped, top).wrapper
+        return Func.collect(wrapped, is_top=top, is_random=random).wrapper
     return _wrap
 
 
@@ -561,7 +580,8 @@ class Prog:
                                                    formatter_class=RawDescriptionHelpFormatter)
             Prog.add_sorted_parameters(command_parser,
                                        predicate=lambda name, func=func:  # type: ignore
-                                       name in func.indirect_parameter_names)
+                                       name in func.indirect_parameter_names
+                                       or func.is_random and name == 'random_seed')
 
         if not verify_reachability:
             return
@@ -983,23 +1003,6 @@ def processes() -> int:
     if processes_count == 0:
         return cpus
     return min(processes_count, cpus)
-
-
-def use_random_seed() -> None:
-    """
-    Specify that the code in the current module uses random numbers.
-
-    Invoke this at the module's top-level, so it will be invoked when imported, similarly to
-    defining the parameters using :py:class:`dynamake.application.Param`.
-    """
-    if 'random_seed' in Prog.parameters:
-        return
-    Param(name='random_seed', metavar='INT', default=123456, parser=str2int(min=0),
-          group='global options', description="""
-        The random seed to use. This allows for repeatable execution with identical
-        results. If this is zero then the current time will be used, which results in
-        an unrepeatable execution.
-    """)
 
 
 def reset_application() -> None:
