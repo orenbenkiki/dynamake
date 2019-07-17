@@ -2067,6 +2067,8 @@ def run(awaitable: Awaitable) -> Any:
 
 
 def _extra_parameter_help(parameter_name: str) -> str:
+    if parameter_name in Param.BUILTIN:
+        return ''
     globs: List[str] = []
     for func_name in Func.names_by_parameter[parameter_name]:
         for pattern in Step.by_name[func_name].output:
