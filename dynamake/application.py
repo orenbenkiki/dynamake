@@ -966,17 +966,20 @@ def override(**values: Any) -> Iterator[None]:
 
 
 def _define_parameters() -> None:
-    default_jobs = os.cpu_count()
+    default_jobs: Optional[int] = 0
     dynamake_jobs = os.getenv('DYNAMAKE_JOBS')
-    if dynamake_jobs:
-        try:
-            from_env = int(dynamake_jobs)
-        except ValueError:
-            from_env = -1
-        if from_env < 0:
-            Prog.logger.warn('Ignoring invalid value: %s for: DYNAMAKE_JOBS' % dynamake_jobs)
+    if dynamake_jobs is not None:
+        if not dynamake_jobs:
+            default_jobs = None
         else:
-            default_jobs = from_env
+            try:
+                from_env = int(dynamake_jobs)
+            except ValueError:
+                from_env = -1
+            if from_env < 0:
+                Prog.logger.warn('Ignoring invalid value: %s for: DYNAMAKE_JOBS' % dynamake_jobs)
+            else:
+                default_jobs = from_env
 
     Param(name='log_level', short='ll', metavar='STR', default='WARN',
           parser=str, group='global options', description='The log level to use')
@@ -985,9 +988,10 @@ def _define_parameters() -> None:
           parser=str, group='global options',
           description='Optional context to include in log messages')
 
-    Param(name='jobs', short='j', metavar='INT', default=default_jobs,
-          parser=str2int(min=0), group='global options',
-          description='The maximal number of parallel threads and/or processes')
+    Param(name='jobs', short='j', metavar='INT?', default=default_jobs,
+          parser=str2optional(str2int(min=0)), group='global options',
+          description='Optional maximal number of parallel threads and/or processes;'
+          'Zero is the number of CPUs, none is unlimited')
 
 
 def processes_for(tasks: int) -> int:
@@ -997,16 +1001,26 @@ def processes_for(tasks: int) -> int:
     This is restricted by the ``--jobs`` command line option, and is further reduced to one when
     nested inside a parallel call. A proper work-stealing scheduler would do much better (ideally,
     across multiple application invocations on the same machine).
+
+    If ``tasks`` is zero, returns the maximal number of processes (zero for unlimited).
     """
+    assert tasks >= 0
+
     processes_count = Prog.get_parameter('jobs')
+    if processes_count is None:
+        return tasks
+
     cpus = os.cpu_count()
     assert cpus is not None
+
     if processes_count == 0:
         processes_count = cpus
     else:
         processes_count = min(processes_count, cpus)
+
     if tasks > 0:
         processes_count = min(processes_count, tasks)
+
     return processes_count
 
 
