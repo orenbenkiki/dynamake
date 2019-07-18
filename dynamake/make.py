@@ -61,7 +61,7 @@ class Resources:
         """
         Reset all the current state, for tests.
         """
-        Resources.total = dict(jobs=int(Prog.get_parameter('jobs')))
+        Resources.total = dict(jobs=processes_for(0))
         Resources.available = Resources.total.copy()
         Resources.default = dict(jobs=1)
         Resources.condition = asyncio.Condition()
@@ -144,14 +144,18 @@ def resource_parameters(**default_amounts: int) -> None:
     does not specify an explicit value.
     """
     for name, amount in default_amounts.items():
-        total = int(Prog.get_parameter(name))
+        total = Resources.total.get(name)
+        if total is None:
+            total = int(Prog.get_parameter(name))
+            Resources.total[name] = total
+            Resources.available[name] = total
+
         if amount > total:
             raise RuntimeError('The default amount: %s '
                                'of the resource: %s '
                                'is greater than the total amount: %s'
                                % (amount, name, total))
-        Resources.total[name] = total
-        Resources.available[name] = total
+
         Resources.default[name] = amount
         Func.names_by_parameter[name] = []
 
@@ -1848,7 +1852,7 @@ def _define_parameters() -> None:
 
 
 def _collect_parameters() -> None:
-    Resources.available['jobs'] = Resources.total['jobs'] = int(Prog.get_parameter('jobs'))
+    Resources.available['jobs'] = Resources.total['jobs'] = processes_for(0)
     Make.failure_aborts_build = Prog.get_parameter('failure_aborts_build')
     Make.remove_stale_outputs = Prog.get_parameter('remove_stale_outputs')
     Make.wait_nfs_outputs = Prog.get_parameter('wait_nfs_outputs')

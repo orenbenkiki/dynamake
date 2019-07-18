@@ -178,7 +178,7 @@ class TestMain(TestWithFiles):
             async def no_op() -> None:  # pylint: disable=unused-variable
                 pass
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
 
         self.check(_register, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -226,7 +226,7 @@ class TestMain(TestWithFiles):
                 for index in range(0, foo):
                     await shell('touch foo.{major}.{index}'.format(major=major, index=index))
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--foo', '2']
 
         self.check(_register, log=[
@@ -497,7 +497,7 @@ class TestMain(TestWithFiles):
                 require('foo')
                 await spawn('cp', 'foo', 'bar')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false', 'bar']
 
         write_file('foo', '!\n')
@@ -603,7 +603,7 @@ class TestMain(TestWithFiles):
         self.expect_file('bar', '?\n')
 
     def test_require_active(self) -> None:
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         def _register() -> None:
@@ -681,7 +681,7 @@ class TestMain(TestWithFiles):
             async def no_op() -> None:  # pylint: disable=unused-variable
                 pass
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, error='no_op - Missing some output.s.', log=[
@@ -708,7 +708,7 @@ class TestMain(TestWithFiles):
         os.makedirs('foo')
         write_file('foo/baz', 'z')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
         sys.argv += ['--remove_empty_directories', 'true', 'foo/bar']
 
@@ -749,7 +749,7 @@ class TestMain(TestWithFiles):
 
         write_file('foo', '!\n')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, log=[
@@ -811,7 +811,7 @@ class TestMain(TestWithFiles):
                 await shell('true')
 
         write_file('bar', '0\n')
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, log=[
@@ -947,7 +947,7 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 await shell('false')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, error='make_all - Failure: false', log=[
@@ -991,7 +991,7 @@ class TestMain(TestWithFiles):
                 await shell('touch baz')
                 await shell('false')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
         sys.argv += ['--failure_aborts_build', 'false']
 
@@ -1061,7 +1061,7 @@ class TestMain(TestWithFiles):
 
         write_file('foo', '!\n')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, error='make_all - Failure: echo @ > all ; false', log=[
@@ -1123,7 +1123,7 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 await shell('touch all')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
         sys.argv += ['--touch_success_outputs', 'true']
 
@@ -1166,7 +1166,7 @@ class TestMain(TestWithFiles):
                 require('foo')
                 await shell('touch bar')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, log=[
@@ -1227,7 +1227,7 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, error="Don't know how to make the required: foo", log=[
@@ -1260,7 +1260,7 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 await shell('(sleep 1 ; touch all) &')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
         sys.argv += ['--wait_nfs_outputs', 'true']
 
@@ -1288,7 +1288,7 @@ class TestMain(TestWithFiles):
         ])
 
     def test_require_optional(self) -> None:
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         def _register() -> None:
@@ -1372,7 +1372,7 @@ class TestMain(TestWithFiles):
 
     def test_optional_output(self) -> None:
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         def _register_without() -> None:
@@ -1506,7 +1506,7 @@ class TestMain(TestWithFiles):
         os.mkdir('.dynamake')
         write_file('.dynamake/make_all.actions.yaml', '*invalid')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
 
         self.check(_register, error='make_all - Failure: false', log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -1555,7 +1555,7 @@ class TestMain(TestWithFiles):
         os.makedirs('.dynamake/make_all')
         write_file('.dynamake/make_all/name=all.actions.yaml', '*invalid')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
 
         self.check(_register, error='make_all/name=all - Failure: false', log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -1605,7 +1605,7 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 await shell('touch all')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
 
         self.check(_register_without, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -1683,7 +1683,7 @@ class TestMain(TestWithFiles):
                 await shell('true')
                 await shell('touch all')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
 
         self.check(_register_with, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -1752,7 +1752,7 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 await shell('touch all ; sleep 0.1 ; touch foo')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
 
         self.check(_register_with, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -1849,7 +1849,7 @@ class TestMain(TestWithFiles):
                 await shell('touch all')
                 await shell('true')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
 
         self.check(_register_with, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -1921,7 +1921,7 @@ class TestMain(TestWithFiles):
         write_file('foo', '!\n')
         sleep(0.1)
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
 
         self.check(_register_without, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -1994,7 +1994,7 @@ class TestMain(TestWithFiles):
 
         write_file('foo', '!\n')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
 
         self.check(_register_with, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -2066,7 +2066,7 @@ class TestMain(TestWithFiles):
 
         write_file('foo', '0\n')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
 
         self.check(_register, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -2140,7 +2140,7 @@ class TestMain(TestWithFiles):
 
         write_file('foo', '!\n')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
 
         self.check(_register_without, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -2236,7 +2236,7 @@ class TestMain(TestWithFiles):
                 foo = config_param('foo', '0')
                 await shell('echo %s > all' % foo)
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
 
         self.check(_register, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -2345,7 +2345,7 @@ class TestMain(TestWithFiles):
                 baz?: 2
         """)
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, error='Unused step configuration parameter.s.: bar', log=[
@@ -2367,7 +2367,7 @@ class TestMain(TestWithFiles):
                 config_file()
                 await shell('echo', with_config(), '> all')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, log=[
@@ -2504,7 +2504,7 @@ class TestMain(TestWithFiles):
         write_file('DynaMake.yaml',
                    '- { when: {step: make_all}, then: {run_prefix: "echo {action_id} > log;"} }\n')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, log=[
@@ -2690,7 +2690,7 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 await shell('true', foo=2)
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, error='unknown resource: foo', log=[
@@ -2752,7 +2752,7 @@ class TestMain(TestWithFiles):
                 await done(asyncio.sleep(0.1))
                 require('baz')
 
-        sys.argv += ['--jobs', '0']
+        sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, log=[
