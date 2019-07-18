@@ -1681,14 +1681,14 @@ def _run_shell(*command: str) -> Any:
     return asyncio.create_subprocess_shell(' '.join(command))
 
 
-async def eshell(*templates: Strings) -> None:
+async def eshell(*templates: Strings, **resources: int) -> None:
     """
     Similar to :py:func:`dynamake.make.shell`, but first :py:func:`dynamake.make.e`-xpands each
     parameter.
 
     That is, ``eshell(...)`` is the same as ``shell(e(...))``.
     """
-    await shell(e(*templates))
+    await shell(e(*templates), **resources)
 
 
 async def spawn(*command: Strings, **resources: int) -> None:
@@ -1705,14 +1705,14 @@ async def spawn(*command: Strings, **resources: int) -> None:
                                           *command, **resources))
 
 
-async def espawn(*templates: Strings) -> None:
+async def espawn(*templates: Strings, **resources: int) -> None:
     """
     Similar to :py:func:`dynamake.make.spawn`, but first :py:func:`dynamake.make.e`-xpands each
     parameter.
 
     That is, ``espawn(...)`` is the same as ``spawn(e(...))``.
     """
-    await spawn(e(*templates))
+    await spawn(e(*templates), **resources)
 
 
 async def submit(*command: Strings, **resources: int) -> None:
@@ -1750,14 +1750,14 @@ async def submit(*command: Strings, **resources: int) -> None:
     await shell(*prefix, *wrapped, *suffix, **resources)
 
 
-async def esubmit(*templates: Strings) -> None:
+async def esubmit(*templates: Strings, **resources: int) -> None:
     """
     Similar to :py:func:`dynamake.make.submit`, but first :py:func:`dynamake.make.e`-xpands each
     parameter.
 
     That is, ``esubmit(...)`` is the same as ``submit(e(...))``.
     """
-    await submit(e(*templates))
+    await submit(e(*templates), **resources)
 
 
 def context() -> Dict[str, Any]:
