@@ -821,7 +821,7 @@ class Parallel:
                kwargs: Optional[Callable[[int], Dict[str, Any]]] = None,
                overrides: Optional[Callable[[int], Dict[str, Any]]] = None,
                **fixed_kwargs: Any) -> List[Any]:
-        processes_count = min(processes(), invocations)
+        processes_count = processes_for(invocations)
         assert processes_count >= 0
         if processes_count == 0:
             return []
@@ -990,19 +990,24 @@ def _define_parameters() -> None:
           description='The maximal number of parallel threads and/or processes')
 
 
-def processes() -> int:
+def processes_for(tasks: int) -> int:
     """
-    Return the number of parallel processes at the current context.
+    Return the number of parallel processes for the tasks in the current context.
 
-    This is restricted by the ``--jobs`` command line option, and is reduced to
-    one when nested inside a parallel call.
+    This is restricted by the ``--jobs`` command line option, and is further reduced to one when
+    nested inside a parallel call. A proper work-stealing scheduler would do much better (ideally,
+    across multiple application invocations on the same machine).
     """
     processes_count = Prog.get_parameter('jobs')
     cpus = os.cpu_count()
     assert cpus is not None
     if processes_count == 0:
-        return cpus
-    return min(processes_count, cpus)
+        processes_count = cpus
+    else:
+        processes_count = min(processes_count, cpus)
+    if tasks > 0:
+        processes_count = min(processes_count, tasks)
+    return processes_count
 
 
 def reset_application() -> None:
