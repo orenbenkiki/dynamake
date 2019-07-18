@@ -1791,13 +1791,6 @@ def config_file() -> str:
     return Invocation.current.config_file()
 
 
-def with_config() -> List[str]:
-    """
-    A convenient shorthand for writing [``--config``, `config_file()`].
-    """
-    return ['--config', config_file()]
-
-
 def _define_parameters() -> None:
     Param(name='failure_aborts_build', short='fab', metavar='BOOL', default=True,
           parser=dp.str2bool, group='global options',

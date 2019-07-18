@@ -22,7 +22,6 @@ from dynamake.make import step
 from dynamake.make import StepException
 from dynamake.make import submit
 from dynamake.make import sync
-from dynamake.make import with_config
 from dynamake.patterns import optional
 from dynamake.patterns import phony
 from dynamake.patterns import Stat
@@ -2365,7 +2364,7 @@ class TestMain(TestWithFiles):
             @step(output='all')
             async def make_all() -> None:  # pylint: disable=unused-variable
                 config_file()
-                await shell('echo', with_config(), '> all')
+                await shell('echo', config_file(), '> all')
 
         sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
@@ -2381,11 +2380,10 @@ class TestMain(TestWithFiles):
              '#1 - make_all - Must run actions because creating '
              'the missing persistent configuration: .dynamake/make_all.config.yaml'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'INFO',
-             '#1 - make_all - Run: echo --config .dynamake/make_all.config.yaml > all'),
+            ('dynamake', 'INFO', '#1 - make_all - Run: echo .dynamake/make_all.config.yaml > all'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'TRACE',
-             '#1 - make_all - Success: echo --config .dynamake/make_all.config.yaml > all'),
+             '#1 - make_all - Success: echo .dynamake/make_all.config.yaml > all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 1'),
             ('dynamake', 'TRACE', '#1 - make_all - Done'),
@@ -2415,11 +2413,10 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'DEBUG', '#1 - make_all - No inputs'),
             ('dynamake', 'DEBUG', '#1 - make_all - Remove the stale output: all'),
-            ('dynamake', 'INFO',
-             '#1 - make_all - Run: echo --config .dynamake/make_all.config.yaml > all'),
+            ('dynamake', 'INFO', '#1 - make_all - Run: echo .dynamake/make_all.config.yaml > all'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'TRACE',
-             '#1 - make_all - Success: echo --config .dynamake/make_all.config.yaml > all'),
+             '#1 - make_all - Success: echo .dynamake/make_all.config.yaml > all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 2'),
             ('dynamake', 'TRACE', '#1 - make_all - Done'),
@@ -2450,11 +2447,10 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'DEBUG', '#1 - make_all - No inputs'),
             ('dynamake', 'DEBUG', '#1 - make_all - Remove the stale output: all'),
-            ('dynamake', 'INFO',
-             '#1 - make_all - Run: echo --config .dynamake/make_all.config.yaml > all'),
+            ('dynamake', 'INFO', '#1 - make_all - Run: echo .dynamake/make_all.config.yaml > all'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'TRACE',
-             '#1 - make_all - Success: echo --config .dynamake/make_all.config.yaml > all'),
+             '#1 - make_all - Success: echo .dynamake/make_all.config.yaml > all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 3'),
             ('dynamake', 'TRACE', '#1 - make_all - Done'),
@@ -2482,7 +2478,7 @@ class TestMain(TestWithFiles):
              '#1 - make_all - Can skip actions '
              'because all the outputs exist and there are no newer inputs'),
             ('dynamake', 'DEBUG',
-             '#1 - make_all - Skip: echo --config .dynamake/make_all.config.yaml > all'),
+             '#1 - make_all - Skip: echo .dynamake/make_all.config.yaml > all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'DEBUG', '#1 - make_all - No inputs'),
             ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 3'),

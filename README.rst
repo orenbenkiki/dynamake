@@ -625,21 +625,11 @@ example:
         require('bar')
         await spawn('dynamain', 'bar_to_foo', '--config', dm.config_file(), ...)
 
-Or even shorter:
-
-.. code-block:: python
-
-    @dm.step(output='foo')
-    async def make_foo() -> None:
-        require('bar')
-        await spawn('dynamain', 'bar_to_foo', dm.with_config(), ...)
-
-If :py:func:`dynamake.make.config_file` (or :py:func:`dynamake.make.with_config`) are invoked, then
-DynaMake will generate a configuration file containing just the parameter values for this specific
-step invocation. If this file is missing or contains different values, than it will trigger the
-actions, even if the output files otherwise seem up-to-date. Thus, even if the main
-``DynaConf.yaml`` file is modified, an action will only be rebuilt if its own effective parameter
-values have changed.
+If :py:func:`dynamake.make.config_file` is invoked, then DynaMake will generate a configuration file
+containing just the parameter values for this specific step invocation. If this file is missing or
+contains different values, than it will trigger the actions, even if the output files otherwise seem
+up-to-date. Thus, even if the main ``DynaConf.yaml`` file is modified, an action will only be
+rebuilt if its own effective parameter values have changed.
 
 The paths to the generated configuration files are similar to the path to the persistent state
 files: ``.dynamake/step_name.config.yaml`` or
