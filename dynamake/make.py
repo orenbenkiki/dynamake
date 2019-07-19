@@ -1270,7 +1270,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                                 (old_up_to_date.producer or 'source file'),
                                 (new_up_to_date.producer or 'source file'))
                 return True
-            if old_up_to_date.mtime_ns != new_up_to_date.mtime_ns:
+            if not is_exists(path) and old_up_to_date.mtime_ns != new_up_to_date.mtime_ns:
                 Prog.logger.log(Make.WHY,
                                 '%s - Must run actions '
                                 'because the modification time of the required: %s '
