@@ -327,7 +327,7 @@ class UpToDate:
     Data for each up-to-date target.
     """
 
-    def __init__(self, producer: str, mtime_ns: int = -1) -> None:
+    def __init__(self, producer: str, mtime_ns: int = 0) -> None:
         """
         Record a new up-to-date target.
         """
@@ -338,6 +338,28 @@ class UpToDate:
         #:
         #: This is negative until we know the correct time.
         self.mtime_ns = mtime_ns
+
+    def into_data(self) -> Dict[str, Any]:
+        """
+        Serialize for dumping to YAML.
+        """
+        data = dict(producer=self.producer)
+        if self.mtime_ns > 0:
+            data['mtime'] = str(_datetime_from_nanoseconds(self.mtime_ns))
+        return data
+
+    @staticmethod
+    def from_data(data: Dict[str, str]) -> 'UpToDate':
+        """
+        Load from YAML data.
+        """
+        producer = data['producer']
+        mtime_str = data.get('mtime')
+        if mtime_str is None:
+            mtime_ns = 0
+        else:
+            mtime_ns = _nanoseconds_from_datetime_str(mtime_str)
+        return UpToDate(producer, mtime_ns)
 
 
 class PersistentAction:
@@ -403,10 +425,8 @@ class PersistentAction:
         else:
             data = []
 
-        datum: Dict[str, Any] = \
-            dict(required={name: dict(producer=up_to_date.producer,
-                                      mtime=str(_datetime_from_nanoseconds(up_to_date.mtime_ns)))
-                           for name, up_to_date in self.required.items()})
+        datum: Dict[str, Any] = dict(required={name: up_to_date.into_data()
+                                               for name, up_to_date in self.required.items()})
 
         if self.kind == 'phony':
             assert self.start is None
@@ -440,8 +460,7 @@ class PersistentAction:
             action = PersistentAction()
             actions = [action]
 
-        action.required = {name: UpToDate(up_to_date['producer'],
-                                          _nanoseconds_from_datetime_str(up_to_date['mtime']))
+        action.required = {name: UpToDate.from_data(up_to_date)
                            for name, up_to_date in datum['required'].items()}
 
         for kind in ['shell', 'spawn']:
@@ -1453,9 +1472,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         for action in self.new_persistent_actions:
             for name, partial_up_to_date in action.required.items():
-                full_up_to_date = Invocation.up_to_date[name]
-                assert full_up_to_date.producer == partial_up_to_date.producer
-                partial_up_to_date.mtime_ns = full_up_to_date.mtime_ns
+                full_up_to_date = Invocation.up_to_date.get(name)
+                if full_up_to_date is None:
+                    partial_up_to_date.mtime_ns = 0
+                else:
+                    assert full_up_to_date.producer == partial_up_to_date.producer
+                    partial_up_to_date.mtime_ns = full_up_to_date.mtime_ns
 
         if Prog.logger.isEnabledFor(logging.DEBUG) and self.oldest_output_path is not None:
             if self.newest_input_path is None:
