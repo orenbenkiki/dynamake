@@ -87,6 +87,10 @@ class Func:  # pylint: disable=too-many-instance-attributes
     #: which function invokes which other function (as this depends on the file name patterns).
     collect_indirect_invocations: bool
 
+    #: If true, do not really collect functions (e.g., when importing all of a package modules for
+    #: generating documentation).
+    is_disabled: bool
+
     _is_finalized: bool
 
     @staticmethod
@@ -96,6 +100,7 @@ class Func:  # pylint: disable=too-many-instance-attributes
         """
         Func.by_name = {}
         Func.names_by_parameter = {}
+        Func.is_disabled = False
         Func._is_finalized = False
         Func.collect_indirect_invocations = True
 
@@ -201,17 +206,19 @@ class Func:  # pylint: disable=too-many-instance-attributes
 
         configurable = Func(wrapped, is_top=is_top, is_random=is_random)
 
-        if configurable.name in Func.by_name:
-            function = configurable.wrapped
-            conflicting = Func.by_name[configurable.name].wrapped
-            raise RuntimeError('Conflicting definitions for the function: %s '
-                               'in both: %s.%s '
-                               'and: %s.%s'
-                               % (configurable.name,
-                                  conflicting.__module__, conflicting.__qualname__,
-                                  function.__module__, function.__qualname__))
+        if not Func.is_disabled:
+            if configurable.name in Func.by_name:
+                function = configurable.wrapped
+                conflicting = Func.by_name[configurable.name].wrapped
+                raise RuntimeError('Conflicting definitions for the function: %s '
+                                   'in both: %s.%s '
+                                   'and: %s.%s'
+                                   % (configurable.name,
+                                      conflicting.__module__, conflicting.__qualname__,
+                                      function.__module__, function.__qualname__))
 
-        Func.by_name[configurable.name] = configurable
+            Func.by_name[configurable.name] = configurable
+
         return configurable
 
     @staticmethod
