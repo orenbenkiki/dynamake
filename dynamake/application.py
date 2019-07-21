@@ -89,6 +89,8 @@ class Func:  # pylint: disable=too-many-instance-attributes
 
     #: If true, do not really collect functions (e.g., when importing all of a package modules for
     #: generating documentation).
+    #:
+    #: By default is ``True`` unless the environment variable ``DYNAMAKE_DISABLE`` exists.
     is_disabled: bool
 
     _is_finalized: bool
@@ -100,7 +102,7 @@ class Func:  # pylint: disable=too-many-instance-attributes
         """
         Func.by_name = {}
         Func.names_by_parameter = {}
-        Func.is_disabled = False
+        Func.is_disabled = 'DYNAMAKE_DISABLE' in os.environ
         Func._is_finalized = False
         Func.collect_indirect_invocations = True
 
