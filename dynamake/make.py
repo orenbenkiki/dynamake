@@ -371,9 +371,6 @@ class PersistentAction:
     """
 
     def __init__(self, previous: Optional['PersistentAction'] = None) -> None:
-        #: The kind of command ('phony', 'shell' or 'spawn').
-        self.kind: str = 'phony'
-
         #: The executed command.
         self.command: Optional[List[str]] = None
 
@@ -395,13 +392,11 @@ class PersistentAction:
         """
         self.required[path] = up_to_date
 
-    def run_action(self, kind: str, command: List[str]) -> None:
+    def run_action(self, command: List[str]) -> None:
         """
         Set the executed command of the action.
         """
-        assert kind in ['shell', 'spawn']
         self.command = [word for word in command if not dp.is_phony(word)]
-        self.kind = kind
         self.start = datetime.now()
 
     def done_action(self) -> None:
@@ -414,7 +409,7 @@ class PersistentAction:
         """
         Whether this action has any additional information over its predecessor.
         """
-        return self.kind == 'phony' and not self.required
+        return self.command is None and not self.required
 
     def into_data(self) -> List[Dict[str, Any]]:
         """
@@ -428,13 +423,13 @@ class PersistentAction:
         datum: Dict[str, Any] = dict(required={name: up_to_date.into_data()
                                                for name, up_to_date in self.required.items()})
 
-        if self.kind == 'phony':
+        if self.command is None:
             assert self.start is None
             assert self.end is None
         else:
             assert self.start is not None
             assert self.end is not None
-            datum[self.kind] = self.command
+            datum['command'] = self.command
             datum['start'] = str(self.start)
             datum['end'] = str(self.end)
 
@@ -463,12 +458,8 @@ class PersistentAction:
         action.required = {name: UpToDate.from_data(up_to_date)
                            for name, up_to_date in datum['required'].items()}
 
-        for kind in ['shell', 'spawn']:
-            if kind in datum:
-                action.kind = kind
-
-        if action.kind != 'phony':
-            action.command = datum[action.kind]
+        if 'command' in datum:
+            action.command = datum['command']
             action.start = _datetime_from_str(datum['start'])
             action.end = _datetime_from_str(datum['end'])
 
@@ -640,21 +631,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         #: The persistent configuration for the step.
         self.file_config_values: Dict[str, Any] = {}
 
-        self._compute_config_values()
-
-    def _compute_config_values(self) -> None:
-        if self.step is None:
-            return
-        assert 'step' not in self.kwargs
-        full_context = self.kwargs.copy()
-        full_context.update(self.context)
-        full_context['step'] = self.step.name()
-        self.file_config_values = Config.values_for_context(full_context)
-        self.full_config_values = {}
-        for name, value in self.file_config_values.items():
-            if name[-1] == '?':
-                name = name[:-1]
-            self.full_config_values[name] = value
+        #: Whether we computed the configuration.
+        self.computed_configuration = False
 
     def _restart(self) -> None:
         if self.parent is None:
@@ -681,7 +659,33 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         assert self.should_remove_stale_outputs == Make.remove_stale_outputs
 
         self.config_path = None
-        self._compute_config_values()
+        self.full_config_values = {}
+        self.file_config_values = {}
+        self.computed_configuration = False
+
+    def _compute_config_values(self) -> None:
+        if self.computed_configuration or self.step is None:
+            return
+        assert 'step' not in self.kwargs
+
+        full_context = self.kwargs.copy()
+        full_context.update(self.context)
+        full_context['step'] = self.step.name()
+
+        self.file_config_values = Config.values_for_context(full_context)
+        self.full_config_values = {}
+
+        for name, value in self.file_config_values.items():
+            if name[-1] == '?':
+                name = name[:-1]
+            self.full_config_values[name] = value
+
+        for name in ['run_prefix', 'run_suffix']:
+            for key in [name, name + '?']:
+                if key in self.file_config_values:
+                    del self.file_config_values[key]
+
+        self.computed_configuration = True
 
     def _verify_no_loop(self) -> None:
         call_chain = [self.name]
@@ -726,11 +730,6 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.actions.yaml')
         if os.path.exists(path):
             Prog.logger.debug('%s - Remove the persistent actions: %s', self._log, path)
-            os.remove(path)
-
-        path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.config.yaml')
-        if os.path.exists(path):
-            Prog.logger.debug('%s - Remove the persistent configuration: %s', self._log, path)
             os.remove(path)
 
         if '/' not in self.name:
@@ -1118,7 +1117,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             if self.should_remove_stale_outputs and not is_precious(path):
                 Prog.logger.debug('%s - Remove the stale output: %s', self._log, path)
                 self.remove_output(path)
-            Stat.forget(path)
+            else:
+                Stat.forget(path)
 
         self.should_remove_stale_outputs = False
 
@@ -1126,14 +1126,14 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         Remove an output file, and possibly the directories that became empty as a result.
         """
-        Stat.remove(path)
-        while Make.remove_empty_directories:
-            path = os.path.dirname(path)
-            try:
+        try:
+            Stat.remove(path)
+            while Make.remove_empty_directories:
+                path = os.path.dirname(path)
                 Stat.rmdir(path)
                 Prog.logger.debug('%s - Remove the empty directory: %s', self._log, path)
-            except OSError:
-                return
+        except OSError:
+            pass
 
     def poison_all_outputs(self) -> None:
         """
@@ -1227,15 +1227,24 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         if self.different_required(old_action.required, new_action.required):
             return True
-        if old_action.kind != new_action.kind \
-                or old_action.command != new_action.command:
+
+        if old_action.command != new_action.command:
+            if old_action.command is None:
+                old_action_kind = 'a phony command'
+            else:
+                old_action_kind = 'the command: %s' % ' '.join(old_action.command)
+
+            if new_action.command is None:
+                new_action_kind = 'a phony command'
+            else:
+                new_action_kind = 'the command: %s' % ' '.join(new_action.command)
+
             Prog.logger.log(Make.WHY,
                             '%s - Must run actions '
-                            'because it has changed the %s command: %s into the %s command: %s',
-                            self._log,
-                            old_action.kind, ' '.join(old_action.command or 'none'),
-                            new_action.kind, ' '.join(new_action.command or 'none'))
+                            'because it has changed %s into %s',
+                            self._log, old_action_kind, new_action_kind)
             return True
+
         return False
 
     def different_required(self, old_required: Dict[str, UpToDate],
@@ -1320,7 +1329,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             raise self.exception
 
         if self.new_persistent_actions:
-            self.new_persistent_actions[-1].run_action(kind, persistent_parts)
+            self.new_persistent_actions[-1].run_action(persistent_parts)
 
         if not self.should_run_action():
             if Make.log_skipped_actions and not is_silent:
@@ -1499,7 +1508,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         affect the internals of the build step, the resulting actions will not be triggered unless
         they actually changed as well.
         """
+        self._compute_config_values()
         value = self.full_config_values.get(name, default)
+
         if is_required and value is None:
             self.log_and_abort('%s - No value for the step configuration parameter: %s'
                                % (self._log, name))
@@ -1511,48 +1522,70 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         return value
 
-    def config_file(self) -> str:
+    def config_file(self) -> Optional[str]:
         """
         Use the step-specific configuration file in the following step action(s).
         """
         if self.config_path is not None:
-            return self.config_path
+            return self.config_path or None
+        self._compute_config_values()
 
-        new_config_text = yaml.dump(self.file_config_values)
-
-        self.config_path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.config.yaml')
-
-        if not os.path.exists(self.config_path):
-            Prog.logger.log(Make.WHY,
-                            '%s - Must run actions '
-                            'because creating the missing persistent configuration: %s',
-                            self._log, self.config_path)
+        if self.file_config_values:
+            new_config_text = yaml.dump(self.file_config_values)
         else:
-            with open(self.config_path, 'r') as file:
+            new_config_text = ''
+
+        config_path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.config.yaml')
+
+        if not new_config_text:
+            self.config_path = ''
+            if os.path.exists(config_path):
+                Prog.logger.log(Make.WHY,
+                                '%s - Must run actions '
+                                'because removing the unused persistent configuration: %s',
+                                self._log, config_path)
+
+                self.must_run_action = True
+                Stat.remove(config_path)
+            else:
+                Prog.logger.debug('%s - No need for a persistent configuration: %s',
+                                  self._log, config_path)
+            return None
+
+        self.config_path = config_path
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as file:
                 old_config_text = file.read()
             if new_config_text == old_config_text:
                 Prog.logger.debug('%s - Use the same persistent configuration: %s',
-                                  self._log, self.config_path)
+                                  self._log, config_path)
                 return self.config_path
 
             Prog.logger.log(Make.WHY,
                             '%s - Must run actions '
                             'because changed the persistent configuration: %s',
-                            self._log, self.config_path)
+                            self._log, config_path)
             Prog.logger.debug('%s - From the old persistent configuration:\n%s',
                               self._log, old_config_text)
             Prog.logger.debug('%s - To the new persistent configuration:\n%s',
                               self._log, new_config_text)
+        else:
+            Prog.logger.log(Make.WHY,
+                            '%s - Must run actions '
+                            'because creating the missing persistent configuration: %s',
+                            self._log, config_path)
 
         self.must_run_action = True
-        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-        with open(self.config_path, 'w') as file:
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        with open(config_path, 'w') as file:
             file.write(new_config_text)
         return self.config_path
 
     def _verify_used_config(self) -> None:
         if self.config_path is not None:
             return
+        self._compute_config_values()
+
         unused_parameters = \
             sorted([name for name in self.file_config_values if not name.endswith('?')])
         if unused_parameters:
@@ -1806,7 +1839,7 @@ def config_param(name: str, default: Any = None,
                                            is_required=is_required)
 
 
-def config_file() -> str:
+def config_file() -> Optional[str]:
     """
     Use the step-specific configuration file in the following step action(s).
     """

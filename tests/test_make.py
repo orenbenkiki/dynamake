@@ -1730,7 +1730,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - No inputs'),
             ('dynamake', 'WHY',
              '#1 - make_all - Must run actions because it has changed '
-             'the shell command: true into the shell command: touch all'),
+             'the command: true into the command: touch all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Remove the stale output: all'),
             ('dynamake', 'INFO', '#1 - make_all - Run: touch all'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
@@ -2280,7 +2280,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - No inputs'),
             ('dynamake', 'WHY',
              '#1 - make_all - Must run actions because it has changed '
-             'the shell command: echo 0 > all into the shell command: echo 1 > all'),
+             'the command: echo 0 > all into the command: echo 1 > all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Remove the stale output: all'),
             ('dynamake', 'INFO', '#1 - make_all - Run: echo 1 > all'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
@@ -2313,7 +2313,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - No inputs'),
             ('dynamake', 'WHY',
              '#1 - make_all - Must run actions because it has changed '
-             'the shell command: echo 1 > all into the shell command: echo 2 > all'),
+             'the command: echo 1 > all into the command: echo 2 > all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Remove the stale output: all'),
             ('dynamake', 'INFO', '#1 - make_all - Run: echo 2 > all'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
@@ -2364,7 +2364,7 @@ class TestMain(TestWithFiles):
             @step(output='all')
             async def make_all() -> None:  # pylint: disable=unused-variable
                 config_file()
-                await shell('echo', config_file(), '> all')
+                await shell('echo', config_file() or 'None', '> all')
 
         sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
@@ -2376,14 +2376,15 @@ class TestMain(TestWithFiles):
              '#0 - make - The required: all will be produced by the spawned: #1 - make_all'),
             ('dynamake', 'TRACE', '#1 - make_all - Call'),
             ('dynamake', 'DEBUG', '#1 - make_all - Nonexistent required output(s): all'),
-            ('dynamake', 'WHY',
-             '#1 - make_all - Must run actions because creating '
-             'the missing persistent configuration: .dynamake/make_all.config.yaml'),
+            ('dynamake', 'DEBUG',
+             '#1 - make_all - No need for a persistent configuration: '
+             '.dynamake/make_all.config.yaml'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'INFO', '#1 - make_all - Run: echo .dynamake/make_all.config.yaml > all'),
+            ('dynamake', 'WHY',
+             '#1 - make_all - Must run actions to create the missing output(s): all'),
+            ('dynamake', 'INFO', '#1 - make_all - Run: echo None > all'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'TRACE',
-             '#1 - make_all - Success: echo .dynamake/make_all.config.yaml > all'),
+            ('dynamake', 'TRACE', '#1 - make_all - Success: echo None > all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 1'),
             ('dynamake', 'TRACE', '#1 - make_all - Done'),
@@ -2392,7 +2393,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#0 - make - Done'),
         ])
 
-        self.expect_file('.dynamake/make_all.config.yaml', '{}\n')
+        self.expect_file('all', 'None\n')
 
         write_file('DynaMake.yaml', '- { when: { step: make_all }, then: { foo: 1 } }\n')
         write_file('conf.yaml', '- { when: { step: make_all }, then: { foo: 2 } }\n')
@@ -2401,19 +2402,19 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
             ('dynamake', 'DEBUG', '#0 - make - Build the required: all'),
             ('dynamake', 'DEBUG',
-             '#0 - make - The required: all will be produced by the spawned: #1 - make_all'),
+             '#0 - make - The required: all will be produced by the spawned: #1 - '
+             'make_all'),
             ('dynamake', 'TRACE', '#1 - make_all - Call'),
             ('dynamake', 'DEBUG', '#1 - make_all - Existing output: all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Oldest output: all time: 1'),
             ('dynamake', 'WHY',
-             '#1 - make_all - Must run actions because changed '
-             'the persistent configuration: .dynamake/make_all.config.yaml'),
-            ('dynamake', 'DEBUG', '#1 - make_all - From the old persistent configuration:\n{}\n'),
-            ('dynamake', 'DEBUG', '#1 - make_all - To the new persistent configuration:\nfoo: 1\n'),
+             '#1 - make_all - Must run actions because creating the missing persistent '
+             'configuration: .dynamake/make_all.config.yaml'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'DEBUG', '#1 - make_all - No inputs'),
             ('dynamake', 'DEBUG', '#1 - make_all - Remove the stale output: all'),
-            ('dynamake', 'INFO', '#1 - make_all - Run: echo .dynamake/make_all.config.yaml > all'),
+            ('dynamake', 'INFO',
+             '#1 - make_all - Run: echo .dynamake/make_all.config.yaml > all'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'TRACE',
              '#1 - make_all - Success: echo .dynamake/make_all.config.yaml > all'),
