@@ -1391,8 +1391,8 @@ class Stat:
         """
         Remove an empty directory.
         """
-        os.rmdir(path)
         Stat.forget(path)
+        os.rmdir(path)
 
     @staticmethod
     def remove(path: str) -> None:
@@ -1400,26 +1400,27 @@ class Stat:
         Force remove of a file or a directory.
         """
         if Stat.isfile(path):
+            Stat.forget(path)
             os.remove(path)
         elif Stat.exists(path):
+            Stat.forget(path)
             shutil.rmtree(path)
-        Stat.forget(path)
 
     @staticmethod
     def touch(path: str) -> None:
         """
         Set the last modified time of a file (or a directory) to now.
         """
-        os.utime(path)
         Stat.forget(path)
+        os.utime(path)
 
     @staticmethod
     def mkdir_create(path: str) -> None:
         """
         Create a new directory.
         """
-        os.makedirs(path, exist_ok=False)
         Stat.forget(path)
+        os.makedirs(path, exist_ok=False)
 
     @staticmethod
     def mkdir_exists(path: str) -> None:
@@ -1427,8 +1428,8 @@ class Stat:
         Ensure a directory exists.
         """
         if not Stat.exists(path):
-            os.makedirs(path, exist_ok=True)
             Stat.forget(path)
+            os.makedirs(path, exist_ok=True)
 
 
 Stat.reset()

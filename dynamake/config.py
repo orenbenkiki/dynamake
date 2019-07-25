@@ -6,6 +6,7 @@ from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Union
 from typing.re import Pattern  # type: ignore # pylint: disable=import-error
 
 import yaml
@@ -34,7 +35,7 @@ class Rule:  # pylint: disable=too-few-public-methods
         #: The parameter values provided by the rule.
         self.then = then
 
-    _BUILTINS = ['step']
+    _BUILTINS = ['step', 'context']
 
     def is_match(self, context: Dict[str, Any]) -> bool:
         """
@@ -68,11 +69,24 @@ class Rule:  # pylint: disable=too-few-public-methods
         return True
 
     def _key_is_match(self, key: str, condition: Any, context: Dict[str, Any]) -> bool:
+        if key == 'context':
+            return Rule._match_context(condition, context)
+
         if key.startswith('lambda '):
             return self._match_lambda(key[7:],  # pylint: disable=protected-access
                                       condition, context)
+
         parameter_name = self._parameter_name(key, context)
         return parameter_name is not None and Rule._match_value(context[parameter_name], condition)
+
+    @staticmethod
+    def _match_context(required_parameters: Union[str, List[str]], context: Dict[str, Any]) -> bool:
+        if isinstance(required_parameters, str):
+            required_parameters = [required_parameters]
+        for parameter in required_parameters:
+            if parameter not in context:
+                return False
+        return True
 
     def _match_lambda(self, arguments: str, condition: str, context: Dict[str, Any]) -> bool:
         parameter_values: Dict[str, Any] = {}

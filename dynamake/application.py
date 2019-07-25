@@ -198,6 +198,11 @@ class Func:  # pylint: disable=too-many-instance-attributes
         """
         Collect a configurable function.
         """
+        configurable = Func(wrapped, is_top=is_top, is_random=is_random)
+
+        if Func.is_disabled:
+            return configurable
+
         if is_random and 'random_seed' not in Prog.parameters:
             Param(name='random_seed', metavar='INT', default=123456, parser=str2int(min=0),
                   description="""
@@ -206,20 +211,17 @@ class Func:  # pylint: disable=too-many-instance-attributes
                 an unrepeatable execution.
             """)
 
-        configurable = Func(wrapped, is_top=is_top, is_random=is_random)
+        if configurable.name in Func.by_name:
+            function = configurable.wrapped
+            conflicting = Func.by_name[configurable.name].wrapped
+            raise RuntimeError('Conflicting definitions for the function: %s '
+                               'in both: %s.%s '
+                               'and: %s.%s'
+                               % (configurable.name,
+                                  conflicting.__module__, conflicting.__qualname__,
+                                  function.__module__, function.__qualname__))
 
-        if not Func.is_disabled:
-            if configurable.name in Func.by_name:
-                function = configurable.wrapped
-                conflicting = Func.by_name[configurable.name].wrapped
-                raise RuntimeError('Conflicting definitions for the function: %s '
-                                   'in both: %s.%s '
-                                   'and: %s.%s'
-                                   % (configurable.name,
-                                      conflicting.__module__, conflicting.__qualname__,
-                                      function.__module__, function.__qualname__))
-
-            Func.by_name[configurable.name] = configurable
+        Func.by_name[configurable.name] = configurable
 
         return configurable
 
@@ -700,17 +702,12 @@ class Prog:
                     raise RuntimeError('Invalid value: %s for the parameter: %s'
                                        % (vars(args)[name], name))
 
-        random_seed = Prog.parameter_values.get('random_seed')
-        if random_seed is not None:
-            if random_seed == 0:
-                random_seed = int(time.monotonic() * 1_000_000_000)
-                Prog.parameter_values['random_seed'] = random_seed
-                Prog.logger.info('Using time based random seed: %s', random_seed)
-            random.seed(random_seed)
-
         name = sys.argv[0].split('/')[-1]
         if 'command' in vars(args):
             name += ' ' + args.command
+            if not Func.by_name[args.command].is_random and 'random_seed' in Prog.parameters:
+                del Prog.parameter_values['random_seed']
+                del Prog.parameters['random_seed']
 
         handler = logging.StreamHandler(sys.stderr)
         log_format = '%(asctime)s - ' + name
@@ -727,6 +724,16 @@ class Prog:
             Prog.logger.addHandler(handler)
 
         Prog.logger.setLevel(Prog.get_parameter('log_level'))
+
+        random_seed = Prog.parameter_values.get('random_seed')
+        if random_seed is not None:
+            if random_seed == 0:
+                random_seed = int(time.monotonic() * 1_000_000_000)
+                Prog.parameter_values['random_seed'] = random_seed
+                Prog.logger.info('Using time based random seed: %s', random_seed)
+            else:
+                Prog.logger.info('Using random seed: %s', random_seed)
+                random.seed(random_seed)
 
     @staticmethod
     def call_with_args(args: Namespace) -> Any:
@@ -884,6 +891,7 @@ class Parallel:
                 on_parallel_call()
             random_seed = Prog.parameter_values.get('random_seed')
             if random_seed is not None:
+                Prog.logger.debug('Using random seed: %s', random_seed)
                 random.seed(random_seed)
             return Parallel._function(*Parallel._fixed_args,
                                       **Parallel._fixed_kwargs,
