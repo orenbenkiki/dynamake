@@ -4,15 +4,16 @@ Test the make utilities.
 
 # pylint: disable=too-many-lines
 
+from dynamake.make import config_context
 from dynamake.make import config_file
 from dynamake.make import config_param
-from dynamake.make import context
 from dynamake.make import done
 from dynamake.make import env
 from dynamake.make import make
 from dynamake.make import override
 from dynamake.make import Param
 from dynamake.make import require
+from dynamake.make import require_context
 from dynamake.make import reset_make
 from dynamake.make import resource_parameters
 from dynamake.make import run
@@ -2724,22 +2725,120 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
         ])
 
-    def test_context(self) -> None:
+    def test_config_context(self) -> None:
+        def _register() -> None:
+            @step(output='foo')
+            async def make_foo() -> None:  # pylint: disable=unused-variable
+                assert 'foo' not in require_context()
+                with config_context(foo=True):
+                    await _write('foo')
+
+            @step(output='bar')
+            async def make_bar() -> None:  # pylint: disable=unused-variable
+                assert 'foo' not in require_context()
+                with config_context(foo=False):
+                    await _write('bar')
+
+            @step(output='baz')
+            async def make_baz() -> None:  # pylint: disable=unused-variable
+                assert 'foo' not in require_context()
+                await _write('baz')
+
+            async def _write(path: str) -> None:
+                bar = config_param('bar', False)
+                await shell('echo %s > %s' % (bar, path))
+
+            @step(output=phony('all'))
+            async def make_all() -> None:  # pylint: disable=unused-variable
+                require('foo')
+                require('bar')
+                require('baz')
+
+        write_file('DynaMake.yaml', """
+            - when: { context_contains: foo, foo: True }
+              then: { bar: True }
+        """)
+
+        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--rebuild_changed_actions', 'false']
+
+        self.check(_register, log=[
+            ('dynamake', 'TRACE', '#0 - make - Targets: all'),
+            ('dynamake', 'DEBUG', '#0 - make - Build the required: all'),
+            ('dynamake', 'DEBUG',
+             '#0 - make - The required: all will be produced by the spawned: #1 - make_all'),
+            ('dynamake', 'TRACE', '#1 - make_all - Call'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Build the required: foo'),
+            ('dynamake', 'DEBUG',
+             '#1 - make_all - The required: foo will be produced by the spawned: #1.1 - make_foo'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Build the required: bar'),
+            ('dynamake', 'DEBUG',
+             '#1 - make_all - The required: bar will be produced by the spawned: #1.2 - make_bar'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Build the required: baz'),
+            ('dynamake', 'DEBUG',
+             '#1 - make_all - The required: baz will be produced by the spawned: #1.3 - make_baz'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Sync'),
+            ('dynamake', 'DEBUG', '#0 - make - Sync'),
+            ('dynamake', 'TRACE', '#1.1 - make_foo - Call'),
+            ('dynamake', 'DEBUG', '#1.1 - make_foo - Nonexistent required output(s): foo'),
+            ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
+            ('dynamake', 'WHY',
+             '#1.1 - make_foo - Must run actions to create the missing output(s): foo'),
+            ('dynamake', 'INFO', '#1.1 - make_foo - Run: echo True > foo'),
+            ('dynamake', 'TRACE', '#1.2 - make_bar - Call'),
+            ('dynamake', 'DEBUG', '#1.2 - make_bar - Nonexistent required output(s): bar'),
+            ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
+            ('dynamake', 'WHY',
+             '#1.2 - make_bar - Must run actions to create the missing output(s): bar'),
+            ('dynamake', 'INFO', '#1.2 - make_bar - Run: echo False > bar'),
+            ('dynamake', 'TRACE', '#1.3 - make_baz - Call'),
+            ('dynamake', 'DEBUG', '#1.3 - make_baz - Nonexistent required output(s): baz'),
+            ('dynamake', 'DEBUG', '#1.3 - make_baz - Synced'),
+            ('dynamake', 'WHY',
+             '#1.3 - make_baz - Must run actions to create the missing output(s): baz'),
+            ('dynamake', 'INFO', '#1.3 - make_baz - Run: echo False > baz'),
+            ('dynamake', 'TRACE', '#1.1 - make_foo - Success: echo True > foo'),
+            ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
+            ('dynamake', 'DEBUG', '#1.1 - make_foo - Has the output: foo time: 1'),
+            ('dynamake', 'TRACE', '#1.1 - make_foo - Done'),
+            ('dynamake', 'TRACE', '#1.2 - make_bar - Success: echo False > bar'),
+            ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
+            ('dynamake', 'DEBUG', '#1.2 - make_bar - Has the output: bar time: 2'),
+            ('dynamake', 'TRACE', '#1.2 - make_bar - Done'),
+            ('dynamake', 'TRACE', '#1.3 - make_baz - Success: echo False > baz'),
+            ('dynamake', 'DEBUG', '#1.3 - make_baz - Synced'),
+            ('dynamake', 'DEBUG', '#1.3 - make_baz - Has the output: baz time: 3'),
+            ('dynamake', 'TRACE', '#1.3 - make_baz - Done'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Has the required: bar'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Has the required: baz'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Has the required: foo'),
+            ('dynamake', 'TRACE', '#1 - make_all - Complete'),
+            ('dynamake', 'DEBUG', '#0 - make - Synced'),
+            ('dynamake', 'DEBUG', '#0 - make - Has the required: all'),
+            ('dynamake', 'TRACE', '#0 - make - Done'),
+        ])
+
+        self.expect_file('foo', 'True\n')
+        self.expect_file('bar', 'False\n')
+        self.expect_file('baz', 'False\n')
+
+    def test_require_context(self) -> None:
         def _register() -> None:
             @step(output='foo')
             async def make_foo() -> None:  # pylint: disable=unused-variable
                 await done(asyncio.sleep(0.2))
-                await shell('echo', context()['foo'], '> foo')
+                await shell('echo', require_context()['foo'], '> foo')
 
             @step(output='bar')
             async def make_bar() -> None:  # pylint: disable=unused-variable
-                context()['foo'] = 'bar'
+                require_context()['foo'] = 'bar'
                 require('foo')
                 await shell('touch bar')
 
             @step(output='baz')
             async def make_baz() -> None:  # pylint: disable=unused-variable
-                context()['foo'] = 'baz'
+                require_context()['foo'] = 'baz'
                 require('foo')
                 await shell('touch baz')
 

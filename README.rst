@@ -752,7 +752,9 @@ The usage pattern of the library is as follows:
 
 * Some parameters are already defined and managed for you, such as ``log_level`` to control logging
   and ``random_seed`` to control the random number generation. The latter is only added if you
-  specify ``random=True`` when invoking ``config``.
+  specify ``random=True`` when invoking ``config``. Similarly, ``jobs`` controls the number of
+  processors used in parallel, and is only added if you specify ``parallel=True`` when invoking
+  ``config``.
 
 .. note::
 
