@@ -106,7 +106,8 @@ class Func:  # pylint: disable=too-many-instance-attributes
         Func._is_finalized = False
         Func.collect_indirect_invocations = True
 
-    def __init__(self, wrapped: Callable, *, is_top: bool, is_random: bool) -> None:
+    def __init__(self, wrapped: Callable, *,
+                 is_top: bool, is_random: bool, is_parallel: bool) -> None:
         """
         Register a configurable function.
         """
@@ -125,6 +126,9 @@ class Func:  # pylint: disable=too-many-instance-attributes
 
         #: Whether this function uses random numbers.
         self.is_random = is_random
+
+        #: Whether this function uses multiple processors.
+        self.is_parallel = is_parallel
 
         #: The name used to locate the function.
         self.name = function.__name__
@@ -194,11 +198,11 @@ class Func:  # pylint: disable=too-many-instance-attributes
         return kwargs
 
     @staticmethod
-    def collect(wrapped: Callable, *, is_top: bool, is_random: bool) -> 'Func':
+    def collect(wrapped: Callable, *, is_top: bool, is_random: bool, is_parallel: bool) -> 'Func':
         """
         Collect a configurable function.
         """
-        configurable = Func(wrapped, is_top=is_top, is_random=is_random)
+        configurable = Func(wrapped, is_top=is_top, is_random=is_random, is_parallel=is_parallel)
 
         if Func.is_disabled:
             return configurable
@@ -210,6 +214,28 @@ class Func:  # pylint: disable=too-many-instance-attributes
                 results. If this is zero then the current time will be used, which results in
                 an unrepeatable execution.
             """)
+
+        if is_parallel and 'jobs' not in Prog.parameters:
+            default_jobs: Optional[int] = 0
+            dynamake_jobs = os.getenv('DYNAMAKE_JOBS')
+            if dynamake_jobs is not None:
+                if not dynamake_jobs:
+                    default_jobs = None
+                else:
+                    try:
+                        from_env = int(dynamake_jobs)
+                    except ValueError:
+                        from_env = -1
+                    if from_env < 0:
+                        Prog.logger.warn('Ignoring invalid value: %s for: DYNAMAKE_JOBS'
+                                         % dynamake_jobs)
+                    else:
+                        default_jobs = from_env
+
+            Param(name='jobs', short='j', metavar='INT?', default=default_jobs,
+                  parser=str2optional(str2int(min=0)),
+                  description='Optional maximal number of parallel threads and/or processes; '
+                              'Zero is the number of CPUs, none is unlimited')
 
         if configurable.name in Func.by_name:
             function = configurable.wrapped
@@ -252,6 +278,8 @@ class Func:  # pylint: disable=too-many-instance-attributes
                     continue
                 if called.is_random:
                     caller.is_random = True
+                if called.is_parallel:
+                    caller.is_parallel = True
                 called.invoker_function_names.add(caller_name)
                 invoked_function_names.add(called_name)
 
@@ -345,7 +373,7 @@ def _invoked_names(function: Callable) -> Set[str]:
     return collector.names()
 
 
-def config(*, random: bool = False,  # pylint: disable=redefined-outer-name
+def config(*, random: bool = False, parallel: bool = False,  # pylint: disable=redefined-outer-name
            top: bool = False) -> Callable[[Callable], Callable]:
     """
     Decorator for configurable functions.
@@ -355,9 +383,12 @@ def config(*, random: bool = False,  # pylint: disable=redefined-outer-name
 
     If ``random`` is ``True``, the code uses random numbers. This activates the implicit
     ``random_seed`` parameter.
+
+    If ``parallel`` is ``True``, the codes invokes the :py:func:`dynamake.application.parallel`
+    function to use multiple processors. This activates the implicit ``jobs`` parameter.
     """
     def _wrap(wrapped: Callable) -> Callable:
-        return Func.collect(wrapped, is_top=top, is_random=random).wrapper
+        return Func.collect(wrapped, is_top=top, is_random=random, is_parallel=parallel).wrapper
     return _wrap
 
 
@@ -592,7 +623,8 @@ class Prog:
             Prog.add_sorted_parameters(command_parser,
                                        predicate=lambda name, func=func:  # type: ignore
                                        name in func.indirect_parameter_names
-                                       or func.is_random and name == 'random_seed')
+                                       or (func.is_random and name == 'random_seed')
+                                       or (func.is_parallel and name == 'jobs'))
 
         if not verify_reachability:
             return
@@ -686,7 +718,7 @@ class Prog:
         Prog._parse_args(args)  # pylint: disable=protected-access
 
     @staticmethod
-    def _parse_args(args: Namespace) -> None:
+    def _parse_args(args: Namespace) -> None:  # pylint: disable=too-many-branches
         if Prog.DEFAULT_CONFIG is not None and os.path.exists(Prog.DEFAULT_CONFIG):
             Prog.load_config(Prog.DEFAULT_CONFIG)
         for path in (args.config or []):
@@ -708,6 +740,9 @@ class Prog:
             if not Func.by_name[args.command].is_random and 'random_seed' in Prog.parameters:
                 del Prog.parameter_values['random_seed']
                 del Prog.parameters['random_seed']
+            if not Func.by_name[args.command].is_parallel and 'jobs' in Prog.parameters:
+                del Prog.parameter_values['jobs']
+                del Prog.parameters['jobs']
 
         handler = logging.StreamHandler(sys.stderr)
         log_format = '%(asctime)s - ' + name
@@ -934,6 +969,7 @@ def parallel(invocations: int, function: Callable, *fixed_args: Any,
     List[Any]
         The list of results from all the function invocations, in order.
     """
+    assert 'jobs' in Prog.parameters
     if invocations == 0:
         return []
     return Parallel._calls(invocations, function,  # pylint: disable=protected-access
@@ -948,6 +984,7 @@ def serial(*args: Any, **kwargs: Any) -> List[Any]:
     This is useful when one wants to temporarily convert a parallel call to a serial call,
     for debugging.
     """
+    assert 'jobs' in Prog.parameters
     with override(jobs=1):
         return parallel(*args, **kwargs)
 
@@ -983,32 +1020,12 @@ def override(**values: Any) -> Iterator[None]:
 
 
 def _define_parameters() -> None:
-    default_jobs: Optional[int] = 0
-    dynamake_jobs = os.getenv('DYNAMAKE_JOBS')
-    if dynamake_jobs is not None:
-        if not dynamake_jobs:
-            default_jobs = None
-        else:
-            try:
-                from_env = int(dynamake_jobs)
-            except ValueError:
-                from_env = -1
-            if from_env < 0:
-                Prog.logger.warn('Ignoring invalid value: %s for: DYNAMAKE_JOBS' % dynamake_jobs)
-            else:
-                default_jobs = from_env
-
     Param(name='log_level', short='ll', metavar='STR', default='WARN',
           parser=str, group='global options', description='The log level to use')
 
     Param(name='log_context', short='lc', metavar='STR', default=None,
           parser=str, group='global options',
           description='Optional context to include in log messages')
-
-    Param(name='jobs', short='j', metavar='INT?', default=default_jobs,
-          parser=str2optional(str2int(min=0)), group='global options',
-          description='Optional maximal number of parallel threads and/or processes;'
-          'Zero is the number of CPUs, none is unlimited')
 
 
 def processes_for(tasks: int) -> int:
@@ -1021,6 +1038,7 @@ def processes_for(tasks: int) -> int:
 
     If ``tasks`` is zero, returns the maximal number of processes (zero for unlimited).
     """
+    assert 'jobs' in Prog.parameters
     assert tasks >= 0
 
     processes_count = Prog.get_parameter('jobs')

@@ -442,7 +442,7 @@ class TestUniversalMain(TestWithFiles):
         def _roll() -> float:
             return random.random()
 
-        @config(top=True)
+        @config(top=True, parallel=True)
         def top() -> None:  # pylint: disable=unused-variable
             results = parallel(2, _roll)
             print(sorted(results))

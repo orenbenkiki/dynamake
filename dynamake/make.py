@@ -309,7 +309,7 @@ class Step:
         """
         Collect a build step function.
         """
-        func = Func.collect(wrapped, is_top=False, is_random=False)
+        func = Func.collect(wrapped, is_top=False, is_random=False, is_parallel=False)
         if not iscoroutinefunction(func.wrapped):
             raise RuntimeError('The step function: %s.%s is not a coroutine'
                                % (func.wrapped.__module__, func.wrapped.__qualname__))
@@ -545,15 +545,19 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             #: A short unique stack to identify invocations in the log.
             self.stack: str = '#0'
 
-            #: Context for formatting action wrappers (run prefix and suffix).
-            self.context: Dict[str, Any] = {}
+            #: Context for nested control over configuration parameters.
+            self.require_context: Dict[str, Any] = {}
         else:
             self.parent.sub_count += 1
             if self.parent.stack == '#0':
                 self.stack = '#%s' % self.parent.sub_count
             else:
                 self.stack = '%s.%s' % (self.parent.stack, self.parent.sub_count)
-            self.context = self.parent.context.copy()
+
+            self.require_context = self.parent.require_context.copy()
+
+        #: Context for local control over configuration parameters.
+        self.config_context: Dict[str, Any] = {}
 
         if Prog._is_test:  # pylint: disable=protected-access
             self._log = self.stack + ' - ' + self.name
@@ -631,14 +635,19 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         #: The persistent configuration for the step.
         self.file_config_values: Dict[str, Any] = {}
 
+        #: The configuration value(s) that were used by the step (so far).
+        self.used_config_params: Set[str] = set()
+
         #: Whether we computed the configuration.
         self.computed_configuration = False
 
     def _restart(self) -> None:
         if self.parent is None:
-            self.context = {}
+            self.require_context = {}
         else:
-            self.context = self.parent.context.copy()
+            self.require_context = self.parent.require_context.copy()
+
+        self.config_context = {}
 
         self.required = []
         self.newest_input_path = None
@@ -661,6 +670,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         self.config_path = None
         self.full_config_values = {}
         self.file_config_values = {}
+        self.used_config_params = set()
         self.computed_configuration = False
 
     def _compute_config_values(self) -> None:
@@ -669,7 +679,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         assert 'step' not in self.kwargs
 
         full_context = self.kwargs.copy()
-        full_context.update(self.context)
+        full_context.update(self.require_context)
+        full_context.update(self.config_context)
         full_context['step'] = self.step.name()
 
         self.file_config_values = Config.values_for_context(full_context)
@@ -1520,6 +1531,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 if name_in_file in self.file_config_values:
                     del self.file_config_values[name_in_file]
 
+        self.used_config_params.add(name)
+
         return value
 
     def config_file(self) -> Optional[str]:
@@ -1530,10 +1543,14 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             return self.config_path or None
         self._compute_config_values()
 
-        if self.file_config_values:
-            new_config_text = yaml.dump(self.file_config_values)
-        else:
+        if not self.file_config_values:
             new_config_text = ''
+        else:
+            new_config_text = yaml.dump(self.file_config_values)
+            for name in self.file_config_values:
+                if name.endswith('?'):
+                    name = name[:-1]
+                self.used_config_params.add(name)
 
         config_path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.config.yaml')
 
@@ -1582,15 +1599,14 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         return self.config_path
 
     def _verify_used_config(self) -> None:
-        if self.config_path is not None:
-            return
         self._compute_config_values()
 
-        unused_parameters = \
-            sorted([name for name in self.file_config_values if not name.endswith('?')])
-        if unused_parameters:
+        unused_names = sorted([name
+                               for name in self.file_config_values
+                               if not name.endswith('?') and name not in self.used_config_params])
+        if unused_names:
             self.log_and_abort('%s - Unused step configuration parameter(s): %s'
-                               % (self._log, ', '.join(unused_parameters)))
+                               % (self._log, ', '.join(unused_names)))
 
     async def done(self, awaitable: Awaitable) -> Any:
         """
@@ -1780,7 +1796,13 @@ async def submit(*command: Strings, **resources: int) -> None:
     etc.
     """
     current = Invocation.current
-    current.context['action_id'] = Invocation.actions_count
+
+    full_context = current.kwargs.copy()
+    full_context.update(current.require_context)
+    full_context.update(current.config_context)
+    assert current.step is not None
+    full_context['step'] = current.step.name()
+    full_context['action_id'] = Invocation.actions_count
 
     prefix = current.config_param('run_prefix', [])
     suffix = current.config_param('run_suffix', [])
@@ -1798,9 +1820,9 @@ async def submit(*command: Strings, **resources: int) -> None:
         if not prefix[0].startswith('@'):
             prefix[0] = '@' + prefix[0]
 
-    prefix = [dp.phony(part.format(**current.context)) for part in dp.each_string(prefix)]
+    prefix = [dp.phony(part.format(**full_context)) for part in dp.each_string(prefix)]
     wrapped = [dp.copy_annotations(part, shlex.quote(part)) for part in parts]
-    suffix = [dp.phony(part.format(**current.context)) for part in dp.each_string(suffix)]
+    suffix = [dp.phony(part.format(**full_context)) for part in dp.each_string(suffix)]
 
     await shell(*prefix, *wrapped, *suffix, **resources)
 
@@ -1815,19 +1837,80 @@ async def esubmit(*templates: Strings, **resources: int) -> None:
     await submit(e(*templates), **resources)
 
 
-def context() -> Dict[str, Any]:
+def require_context() -> Dict[str, Any]:
     """
-    Access the context of the current build step.
+    Access the context used by steps for building required input files.
 
-    Modifications to this context will be visible in the context of steps invoked to create required
-    input files.
+    Modifications to this context will be visible in the configuration context of steps invoked to
+    create required input files.
 
     .. note::
 
-        If a required file was already built (or started to be built) for another step, then it will
-        use the original requiring step context.
+        Once a required file was already built to be used as an input for some step, then the
+        contexts specified by other steps (requiring the same file) will be silently ignored.
     """
-    return Invocation.current.context
+    return Invocation.current.require_context
+
+
+@contextmanager
+def config_context(**values: Any) -> Iterator[None]:
+    """
+    Provide additional context information for computing configuration parameters.
+
+    Writing:
+
+    .. code-block:: python
+
+        with config_context(foo=value):
+            bar = config_param('baz')
+            call(...)
+
+    Will (re)compute the configuration parameters, taking into account the specified context
+    parameters. The configuration parameters can be queried as usual:
+
+    .. code-block:: yaml
+
+        - when: { foo: value }
+          then: { ... }
+
+    However, this will fail when trying to match steps when ``foo`` does not appear in the context.
+    Avoid this by further restricting the ``when`` clause, either by adding a ``step`` constraint,
+    or by testing that ``foo`` does appear in the context:
+
+    .. code-block:: yaml
+
+        - when: { context_contains: foo, foo: value }
+          then: { ... }
+
+    .. note::
+
+        The path of the :py:func:`dynamake.make.config_file` is **not** affected by the context,
+        even though the content of the file **is** affected. Therefore, do **not** invoke
+        ``config_file`` both inside and outside a ``config_context`` block in the same step.
+
+        Similarly, the contexts of steps invoked to build required input file(s) are
+        **not** affected by the ``config_context``. It only affects the current step.
+    """
+    old_config_context = Invocation.current.config_context.copy()
+    old_config_path = Invocation.current.config_path
+    old_full_config_values = Invocation.current.full_config_values
+    old_file_config_values = Invocation.current.file_config_values
+    old_computed_configuration = Invocation.current.computed_configuration
+
+    Invocation.current.config_context.update(values)
+    Invocation.current.config_path = None
+    Invocation.current.full_config_values = {}
+    Invocation.current.file_config_values = {}
+    Invocation.current.computed_configuration = False
+
+    try:
+        yield None
+    finally:
+        Invocation.current.config_context = old_config_context
+        Invocation.current.config_path = old_config_path
+        Invocation.current.full_config_values = old_full_config_values
+        Invocation.current.file_config_values = old_file_config_values
+        Invocation.current.computed_configuration = old_computed_configuration
 
 
 def config_param(name: str, default: Any = None,
@@ -1884,7 +1967,7 @@ def _define_parameters() -> None:
           parser=dp.str2bool, group='global options',
           description='Whether to rebuild outputs if the actions have changed')
 
-    @config(top=True)
+    @config(top=True, parallel=True)
     def _use_parameters(  # pylint: disable=unused-argument,too-many-arguments
         failure_aborts_build: bool = env(),
         remove_stale_outputs: bool = env(),
@@ -2140,12 +2223,12 @@ def reset_make() -> None:
     reset_application()
     Prog.DEFAULT_MODULE = 'DynaMake'
     Prog.DEFAULT_CONFIG = 'DynaConf.yaml'
+    _define_parameters()
     Resources.reset()
     Make.reset()
     Config.reset()
     Invocation.reset()
     Step.reset()
-    _define_parameters()
 
 
 reset_make()

@@ -35,7 +35,7 @@ class Rule:  # pylint: disable=too-few-public-methods
         #: The parameter values provided by the rule.
         self.then = then
 
-    _BUILTINS = ['step', 'context']
+    _BUILTINS = ['step', 'context_contains']
 
     def is_match(self, context: Dict[str, Any]) -> bool:
         """
@@ -69,7 +69,7 @@ class Rule:  # pylint: disable=too-few-public-methods
         return True
 
     def _key_is_match(self, key: str, condition: Any, context: Dict[str, Any]) -> bool:
-        if key == 'context':
+        if key == 'context_contains':
             return Rule._match_context(condition, context)
 
         if key.startswith('lambda '):
