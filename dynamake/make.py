@@ -1837,6 +1837,13 @@ async def esubmit(*templates: Strings, **resources: int) -> None:
     await submit(e(*templates), **resources)
 
 
+def log_prefix() -> str:
+    """
+    The prefix for log messages.
+    """
+    return Invocation.current._log  # pylint: disable=protected-access
+
+
 def require_context() -> Dict[str, Any]:
     """
     Access the context used by steps for building required input files.
