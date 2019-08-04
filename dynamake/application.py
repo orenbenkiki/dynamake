@@ -1038,7 +1038,6 @@ def processes_for(tasks: int) -> int:
 
     If ``tasks`` is zero, returns the maximal number of processes (zero for unlimited).
     """
-    assert 'jobs' in Prog.parameters
     assert tasks >= 0
 
     processes_count = Prog.get_parameter('jobs')
