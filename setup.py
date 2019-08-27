@@ -8,8 +8,6 @@ import os
 import re
 import subprocess
 
-VERSION = '0.3'
-
 
 def readme():
     sphinx = re.compile(':py:[a-z]+:(`[^`]+`)')
@@ -23,17 +21,16 @@ def version_from_git():
     # PEP440 forbids placing the commit hash in the version number.
     # Counting the commits since the tag must therefore suffice to identify the commit.
     command = ['git', 'describe', '--tags']
-    results = subprocess.check_output(command).decode('utf8').split('-')
-    latest_tag = results[0]
-    commits_count_since_tag = results[1]
-    global VERSION
-    if latest_tag != VERSION:
-        print('WARNING: version updated from: %s to %s; you MUST `git tag %s` after commit!'
-              % (latest_tag, VERSION, VERSION))
-    version = '%s.%s' % (VERSION, commits_count_since_tag)
+    results = subprocess.check_output(command).decode('utf8').strip().split('-')
 
+    version = results[0]
+    if len(results) > 1:
+        version += '.' + results[1]
+
+    command = ['git', 'status', '--porcelain']
+    local_modifications = subprocess.check_output(command).strip()
     # Obey PEP440 so just add a `.dev0` suffix if this is not committed yet.
-    if len(results) > 2:
+    if local_modifications:
         version += '.dev0'
 
     with open('dynamake/version.py', 'w') as file:
