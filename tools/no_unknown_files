@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if hg status | grep '^[?!] '
+if git status --porcelain | grep '^.[M?]'
 then
     exit 1
 else

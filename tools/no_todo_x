@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if grep -iHn 'TODO''X' $(hg locate)
+if grep -iHn 'TODO''X' $(git ls-files)
 then
     exit 1
 else
