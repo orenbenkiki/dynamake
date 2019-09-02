@@ -2533,12 +2533,12 @@ class TestMain(TestWithFiles):
             @step(output=phony('all'))
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
-                await done(asyncio.sleep(0.1))
+                await done(asyncio.sleep(1))
                 require('bar')
 
             @step(output='foo')
             async def make_foo() -> None:  # pylint: disable=unused-variable
-                await shell('sleep 0.2 ; touch foo')
+                await shell('sleep 2 ; touch foo')
 
             @step(output='bar')
             async def make_bar() -> None:  # pylint: disable=unused-variable
@@ -2566,7 +2566,7 @@ class TestMain(TestWithFiles):
              '#1.1 - make_foo - Must run actions to create the missing output(s): foo'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Grab resources: jobs=1'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Available resources: jobs=0'),
-            ('dynamake', 'INFO', '#1.1 - make_foo - Run: sleep 0.2 ; touch foo'),
+            ('dynamake', 'INFO', '#1.1 - make_foo - Run: sleep 2 ; touch foo'),
             ('dynamake', 'DEBUG', '#1 - make_all - Build the required: bar'),
             ('dynamake', 'DEBUG',
              '#1 - make_all - The required: bar will be produced by '
@@ -2579,7 +2579,7 @@ class TestMain(TestWithFiles):
              '#1.2 - make_bar - Must run actions to create the missing output(s): bar'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Available resources: jobs=0'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Paused by waiting for resources: jobs=1'),
-            ('dynamake', 'TRACE', '#1.1 - make_foo - Success: sleep 0.2 ; touch foo'),
+            ('dynamake', 'TRACE', '#1.1 - make_foo - Success: sleep 2 ; touch foo'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Free resources: jobs=1'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Available resources: jobs=1'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
@@ -2612,12 +2612,12 @@ class TestMain(TestWithFiles):
             @step(output=phony('all'))
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
-                await done(asyncio.sleep(0.1))
+                await done(asyncio.sleep(1))
                 require('bar')
 
             @step(output='foo')
             async def make_foo() -> None:  # pylint: disable=unused-variable
-                await shell('sleep 0.2 ; touch foo', foo=2)
+                await shell('sleep 2 ; touch foo', foo=2)
 
             @step(output='bar')
             async def make_bar() -> None:  # pylint: disable=unused-variable
@@ -2645,7 +2645,7 @@ class TestMain(TestWithFiles):
              '#1.1 - make_foo - Must run actions to create the missing output(s): foo'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Grab resources: foo=2,jobs=1'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Available resources: foo=0,jobs=7'),
-            ('dynamake', 'INFO', '#1.1 - make_foo - Run: sleep 0.2 ; touch foo'),
+            ('dynamake', 'INFO', '#1.1 - make_foo - Run: sleep 2 ; touch foo'),
             ('dynamake', 'DEBUG', '#1 - make_all - Build the required: bar'),
             ('dynamake', 'DEBUG',
              '#1 - make_all - The required: bar will be produced by '
@@ -2658,7 +2658,7 @@ class TestMain(TestWithFiles):
              '#1.2 - make_bar - Must run actions to create the missing output(s): bar'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Available resources: foo=0,jobs=7'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Paused by waiting for resources: foo=1'),
-            ('dynamake', 'TRACE', '#1.1 - make_foo - Success: sleep 0.2 ; touch foo'),
+            ('dynamake', 'TRACE', '#1.1 - make_foo - Success: sleep 2 ; touch foo'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Free resources: foo=2,jobs=1'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Available resources: foo=2,jobs=8'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
