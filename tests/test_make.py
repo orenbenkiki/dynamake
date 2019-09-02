@@ -2543,7 +2543,7 @@ class TestMain(TestWithFiles):
 
             @step(output='bar')
             async def make_bar() -> None:  # pylint: disable=unused-variable
-                await shell('sleep 1 ; touch bar')
+                await shell('sleep 2 ; touch bar')
 
         os.environ['DYNAMAKE_JOBS'] = '1'
         sys.argv += ['--rebuild_changed_actions', 'false']
@@ -2586,8 +2586,8 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#1.1 - make_foo - Done'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Grab resources: jobs=1'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Available resources: jobs=0'),
-            ('dynamake', 'INFO', '#1.2 - make_bar - Run: sleep 1 ; touch bar'),
-            ('dynamake', 'TRACE', '#1.2 - make_bar - Success: sleep 1 ; touch bar'),
+            ('dynamake', 'INFO', '#1.2 - make_bar - Run: sleep 2 ; touch bar'),
+            ('dynamake', 'TRACE', '#1.2 - make_bar - Success: sleep 2 ; touch bar'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Free resources: jobs=1'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Available resources: jobs=1'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
