@@ -2063,6 +2063,7 @@ class TestMain(TestWithFiles):
             @step(output='all')
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
+                await done(asyncio.sleep(1))
                 await shell('touch all')
 
         write_file('foo', '0\n')
@@ -2081,10 +2082,10 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - Nonexistent required output(s): all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Build the required: foo'),
             ('dynamake', 'DEBUG', '#1 - make_all - The required: foo is a source file'),
+            ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'DEBUG', '#1 - make_all - Has the required: foo'),
             ('dynamake', 'INFO', '#1 - make_all - Run: touch all'),
-            ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'TRACE', '#1 - make_all - Success: touch all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'DEBUG', '#1 - make_all - Has the required: foo'),
@@ -2111,6 +2112,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - Oldest output: all time: 1'),
             ('dynamake', 'DEBUG', '#1 - make_all - Build the required: foo'),
             ('dynamake', 'DEBUG', '#1 - make_all - The required: foo is a source file'),
+            ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'DEBUG', '#1 - make_all - Has the required: foo'),
             ('dynamake', 'DEBUG', '#1 - make_all - Newest input: foo time: 2'),
@@ -2119,7 +2121,6 @@ class TestMain(TestWithFiles):
              'the required: foo has changed from: 0 into: 2'),
             ('dynamake', 'DEBUG', '#1 - make_all - Remove the stale output: all'),
             ('dynamake', 'INFO', '#1 - make_all - Run: touch all'),
-            ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'TRACE', '#1 - make_all - Success: touch all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'DEBUG', '#1 - make_all - Has the required: foo'),
