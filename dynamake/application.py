@@ -1047,13 +1047,10 @@ def processes_for(tasks: int) -> int:
     if processes_count is None:
         return tasks
 
-    cpus = os.cpu_count()
-    assert cpus is not None
-
     if processes_count == 0:
-        processes_count = cpus
-    else:
-        processes_count = min(processes_count, cpus)
+        processes_count = os.cpu_count()
+        assert processes_count is not None
+        assert processes_count > 0
 
     if tasks > 0:
         processes_count = min(processes_count, tasks)
