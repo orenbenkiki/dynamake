@@ -2746,6 +2746,7 @@ class TestMain(TestWithFiles):
 
             async def _write(path: str) -> None:
                 bar = config_param('bar', False)
+                await done(asyncio.sleep(1))
                 await shell('echo %s > %s' % (bar, path))
 
             @step(output=phony('all'))
@@ -2781,18 +2782,18 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'TRACE', '#1.1 - make_foo - Call'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Nonexistent required output(s): foo'),
+            ('dynamake', 'TRACE', '#1.2 - make_bar - Call'),
+            ('dynamake', 'DEBUG', '#1.2 - make_bar - Nonexistent required output(s): bar'),
+            ('dynamake', 'TRACE', '#1.3 - make_baz - Call'),
+            ('dynamake', 'DEBUG', '#1.3 - make_baz - Nonexistent required output(s): baz'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
             ('dynamake', 'WHY',
              '#1.1 - make_foo - Must run actions to create the missing output(s): foo'),
             ('dynamake', 'INFO', '#1.1 - make_foo - Run: echo True > foo'),
-            ('dynamake', 'TRACE', '#1.2 - make_bar - Call'),
-            ('dynamake', 'DEBUG', '#1.2 - make_bar - Nonexistent required output(s): bar'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
             ('dynamake', 'WHY',
              '#1.2 - make_bar - Must run actions to create the missing output(s): bar'),
             ('dynamake', 'INFO', '#1.2 - make_bar - Run: echo False > bar'),
-            ('dynamake', 'TRACE', '#1.3 - make_baz - Call'),
-            ('dynamake', 'DEBUG', '#1.3 - make_baz - Nonexistent required output(s): baz'),
             ('dynamake', 'DEBUG', '#1.3 - make_baz - Synced'),
             ('dynamake', 'WHY',
              '#1.3 - make_baz - Must run actions to create the missing output(s): baz'),
