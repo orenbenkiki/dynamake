@@ -2746,13 +2746,14 @@ class TestMain(TestWithFiles):
 
             async def _write(path: str) -> None:
                 bar = config_param('bar', False)
-                await done(asyncio.sleep(1))
                 await shell('echo %s > %s' % (bar, path))
 
             @step(output=phony('all'))
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
+                await done(asyncio.sleep(1))
                 require('bar')
+                await done(asyncio.sleep(1))
                 require('baz')
 
         write_file('DynaMake.yaml', """
@@ -2772,40 +2773,40 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - Build the required: foo'),
             ('dynamake', 'DEBUG',
              '#1 - make_all - The required: foo will be produced by the spawned: #1.1 - make_foo'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Build the required: bar'),
-            ('dynamake', 'DEBUG',
-             '#1 - make_all - The required: bar will be produced by the spawned: #1.2 - make_bar'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Build the required: baz'),
-            ('dynamake', 'DEBUG',
-             '#1 - make_all - The required: baz will be produced by the spawned: #1.3 - make_baz'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Sync'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'TRACE', '#1.1 - make_foo - Call'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Nonexistent required output(s): foo'),
-            ('dynamake', 'TRACE', '#1.2 - make_bar - Call'),
-            ('dynamake', 'DEBUG', '#1.2 - make_bar - Nonexistent required output(s): bar'),
-            ('dynamake', 'TRACE', '#1.3 - make_baz - Call'),
-            ('dynamake', 'DEBUG', '#1.3 - make_baz - Nonexistent required output(s): baz'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
             ('dynamake', 'WHY',
              '#1.1 - make_foo - Must run actions to create the missing output(s): foo'),
             ('dynamake', 'INFO', '#1.1 - make_foo - Run: echo True > foo'),
-            ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
-            ('dynamake', 'WHY',
-             '#1.2 - make_bar - Must run actions to create the missing output(s): bar'),
-            ('dynamake', 'INFO', '#1.2 - make_bar - Run: echo False > bar'),
-            ('dynamake', 'DEBUG', '#1.3 - make_baz - Synced'),
-            ('dynamake', 'WHY',
-             '#1.3 - make_baz - Must run actions to create the missing output(s): baz'),
-            ('dynamake', 'INFO', '#1.3 - make_baz - Run: echo False > baz'),
             ('dynamake', 'TRACE', '#1.1 - make_foo - Success: echo True > foo'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Has the output: foo time: 1'),
             ('dynamake', 'TRACE', '#1.1 - make_foo - Done'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Build the required: bar'),
+            ('dynamake', 'DEBUG',
+             '#1 - make_all - The required: bar will be produced by the spawned: #1.2 - make_bar'),
+            ('dynamake', 'TRACE', '#1.2 - make_bar - Call'),
+            ('dynamake', 'DEBUG', '#1.2 - make_bar - Nonexistent required output(s): bar'),
+            ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
+            ('dynamake', 'WHY',
+             '#1.2 - make_bar - Must run actions to create the missing output(s): bar'),
+            ('dynamake', 'INFO', '#1.2 - make_bar - Run: echo False > bar'),
             ('dynamake', 'TRACE', '#1.2 - make_bar - Success: echo False > bar'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Has the output: bar time: 2'),
             ('dynamake', 'TRACE', '#1.2 - make_bar - Done'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Build the required: baz'),
+            ('dynamake', 'DEBUG',
+             '#1 - make_all - The required: baz will be produced by the spawned: #1.3 - make_baz'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Sync'),
+            ('dynamake', 'TRACE', '#1.3 - make_baz - Call'),
+            ('dynamake', 'DEBUG', '#1.3 - make_baz - Nonexistent required output(s): baz'),
+            ('dynamake', 'DEBUG', '#1.3 - make_baz - Synced'),
+            ('dynamake', 'WHY',
+             '#1.3 - make_baz - Must run actions to create the missing output(s): baz'),
+            ('dynamake', 'INFO', '#1.3 - make_baz - Run: echo False > baz'),
             ('dynamake', 'TRACE', '#1.3 - make_baz - Success: echo False > baz'),
             ('dynamake', 'DEBUG', '#1.3 - make_baz - Synced'),
             ('dynamake', 'DEBUG', '#1.3 - make_baz - Has the output: baz time: 3'),
