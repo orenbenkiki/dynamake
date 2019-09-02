@@ -610,12 +610,12 @@ class TestMain(TestWithFiles):
             @step(output=phony('all'))
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
-                await done(asyncio.sleep(0.1))
+                await done(asyncio.sleep(1))
                 require('bar')
 
             @step(output='foo')
             async def make_foo() -> None:  # pylint: disable=unused-variable
-                await shell('sleep 0.2 ; touch foo')
+                await shell('sleep 2 ; touch foo')
 
             @step(output=phony('bar'))
             async def make_bar() -> None:  # pylint: disable=unused-variable
@@ -637,7 +637,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
             ('dynamake', 'WHY',
              '#1.1 - make_foo - Must run actions to create the missing output(s): foo'),
-            ('dynamake', 'INFO', '#1.1 - make_foo - Run: sleep 0.2 ; touch foo'),
+            ('dynamake', 'INFO', '#1.1 - make_foo - Run: sleep 2 ; touch foo'),
             ('dynamake', 'DEBUG', '#1 - make_all - Build the required: bar'),
             ('dynamake', 'DEBUG',
              '#1 - make_all - The required: bar will be produced by '
@@ -651,7 +651,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Sync'),
             ('dynamake', 'DEBUG',
              '#1.2.1 - make_foo - Paused by waiting for: #1.1 - make_foo'),
-            ('dynamake', 'TRACE', '#1.1 - make_foo - Success: sleep 0.2 ; touch foo'),
+            ('dynamake', 'TRACE', '#1.1 - make_foo - Success: sleep 2 ; touch foo'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Has the output: foo time: 1'),
             ('dynamake', 'TRACE', '#1.1 - make_foo - Done'),
@@ -972,7 +972,7 @@ class TestMain(TestWithFiles):
             @step(output=phony('all'))
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
-                await done(asyncio.sleep(0.2))
+                await done(asyncio.sleep(2))
                 require('bar')
                 await shell('true')
 
@@ -1088,7 +1088,7 @@ class TestMain(TestWithFiles):
         sys.argv += ['--remove_failed_outputs', 'false']
 
         write_file('all', '?\n')
-        sleep(0.1)
+        sleep(1)
         write_file('foo', '!\n')
 
         self.check(_register, error='make_all - Failure: echo @ > all ; false', log=[
@@ -1750,7 +1750,7 @@ class TestMain(TestWithFiles):
         def _register_with() -> None:
             @step(output=['all', 'foo'])
             async def make_all() -> None:  # pylint: disable=unused-variable
-                await shell('touch all ; sleep 0.1 ; touch foo')
+                await shell('touch all ; sleep 1 ; touch foo')
 
         sys.argv += ['--jobs', 'None']
 
@@ -1766,9 +1766,9 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - Nonexistent required output(s): all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Nonexistent required output(s): foo'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'INFO', '#1 - make_all - Run: touch all ; sleep 0.1 ; touch foo'),
+            ('dynamake', 'INFO', '#1 - make_all - Run: touch all ; sleep 1 ; touch foo'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'TRACE', '#1 - make_all - Success: touch all ; sleep 0.1 ; touch foo'),
+            ('dynamake', 'TRACE', '#1 - make_all - Success: touch all ; sleep 1 ; touch foo'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 1'),
             ('dynamake', 'DEBUG', '#1 - make_all - Has the output: foo time: 2'),
@@ -1796,9 +1796,9 @@ class TestMain(TestWithFiles):
             ('dynamake', 'WHY',
              '#1 - make_all - Must run actions to create the missing output(s): all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Remove the stale output: foo'),
-            ('dynamake', 'INFO', '#1 - make_all - Run: touch all ; sleep 0.1 ; touch foo'),
+            ('dynamake', 'INFO', '#1 - make_all - Run: touch all ; sleep 1 ; touch foo'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'TRACE', '#1 - make_all - Success: touch all ; sleep 0.1 ; touch foo'),
+            ('dynamake', 'TRACE', '#1 - make_all - Success: touch all ; sleep 1 ; touch foo'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 3'),
             ('dynamake', 'DEBUG', '#1 - make_all - Has the output: foo time: 4'),
@@ -1919,7 +1919,7 @@ class TestMain(TestWithFiles):
                 await shell('touch all')
 
         write_file('foo', '!\n')
-        sleep(0.1)
+        sleep(1)
 
         sys.argv += ['--jobs', 'None']
 
@@ -2827,7 +2827,7 @@ class TestMain(TestWithFiles):
         def _register() -> None:
             @step(output='foo')
             async def make_foo() -> None:  # pylint: disable=unused-variable
-                await done(asyncio.sleep(0.2))
+                await done(asyncio.sleep(2))
                 await shell('echo', require_context()['foo'], '> foo')
 
             @step(output='bar')
@@ -2845,7 +2845,7 @@ class TestMain(TestWithFiles):
             @step(output=phony('all'))
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('bar')
-                await done(asyncio.sleep(0.1))
+                await done(asyncio.sleep(1))
                 require('baz')
 
         sys.argv += ['--jobs', 'None']
