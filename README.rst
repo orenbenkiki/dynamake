@@ -1,6 +1,8 @@
 DynaMake - Dynamic Make in Python
 =================================
 
+[![Build Status](https://travis-ci.org/tanaylab/dynamake.svg?branch=master)](https://travis-ci.org/tanaylab/dynamake)
+
 WHY
 ---
 
