@@ -2535,16 +2535,15 @@ class TestMain(TestWithFiles):
             @step(output=phony('all'))
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
-                await done(asyncio.sleep(1))
                 require('bar')
 
             @step(output='foo')
             async def make_foo() -> None:  # pylint: disable=unused-variable
-                await shell('sleep 2 ; touch foo')
+                await shell('sleep 1 ; touch foo')
 
             @step(output='bar')
             async def make_bar() -> None:  # pylint: disable=unused-variable
-                await shell('touch bar')
+                await shell('sleep 1 ; touch bar')
 
         os.environ['DYNAMAKE_JOBS'] = '1'
         sys.argv += ['--rebuild_changed_actions', 'false']
@@ -2558,8 +2557,11 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#1 - make_all - Call'),
             ('dynamake', 'DEBUG', '#1 - make_all - Build the required: foo'),
             ('dynamake', 'DEBUG',
-             '#1 - make_all - The required: foo will be produced by '
-             'the spawned: #1.1 - make_foo'),
+             '#1 - make_all - The required: foo will be produced by the spawned: #1.1 - make_foo'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Build the required: bar'),
+            ('dynamake', 'DEBUG',
+             '#1 - make_all - The required: bar will be produced by the spawned: #1.2 - make_bar'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Sync'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'TRACE', '#1.1 - make_foo - Call'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Nonexistent required output(s): foo'),
@@ -2568,12 +2570,7 @@ class TestMain(TestWithFiles):
              '#1.1 - make_foo - Must run actions to create the missing output(s): foo'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Grab resources: jobs=1'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Available resources: jobs=0'),
-            ('dynamake', 'INFO', '#1.1 - make_foo - Run: sleep 2 ; touch foo'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Build the required: bar'),
-            ('dynamake', 'DEBUG',
-             '#1 - make_all - The required: bar will be produced by '
-             'the spawned: #1.2 - make_bar'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Sync'),
+            ('dynamake', 'INFO', '#1.1 - make_foo - Run: sleep 1 ; touch foo'),
             ('dynamake', 'TRACE', '#1.2 - make_bar - Call'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Nonexistent required output(s): bar'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
@@ -2581,7 +2578,7 @@ class TestMain(TestWithFiles):
              '#1.2 - make_bar - Must run actions to create the missing output(s): bar'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Available resources: jobs=0'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Paused by waiting for resources: jobs=1'),
-            ('dynamake', 'TRACE', '#1.1 - make_foo - Success: sleep 2 ; touch foo'),
+            ('dynamake', 'TRACE', '#1.1 - make_foo - Success: sleep 1 ; touch foo'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Free resources: jobs=1'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Available resources: jobs=1'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
@@ -2589,8 +2586,8 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#1.1 - make_foo - Done'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Grab resources: jobs=1'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Available resources: jobs=0'),
-            ('dynamake', 'INFO', '#1.2 - make_bar - Run: touch bar'),
-            ('dynamake', 'TRACE', '#1.2 - make_bar - Success: touch bar'),
+            ('dynamake', 'INFO', '#1.2 - make_bar - Run: sleep 1 ; touch bar'),
+            ('dynamake', 'TRACE', '#1.2 - make_bar - Success: sleep 1 ; touch bar'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Free resources: jobs=1'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Available resources: jobs=1'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
