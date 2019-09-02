@@ -2781,18 +2781,19 @@ class TestMain(TestWithFiles):
             async def make_bar() -> None:  # pylint: disable=unused-variable
                 require_context()['foo'] = 'bar'
                 require('foo')
+                await done(asyncio.sleep(1))
                 await shell('touch bar')
 
             @step(output='baz')
             async def make_baz() -> None:  # pylint: disable=unused-variable
                 require_context()['foo'] = 'baz'
                 require('foo')
+                await done(asyncio.sleep(2))
                 await shell('touch baz')
 
             @step(output=phony('all'))
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('bar')
-                await done(asyncio.sleep(1))
                 require('baz')
 
         sys.argv += ['--jobs', 'None']
@@ -2807,6 +2808,10 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - Build the required: bar'),
             ('dynamake', 'DEBUG',
              '#1 - make_all - The required: bar will be produced by the spawned: #1.1 - make_bar'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Build the required: baz'),
+            ('dynamake', 'DEBUG',
+             '#1 - make_all - The required: baz will be produced by the spawned: #1.2 - make_baz'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Sync'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'TRACE', '#1.1 - make_bar - Call'),
             ('dynamake', 'DEBUG', '#1.1 - make_bar - Nonexistent required output(s): bar'),
@@ -2814,21 +2819,17 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG',
              '#1.1 - make_bar - The required: foo will be produced by '
              'the spawned: #1.1.1 - make_foo'),
-            ('dynamake', 'DEBUG', '#1.1 - make_bar - Sync'),
-            ('dynamake', 'TRACE', '#1.1.1 - make_foo - Call'),
-            ('dynamake', 'DEBUG', '#1.1.1 - make_foo - Nonexistent required output(s): foo'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Build the required: baz'),
-            ('dynamake', 'DEBUG',
-             '#1 - make_all - The required: baz will be produced by the spawned: #1.2 - make_baz'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Sync'),
             ('dynamake', 'TRACE', '#1.2 - make_baz - Call'),
             ('dynamake', 'DEBUG', '#1.2 - make_baz - Nonexistent required output(s): baz'),
             ('dynamake', 'DEBUG', '#1.2 - make_baz - Build the required: foo'),
             ('dynamake', 'DEBUG',
              '#1.2 - make_baz - The required: foo will be produced by '
              'the spawned: #1.2.1 - make_foo'),
-            ('dynamake', 'DEBUG', '#1.2 - make_baz - Sync'),
+            ('dynamake', 'TRACE', '#1.1.1 - make_foo - Call'),
+            ('dynamake', 'DEBUG', '#1.1.1 - make_foo - Nonexistent required output(s): foo'),
             ('dynamake', 'DEBUG', '#1.2.1 - make_foo - Paused by waiting for: #1.1.1 - make_foo'),
+            ('dynamake', 'DEBUG', '#1.1 - make_bar - Sync'),
+            ('dynamake', 'DEBUG', '#1.2 - make_baz - Sync'),
             ('dynamake', 'DEBUG', '#1.1.1 - make_foo - Synced'),
             ('dynamake', 'WHY',
              '#1.1.1 - make_foo - Must run actions to create the missing output(s): foo'),
