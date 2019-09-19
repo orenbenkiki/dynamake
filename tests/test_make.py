@@ -2611,7 +2611,7 @@ class TestMain(TestWithFiles):
             @step(output=phony('all'))
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
-                await done(asyncio.sleep(1))
+                await done(asyncio.sleep(2))
                 require('bar')
 
             @step(output='foo')
