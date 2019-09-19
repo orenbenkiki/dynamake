@@ -15,11 +15,10 @@
 import os
 import subprocess
 import sys
-sys.path.insert(0, os.path.abspath('..'))
-
-import dynamake.version
 
 subprocess.check_call('../tools/prepare_for_sphinx')
+sys.path.insert(0, os.path.abspath('..'))
+import dynamake.version
 
 
 # -- Project information -----------------------------------------------------
