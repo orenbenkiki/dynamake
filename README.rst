@@ -3,6 +3,11 @@ DynaMake - Dynamic Make in Python
 
 .. image:: https://travis-ci.org/tanaylab/dynamake.svg?branch=master
     :target: https://travis-ci.org/tanaylab/dynamake
+    :alt: Build Status
+
+.. image:: https://readthedocs.org/projects/dynamake/badge/?version=latest
+    :target: https://dynamake.readthedocs.io/en/latest/?badge=latest
+    :alt: Documentation Status
 
 WHY
 ---
