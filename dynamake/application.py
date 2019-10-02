@@ -365,7 +365,7 @@ class NamesCollector(NodeVisitor):
 
 def _invoked_names(function: Callable) -> Set[str]:
     collector = NamesCollector()
-    lines = dedent(getsource(function)).split('\n')
+    lines = dedent(getsource(function)).split('\n')  # type: ignore
     while not lines[0].startswith('def ') and not lines[0].startswith('async def '):
         lines = lines[1:]
     source = '\n'.join(lines)
@@ -856,9 +856,9 @@ class Parallel:
         """
         Reset all the current state, for tests.
         """
-        Parallel._fork_index = Value(ctypes.c_int32, lock=True)  # type: ignore
+        Parallel._fork_index = Value(ctypes.c_int32, lock=True)
         Parallel._fork_index.value = 0
-        Parallel._process_index = Value(ctypes.c_int32, lock=True)  # type: ignore
+        Parallel._process_index = Value(ctypes.c_int32, lock=True)
         Parallel._process_index.value = 0
         Parallel._function = None
         Parallel._fixed_args = ()
@@ -888,7 +888,7 @@ class Parallel:
             with Parallel._fork_index:  # type: ignore
                 Parallel._fork_index.value += 1
 
-        Parallel._process_index = Value(ctypes.c_int32, lock=True)  # type: ignore
+        Parallel._process_index = Value(ctypes.c_int32, lock=True)
         Parallel._process_index.value = 0
         Parallel._function = function
         Parallel._fixed_args = fixed_args
