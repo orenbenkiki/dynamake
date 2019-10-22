@@ -2502,7 +2502,7 @@ class TestMain(TestWithFiles):
                 await submit('touch', 'all')
 
         write_file('DynaMake.yaml',
-                   '- { when: {step: make_all}, then: {run_prefix: "echo {action_id} > log;"} }\n')
+                   '- { when: {step: make_all}, then: {run_prefix: "echo {submit_id} > log;"} }\n')
 
         sys.argv += ['--jobs', 'None']
         sys.argv += ['--rebuild_changed_actions', 'false']
@@ -2517,9 +2517,9 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'WHY',
              '#1 - make_all - Must run actions to create the missing output(s): all'),
-            ('dynamake', 'INFO', '#1 - make_all - Run: echo 0 > log; touch all'),
+            ('dynamake', 'INFO', '#1 - make_all - Run: echo 1 > log; touch all'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'TRACE', '#1 - make_all - Success: echo 0 > log; touch all'),
+            ('dynamake', 'TRACE', '#1 - make_all - Success: echo 1 > log; touch all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 1'),
             ('dynamake', 'TRACE', '#1 - make_all - Done'),
@@ -2528,7 +2528,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#0 - make - Done')
         ])
 
-        self.expect_file('log', '0\n')
+        self.expect_file('log', '1\n')
 
     def test_resources(self) -> None:
         def _register() -> None:

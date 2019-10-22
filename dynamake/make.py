@@ -492,6 +492,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
     #: A running counter of the executed actions.
     actions_count: int
 
+    #: A running counter of the submit actions.
+    submits_count: int
+
     #: A running counter of the skipped actions.
     skipped_count: int
 
@@ -508,6 +511,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Invocation.phony = set()
         Invocation.poisoned = set()
         Invocation.actions_count = 0
+        Invocation.submits_count = 0
         Invocation.skipped_count = 0
 
     def __init__(self,  # pylint: disable=too-many-statements
@@ -1802,7 +1806,8 @@ async def submit(*command: Strings, **resources: int) -> None:
     full_context.update(current.config_context)
     assert current.step is not None
     full_context['step'] = current.step.name()
-    full_context['action_id'] = Invocation.actions_count
+    Invocation.submits_count += 1
+    full_context['submit_id'] = Invocation.submits_count
 
     prefix = current.config_param('run_prefix', [])
     suffix = current.config_param('run_suffix', [])
