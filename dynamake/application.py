@@ -365,7 +365,7 @@ class NamesCollector(NodeVisitor):
 
 def _invoked_names(function: Callable) -> Set[str]:
     collector = NamesCollector()
-    lines = dedent(getsource(function)).split('\n')  # type: ignore
+    lines = dedent(getsource(function)).split('\n')
     while not lines[0].startswith('def ') and not lines[0].startswith('async def '):
         lines = lines[1:]
     source = '\n'.join(lines)
