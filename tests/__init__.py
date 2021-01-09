@@ -2,13 +2,10 @@
 Common utilities for tests.
 """
 
-from dynamake.application import Prog
-from dynamake.make import _reset_test_dates
-from dynamake.make import reset_make
+from dynamake import reset_make
 from textwrap import dedent
 from unittest import TestCase
 
-import logging
 import os
 import shutil
 import sys
@@ -36,11 +33,7 @@ def _exit(status: int) -> None:
 class TestWithReset(TestCase):
 
     def setUp(self) -> None:
-        Prog._is_test = True  # pylint: disable=protected-access
-        _reset_test_dates()
-        reset_make()
-        Prog.logger.setLevel('DEBUG')
-        logging.getLogger('asyncio').setLevel('WARN')
+        reset_make(is_test=True, reset_test_times=True)
 
 
 class TestWithFiles(TestWithReset):
@@ -57,8 +50,6 @@ class TestWithFiles(TestWithReset):
         sys.path.insert(0, os.getcwd())
 
     def tearDown(self) -> None:
-        if 'DYNAMAKE_JOBS' in os.environ:
-            del os.environ['DYNAMAKE_JOBS']
         os.chdir(self.previous_directory)
         shutil.rmtree(self.temporary_directory)
 

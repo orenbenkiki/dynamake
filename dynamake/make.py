@@ -1,14 +1,14 @@
 """
-Utilities for dynamic make.
+Dynamic make main code.
 """
 
 # pylint: disable=too-many-lines
 
-from .application import *  # pylint: disable=redefined-builtin,wildcard-import,unused-wildcard-import
-from .config import Config
+from .patterns import *  # pylint: disable=redefined-builtin,wildcard-import,unused-wildcard-import
 from argparse import ArgumentParser
 from argparse import Namespace
 from datetime import datetime
+from importlib import import_module
 from inspect import iscoroutinefunction
 from textwrap import dedent
 from threading import current_thread
@@ -24,6 +24,7 @@ from typing import Tuple
 from typing.re import Pattern  # type: ignore # pylint: disable=import-error
 from urllib.parse import quote_plus
 
+import argparse
 import asyncio
 import dynamake.patterns as dp
 import logging
@@ -33,10 +34,312 @@ import shlex
 import sys
 import yaml
 
+#: The log level for tracing calls.
+TRACE = (2 * logging.DEBUG + logging.INFO) // 3
+
+#: The log level for logging the reasons for action execution.
+WHY = (logging.DEBUG + 2 * logging.INFO) // 3
+
+logging.addLevelName(TRACE, 'TRACE')
+logging.addLevelName(WHY, 'WHY')
+
+#: A configured logger for the build process.
+logger: logging.Logger
+
+#: The default module to load for steps and parameter definitions.
+DEFAULT_MODULE = 'DynaMake'
+
+#: The default parameter configuration YAML file to load.
+DEFAULT_CONFIG = 'DynaMake.yaml'
+
+_is_test: bool = False
+
 
 def _dict_to_str(values: Dict[str, Any]) -> str:
     return ','.join(['%s=%s' % (quote_plus(name), quote_plus(str(value)))
                      for name, value in sorted(values.items())])
+
+
+class Parameter:  # pylint: disable=too-many-instance-attributes
+    """
+    Describe a configurable build parameter.
+    """
+
+    #: The current known parameters.
+    by_name: Dict[str, 'Parameter']
+
+    @staticmethod
+    def reset() -> None:
+        """
+        Reset all the current state, for tests.
+        """
+        Parameter.by_name = {}
+
+    def __init__(self, *, name: str, default: Any, parser: Callable[[str], Any], description: str,
+                 short: Optional[str] = None, order: Optional[int] = None,
+                 metavar: Optional[str] = None) -> None:
+        """
+        Create and register a parameter description.
+        """
+
+        #: The unique name of the parameter.
+        self.name = name
+
+        #: The unique short name of the parameter.
+        self.short = short
+
+        #: The value to use if the parameter is not explicitly configured.
+        self.default = default
+
+        #: How to parse the parameter value from a string (command line argument).
+        self.parser = parser
+
+        #: A description of the parameter for help messages.
+        self.description = description
+
+        #: Optional name of the command line parameter value (``metavar`` in ``argparse``).
+        self.metavar = metavar
+
+        #: Optional order of parameter (in help message)
+        self.order = order
+
+        #: The effective value of the parameter.
+        self.value = default
+
+        if name in Parameter.by_name:
+            raise RuntimeError('Multiple definitions for the parameter: %s' % name)
+        Parameter.by_name[name] = self
+
+    @staticmethod
+    def add_to_parser(parser: ArgumentParser) -> None:
+        """
+        Add a command line flag for each parameter to the parser to allow
+        overriding parameter values directly from the command line.
+        """
+        parser.add_argument('--config', '-c', metavar='FILE', action='append',
+                            help='Load a parameters configuration YAML file')
+        parameters = [(parameter.order, parameter.name, parameter)
+                      for parameter in Parameter.by_name.values()]
+        for _, _, parameter in sorted(parameters):
+            text = parameter.description.replace('%', '%%') + ' (default: %s)' % parameter.default
+            if parameter.short:
+                parser.add_argument('--' + parameter.name, '-' + parameter.short,
+                                    help=text, metavar=parameter.metavar)
+            else:
+                parser.add_argument('--' + parameter.name, help=text, metavar=parameter.metavar)
+
+    @staticmethod
+    def parse_args(args: Namespace) -> None:
+        """
+        Update the values based on loaded configuration files and/or explicit
+        command line flags.
+        """
+        if os.path.exists(DEFAULT_CONFIG):
+            Parameter.load_config(DEFAULT_CONFIG)
+        for path in (args.config or []):
+            Parameter.load_config(path)
+
+        for name, parameter in Parameter.by_name.items():
+            value = vars(args).get(name)
+            if value is not None:
+                try:
+                    parameter.value = parameter.parser(value)
+                except BaseException:
+                    raise RuntimeError(  # pylint: disable=raise-missing-from
+                        'Invalid value: %s for the parameter: %s' % (vars(args)[name], name))
+
+        name = sys.argv[0].split('/')[-1]
+
+    @staticmethod
+    def load_config(path: str) -> None:
+        """
+        Load a configuration file.
+        """
+        with open(path, 'r') as file:
+            data = yaml.safe_load(file.read())
+
+        if data is None:
+            data = {}
+
+        if not isinstance(data, dict):
+            raise RuntimeError('The configuration file: %s '
+                               'does not contain a top-level mapping' % path)
+
+        for name, value in data.items():
+            parameter = Parameter.by_name.get(name)
+            if parameter is None:
+                raise RuntimeError('Unknown parameter: %s '
+                                   'specified in the configuration file: %s'
+                                   % (name, path))
+
+            if isinstance(value, str):
+                try:
+                    value = parameter.parser(value)
+                except BaseException:
+                    raise RuntimeError(  # pylint: disable=raise-missing-from
+                        'Invalid value: %s '
+                        'for the parameter: %s '
+                        'specified in the configuration file: %s'
+                        % (value, name, path))
+
+            parameter.value = value
+
+
+#: The number of jobs to run in parallel.
+jobs: Parameter
+
+#: The level of messages to log.
+log_level: Parameter
+
+#: Whether to log (level INFO) skipped actions (by default, ``False``).
+log_skipped_actions: Parameter
+
+#: Whether to rebuild outputs if the actions have changed (by default, ``True``).
+rebuild_changed_actions: Parameter
+
+#: The directory to keep persistent state in.
+persistent_directory: Parameter
+
+#: Whether to stop the script if any action fails (by default, ``True``).
+#
+#: If this is ``False``, then the build will continue to execute unrelated
+#: actions. In all cases, actions that have already started will be allowed to
+#: end normally.
+failure_aborts_build: Parameter
+
+#: Whether to remove old output files before executing an action (by default,
+#: ``True``).
+remove_stale_outputs: Parameter
+
+# Whether to touch output files on a successful action to ensure they are newer
+# than the input file(s) (by default, ``False``).
+#
+#: In these modern times, this is mostly unneeded as we use the nanosecond
+#: modification time, which pretty much guarantees that output files will be
+#: newer than input files. In the "bad old days", files created within a second
+#: of each other had the same modification time, which would confuse the build
+#: tools.
+#
+#: This might still be needed if an output is a directory (not a file) and
+#: `remove_stale_outputs` is ``False``, since otherwise the ``mtime`` of an
+#: existing directory will not necessarily be updated to reflect the fact the
+#: action was executed. In general it is not advised to depend on the ``mtime``
+#: of directories; it is better to specify a glob matching the expected files
+#: inside them, or use an explicit timestamp file.
+touch_success_outputs: Parameter
+
+#: Whether to remove output files on a failing action (by default, ``True``).
+remove_failed_outputs: Parameter
+
+#: Whether to (try to) remove empty directories when deleting the last file in
+#: them (by default, ``False``).
+remove_empty_directories: Parameter
+
+
+def _define_parameters() -> None:
+    # pylint: disable=invalid-name
+
+    global jobs
+    jobs = Parameter(  #
+        name='jobs',
+        short='j',
+        metavar='INT',
+        default=-1,
+        parser=dp.str2int(),
+        description="""
+            The number of jobs to run in parallel. Use 0 for unlimited
+            parallelism, 1 for serial jobs execution, and a negative number for
+            a fraction of the logical processors in the system (-1 for one per
+            logical processor, -2 for one per two logical processors, etc.).
+        """)
+
+    global log_level
+    log_level = Parameter(  #
+        name='log_level',
+        short='ll',
+        metavar='STR',
+        default='WARN',
+        parser=str,
+        description='The log level to use')
+
+    global log_skipped_actions
+    log_skipped_actions = Parameter(  #
+        name='log_skipped_actions',
+        short='lsa',
+        metavar='BOOL',
+        default=False,
+        parser=dp.str2bool,
+        description='Whether to log (level INFO) skipped actions')
+
+    global rebuild_changed_actions
+    rebuild_changed_actions = Parameter(  #
+        name='rebuild_changed_actions',
+        short='rca',
+        metavar='BOOL',
+        default=True,
+        parser=dp.str2bool,
+        description='Whether to rebuild outputs if the actions have changed')
+
+    global persistent_directory
+    persistent_directory = Parameter(  #
+        name='persistent_directory',
+        short='pp',
+        metavar='STR',
+        default='.dynamake',
+        parser=str,
+        description="""
+            The directory to keep persistent data in, if
+            rebuild_changed_actions is  True.
+        """)
+
+    global failure_aborts_build
+    failure_aborts_build = Parameter(  #
+        name='failure_aborts_build',
+        short='fab',
+        metavar='BOOL',
+        default=True,
+        parser=dp.str2bool,
+        description='Whether to stop the script if any action fails')
+
+    global remove_stale_outputs
+    remove_stale_outputs = Parameter(  #
+        name='remove_stale_outputs',
+        short='dso',
+        metavar='BOOL',
+        default=True,
+        parser=dp.str2bool,
+        description='Whether to remove old output files before executing an action')
+
+    global touch_success_outputs
+    touch_success_outputs = Parameter(  #
+        name='touch_success_outputs',
+        short='tso',
+        metavar='BOOL',
+        default=False,
+        parser=dp.str2bool,
+        description="""
+            Whether to touch output files on a successful action to ensure they
+            are newer than the input file(s)
+        """)
+
+    global remove_failed_outputs
+    remove_failed_outputs = Parameter(  #
+        name='remove_failed_outputs',
+        short='dfo',
+        metavar='BOOL',
+        default=True,
+        parser=dp.str2bool,
+        description='Whether to remove output files on a failing action')
+
+    global remove_empty_directories
+    remove_empty_directories = Parameter(  #
+        name='remove_empty_directories',
+        short='ded',
+        metavar='BOOL',
+        default=False,
+        parser=dp.str2bool,
+        description='Whether to remove empty directories when deleting the last file in them')
+    # pylint: enable=invalid-name
 
 
 class Resources:
@@ -61,7 +364,7 @@ class Resources:
         """
         Reset all the current state, for tests.
         """
-        Resources.total = dict(jobs=processes_for(0))
+        Resources.total = dict(jobs=os.cpu_count() or 1)
         Resources.available = Resources.total.copy()
         Resources.default = dict(jobs=1)
         Resources.condition = asyncio.Condition()
@@ -139,14 +442,17 @@ def resource_parameters(**default_amounts: int) -> None:
     """
     Declare additional resources for controlling parallel action execution.
 
-    Each resource should have been declared as a :py:class:`dynamake.application.Param`.
-    The value given here is the default amount of the resource used by each action that
-    does not specify an explicit value.
+    Each resource should have been declared as a :py:class:`Parameter`.  The
+    value given here is the default amount of the resource used by each action
+    that does not specify an explicit value.
     """
     for name, amount in default_amounts.items():
         total = Resources.total.get(name)
         if total is None:
-            total = int(Prog.get_parameter(name))
+            parameter = Parameter.by_name.get(name)
+            if parameter is None:
+                raise RuntimeError('Unknown resource parameter: %s' % name)
+            total = int(parameter.value)
             Resources.total[name] = total
             Resources.available[name] = total
 
@@ -157,7 +463,6 @@ def resource_parameters(**default_amounts: int) -> None:
                                % (amount, name, total))
 
         Resources.default[name] = amount
-        Func.names_by_parameter[name] = []
 
 
 class StepException(Exception):
@@ -172,98 +477,6 @@ class RestartException(Exception):
     """
 
 
-class Make:
-    """
-    Global build configuration and state.
-    """
-    #: The directory to keep persistent state in.
-    PERSISTENT_DIRECTORY: str
-
-    #: The default steps configuration to load.
-    DEFAULT_STEP_CONFIG: str
-
-    #: The log level for logging the reasons for action execution.
-    WHY = (Prog.TRACE + logging.INFO) // 2
-
-    #: Whether to rebuild outputs if the actions have changed (by default, ``True``).
-    rebuild_changed_actions: bool
-
-    #: Whether to stop the script if any action fails (by default, ``True``).
-    #:
-    #: If this is ``False``, then the build will continue to execute unrelated actions.
-    #: In all cases, actions that have already been submitted will be allowed to end normally.
-    failure_aborts_build: bool
-
-    #: Whether to remove old output files before executing an action (by default, ``True``).
-    #:
-    #: It is possible to override this on a per-action basis.
-    remove_stale_outputs: bool
-
-    #: Whether to wait before assuming an output file does not exist (by default, ``False``).
-    #:
-    #: This may be required if the output file(s) are on an NFS-mounted partition, and the NFS
-    #: client is caching `stat` results (the default behavior, since otherwise performance would be
-    #: horrible).
-    #:
-    #: Setting the NFS mount flags to include `lookupcache=positive` will force the client to avoid
-    #: caching a "file not found" `stat` result, thereby ensuring that if we detect a missing output
-    #: file, it really is missing. This has minimal impact on performance (since, most of the time,
-    #: `stat` calls are for existing files).
-    #:
-    #: If you can't tweak the NFS mount flags, set `wait_nfs_outputs`; this will cause us to wait up
-    #: to 60 seconds (the default NFS `stat` cache time) before pronouncing that the output file
-    #: really is missing.
-    wait_nfs_outputs: bool
-
-    #: The amount of time to wait for slow NFS outputs (by default, 60 seconds, which is the default
-    #: timeout of the NFS client cache).
-    nfs_outputs_timeout: int
-
-    #: Whether to touch output files on a successful action to ensure they are newer than
-    #: the input file(s) (by default, ``False``).
-    #:
-    #: In these modern times, this is mostly unneeded as we use the nanosecond modification time,
-    #: which pretty much guarantees that output files will be newer than input files. In the "bad
-    #: old days", files created within a second of each other had the same modification time.
-    #:
-    #: This might still be needed if an output is a directory (not a file) and
-    #: :py:attr:`dynamake.make.Make.remove_stale_outputs` is ``False``, since otherwise the
-    #: ``mtime`` of an existing directory will not necessarily be updated to reflect the fact the
-    #: action was executed. In general it is not advised to depend on the ``mtime`` of
-    #: directories; it is better to specify a glob matching the expected files inside them, or use
-    #: an explicit timestamp file.
-    touch_success_outputs: bool
-
-    #: Whether to remove output files on a failing action (by default, ``True``).
-    #:
-    #: It is possible to override this on a per-action basis.
-    remove_failed_outputs: bool
-
-    #: Whether to (try to) remove empty directories when deleting the last file in them (by default,
-    #: ``False``).
-    remove_empty_directories: bool
-
-    #: Whether to log (level INFO) skipped actions (by default, ``False``).
-    log_skipped_actions: bool
-
-    @staticmethod
-    def reset() -> None:
-        """
-        Reset all the current state, for tests.
-        """
-        Make.PERSISTENT_DIRECTORY = os.getenv('DYNAMAKE_PERSISTENT_DIR', '.dynamake')
-        Make.DEFAULT_STEP_CONFIG = 'DynaMake.yaml'
-        Make.failure_aborts_build = True
-        Make.remove_stale_outputs = True
-        Make.wait_nfs_outputs = False
-        Make.nfs_outputs_timeout = 60
-        Make.touch_success_outputs = True
-        Make.remove_failed_outputs = True
-        Make.remove_empty_directories = False
-        Make.log_skipped_actions = False
-        Make.rebuild_changed_actions = True
-
-
 class Step:
     """
     A build step.
@@ -275,6 +488,8 @@ class Step:
     #: The step for building any output capture pattern.
     by_regexp: List[Tuple[Pattern, 'Step']]
 
+    _is_finalized: bool
+
     @staticmethod
     def reset() -> None:
         """
@@ -282,13 +497,28 @@ class Step:
         """
         Step.by_name = {}
         Step.by_regexp = []
+        Step._is_finalized = False
 
-    def __init__(self, func: Func, output: Strings) -> None:
+    def __init__(self, function: Callable, output: Strings) -> None:
         """
         Register a build step function.
         """
-        #: The configured function that implements the step.
-        self.func = func
+        #: The wrapped function that implements the step.
+        self.function = function
+
+        while hasattr(function, '__func__'):
+            function = getattr(function, '__func__')
+
+        if Step._is_finalized:
+            raise RuntimeError('Late registration of the step: %s.%s'
+                               % (function.__module__, function.__qualname__))
+
+        if not iscoroutinefunction(function):
+            raise RuntimeError('The step function: %s.%s is not a coroutine'
+                               % (function.__module__, function.__qualname__))
+
+        #: The name of the step.
+        self.name = function.__name__
 
         #: The outputs generated by the step.
         self.output: List[str] = []
@@ -300,26 +530,17 @@ class Step:
 
         if not self.output:
             raise RuntimeError('The step function: %s.%s specifies no output'
-                               % (func.wrapped.__module__, func.wrapped.__qualname__))
+                               % (self.function.__module__, self.function.__qualname__))
 
-        Step.by_name[self.name()] = self
-
-    @staticmethod
-    def collect(wrapped: Callable, output: Strings) -> 'Step':
-        """
-        Collect a build step function.
-        """
-        func = Func.collect(wrapped, is_top=False, is_random=False, is_parallel=False)
-        if not iscoroutinefunction(func.wrapped):
-            raise RuntimeError('The step function: %s.%s is not a coroutine'
-                               % (func.wrapped.__module__, func.wrapped.__qualname__))
-        return Step(func, output)
-
-    def name(self) -> str:
-        """
-        The name of the function implementing the step.
-        """
-        return self.func.name
+        if self.name in Step.by_name:
+            conflicting = Step.by_name[self.name].function
+            raise RuntimeError('Conflicting definitions for the step: %s '
+                               'in both: %s.%s '
+                               'and: %s.%s'
+                               % (self.name,
+                                  conflicting.__module__, conflicting.__qualname__,
+                                  function.__module__, function.__qualname__))
+        Step.by_name[self.name] = self
 
 
 class UpToDate:
@@ -331,7 +552,7 @@ class UpToDate:
         """
         Record a new up-to-date target.
         """
-        #: The step (with parameters) that updated the target.
+        #: The step (and parameters) that updated the target.
         self.producer = producer
 
         #: The modified time of the target (in nanoseconds).
@@ -366,8 +587,8 @@ class PersistentAction:
     """
     An action taken during step execution.
 
-    We can persist this to ensure the actions taken in a future invocation is identical,
-    to trigger rebuild if the list of actions changes.
+    We can persist this to ensure the action taken in a future invocation is
+    identical, to trigger rebuild if the list of actions changes.
     """
 
     def __init__(self, previous: Optional['PersistentAction'] = None) -> None:
@@ -492,9 +713,6 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
     #: A running counter of the executed actions.
     actions_count: int
 
-    #: A running counter of the submit actions.
-    submits_count: int
-
     #: A running counter of the skipped actions.
     skipped_count: int
 
@@ -511,7 +729,6 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Invocation.phony = set()
         Invocation.poisoned = set()
         Invocation.actions_count = 0
-        Invocation.submits_count = 0
         Invocation.skipped_count = 0
 
     def __init__(self,  # pylint: disable=too-many-statements
@@ -528,13 +745,11 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         #: The arguments to the invocation.
         self.kwargs = kwargs
-        if step is not None:
-            self.kwargs = step.func.invocation_kwargs(**kwargs)
 
         #: The full name (including parameters) of the invocation.
         self.name = 'make'
         if self.step is not None:
-            self.name = self.step.name()
+            self.name = self.step.name
         args_string = _dict_to_str(kwargs)
         if args_string:
             self.name += '/'
@@ -548,9 +763,6 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         if self.parent is None:
             #: A short unique stack to identify invocations in the log.
             self.stack: str = '#0'
-
-            #: Context for nested control over configuration parameters.
-            self.require_context: Dict[str, Any] = {}
         else:
             self.parent.sub_count += 1
             if self.parent.stack == '#0':
@@ -558,12 +770,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             else:
                 self.stack = '%s.%s' % (self.parent.stack, self.parent.sub_count)
 
-            self.require_context = self.parent.require_context.copy()
-
-        #: Context for local control over configuration parameters.
-        self.config_context: Dict[str, Any] = {}
-
-        if Prog._is_test:  # pylint: disable=protected-access
+        if _is_test:  # pylint: disable=protected-access
             self._log = self.stack + ' - ' + self.name
         else:
             self._log = self.name
@@ -628,31 +835,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         self.did_run_actions = False
 
         #: Whether we should remove stale outputs before running the next action.
-        self.should_remove_stale_outputs = Make.remove_stale_outputs
-
-        #: The path to the persistent configuration file, if it is used.
-        self.config_path: Optional[str] = None
-
-        #: The full configuration for the step.
-        self.full_config_values: Dict[str, Any] = {}
-
-        #: The persistent configuration for the step.
-        self.file_config_values: Dict[str, Any] = {}
-
-        #: The configuration value(s) that were used by the step (so far).
-        self.used_config_params: Set[str] = set()
-
-        #: Whether we computed the configuration.
-        self.computed_configuration = False
+        self.should_remove_stale_outputs = remove_stale_outputs.value
 
     def _restart(self) -> None:
-        if self.parent is None:
-            self.require_context = {}
-        else:
-            self.require_context = self.parent.require_context.copy()
-
-        self.config_context = {}
-
         self.required = []
         self.newest_input_path = None
         self.newest_input_mtime_ns = 0
@@ -669,38 +854,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         self.must_run_action = True
         self.did_skip_actions = False
-        assert self.should_remove_stale_outputs == Make.remove_stale_outputs
-
-        self.config_path = None
-        self.full_config_values = {}
-        self.file_config_values = {}
-        self.used_config_params = set()
-        self.computed_configuration = False
-
-    def _compute_config_values(self) -> None:
-        if self.computed_configuration or self.step is None:
-            return
-        assert 'step' not in self.kwargs
-
-        full_context = self.kwargs.copy()
-        full_context.update(self.require_context)
-        full_context.update(self.config_context)
-        full_context['step'] = self.step.name()
-
-        self.file_config_values = Config.values_for_context(full_context)
-        self.full_config_values = {}
-
-        for name, value in self.file_config_values.items():
-            if name[-1] == '?':
-                name = name[:-1]
-            self.full_config_values[name] = value
-
-        for name in ['run_prefix', 'run_suffix']:
-            for key in [name, name + '?']:
-                if key in self.file_config_values:
-                    del self.file_config_values[key]
-
-        self.computed_configuration = True
+        assert self.should_remove_stale_outputs == remove_stale_outputs.value
 
     def _verify_no_loop(self) -> None:
         call_chain = [self.name]
@@ -717,11 +871,11 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         These describe the last successful build of the outputs.
         """
-        path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.actions.yaml')
+        path = os.path.join(persistent_directory.value, self.name + '.actions.yaml')
         if not os.path.exists(path):
-            Prog.logger.log(Make.WHY,
-                            '%s - Must run actions because missing the persistent actions: %s',
-                            self._log, path)
+            logger.log(WHY,
+                       '%s - Must run actions because missing the persistent actions: %s',
+                       self._log, path)
             self.must_run_action = True
             return
 
@@ -730,21 +884,21 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 data = yaml.full_load(file.read())
             self.old_persistent_actions = PersistentAction.from_data(data['actions'])
             self.old_persistent_outputs = data['outputs']
-            Prog.logger.debug('%s - Read the persistent actions: %s', self._log, path)
+            logger.debug('%s - Read the persistent actions: %s', self._log, path)
 
         except BaseException:  # pylint: disable=broad-except
-            Prog.logger.warn('%s - Must run actions '
-                             'because read the invalid persistent actions: %s',
-                             self._log, path)
+            logger.warning('%s - Must run actions '
+                           'because read the invalid persistent actions: %s',
+                           self._log, path)
             self.must_run_action = True
 
     def remove_old_persistent_data(self) -> None:
         """
         Remove the persistent data from the disk in case the build failed.
         """
-        path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.actions.yaml')
+        path = os.path.join(persistent_directory.value, self.name + '.actions.yaml')
         if os.path.exists(path):
-            Prog.logger.debug('%s - Remove the persistent actions: %s', self._log, path)
+            logger.debug('%s - Remove the persistent actions: %s', self._log, path)
             os.remove(path)
 
         if '/' not in self.name:
@@ -760,8 +914,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         This is only done on a successful build.
         """
-        path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.actions.yaml')
-        Prog.logger.debug('%s - Write the persistent actions: %s', self._log, path)
+        path = os.path.join(persistent_directory.value, self.name + '.actions.yaml')
+        logger.debug('%s - Write the persistent actions: %s', self._log, path)
 
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
@@ -774,7 +928,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         Abort the invocation for some reason.
         """
-        Prog.logger.error(reason)
+        logger.error(reason)
         return self.abort(reason)
 
     def abort(self, reason: str) -> None:
@@ -782,7 +936,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Abort the invocation for some reason.
         """
         self.exception = StepException(reason)
-        if Make.failure_aborts_build:
+        if failure_aborts_build.value:
             raise self.exception
 
     def require(self, path: str) -> None:
@@ -794,7 +948,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         path = clean_path(path)
 
-        Prog.logger.debug('%s - Build the required: %s', self._log, path)
+        logger.debug('%s - Build the required: %s', self._log, path)
 
         self.required.append(path)
 
@@ -804,7 +958,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         up_to_date = Invocation.up_to_date.get(path)
         if up_to_date is not None:
-            Prog.logger.debug('%s - The required: %s was built', self._log, path)
+            logger.debug('%s - The required: %s was built', self._log, path)
             if self.new_persistent_actions:
                 self.new_persistent_actions[-1].require(path, UpToDate(up_to_date.producer))
             return
@@ -817,13 +971,13 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             stat = Stat.try_stat(path)
             if stat is None:
                 if dp.is_optional(path):
-                    Prog.logger.debug('%s - The optional required: %s '
-                                      "does not exist and can't be built", self._log, path)
+                    logger.debug('%s - The optional required: %s '
+                                 "does not exist and can't be built", self._log, path)
                 else:
                     self.log_and_abort("%s - Don't know how to make the required: %s"
                                        % (self._log, path))
                 return
-            Prog.logger.debug('%s - The required: %s is a source file', self._log, path)
+            logger.debug('%s - The required: %s is a source file', self._log, path)
             up_to_date = UpToDate('', stat.st_mtime_ns)
             Invocation.up_to_date[path] = up_to_date
             if self.new_persistent_actions:
@@ -833,9 +987,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         invocation = Invocation(step, **kwargs)
         if self.new_persistent_actions:
             self.new_persistent_actions[-1].require(path, UpToDate(invocation.name))
-        Prog.logger.debug('%s - The required: %s '
-                          'will be produced by the spawned: %s',
-                          self._log, path, invocation._log)  # pylint: disable=protected-access
+        logger.debug('%s - The required: %s '
+                     'will be produced by the spawned: %s',
+                     self._log, path, invocation._log)  # pylint: disable=protected-access
         self.async_actions.append(asyncio.Task(invocation.run()))  # type: ignore
 
     def producer_of(self, path: str) -> Tuple[Optional[Step], Optional[Dict[str, Any]]]:
@@ -857,7 +1011,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 self.log_and_abort('the output: %s '
                                    'may be created by both the step: %s '
                                    'and the step: %s'
-                                   % (path, producer.name(), step.name()))
+                                   % (path, producer.name, step.name))
                 return None, None
 
             producer = step
@@ -876,9 +1030,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             return await self.done(self.wait_for(active))
 
         self._become_current()
-        Prog.logger.log(Prog.TRACE, '%s - Call', self._log)
+        logger.log(TRACE, '%s - Call', self._log)
 
-        if Make.rebuild_changed_actions:
+        if rebuild_changed_actions.value:
             self.new_persistent_actions.append(PersistentAction())
             self.read_old_persistent_actions()
 
@@ -889,10 +1043,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         try:
             assert self.step is not None
             try:
-                await self.done(self.step.func.wrapped(**self.kwargs))
+                await self.done(self.step.function(**self.kwargs))
             except RestartException:
                 self._restart()
-                await self.done(self.step.func.wrapped(**self.kwargs))
+                await self.done(self.step.function(**self.kwargs))
             await self.done(self.sync())
             await self.done(self.collect_final_outputs())
 
@@ -912,17 +1066,16 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 if not self.did_skip_actions:
                     self.write_new_persistent_actions()
                 elif len(self.new_persistent_actions) < len(self.old_persistent_actions):
-                    Prog.logger.warn('%s - Skipped some action(s) '
-                                     'even though it has changed to remove some final action(s)',
-                                     self._log)
+                    logger.warning('%s - Skipped some action(s) '
+                                   'even though it has changed to remove some final action(s)',
+                                   self._log)
 
-            self._verify_used_config()
             if self.did_run_actions:
-                Prog.logger.log(Prog.TRACE, '%s - Done', self._log)
+                logger.log(TRACE, '%s - Done', self._log)
             elif self.did_skip_actions:
-                Prog.logger.log(Prog.TRACE, '%s - Skipped', self._log)
+                logger.log(TRACE, '%s - Skipped', self._log)
             else:
-                Prog.logger.log(Prog.TRACE, '%s - Complete', self._log)
+                logger.log(TRACE, '%s - Complete', self._log)
 
         else:
             while self.async_actions:
@@ -932,7 +1085,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     pass
             self.poison_all_outputs()
             self.remove_old_persistent_data()
-            Prog.logger.log(Prog.TRACE, '%s - Fail', self._log)
+            logger.log(TRACE, '%s - Fail', self._log)
 
         del Invocation.active[self.name]
         if self.condition is not None:
@@ -940,7 +1093,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             self.condition.notify_all()
             self.condition.release()
 
-        if self.exception is not None and Make.failure_aborts_build:
+        if self.exception is not None and failure_aborts_build.value:
             raise self.exception
 
         return self.exception
@@ -953,8 +1106,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         self._become_current()
 
-        Prog.logger.debug('%s - Paused by waiting for: %s',
-                          self._log, active._log)  # pylint: disable=protected-access
+        logger.debug('%s - Paused by waiting for: %s',
+                     self._log, active._log)  # pylint: disable=protected-access
 
         if active.condition is None:
             active.condition = asyncio.Condition()
@@ -963,8 +1116,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         await self.done(active.condition.wait())
         active.condition.release()
 
-        Prog.logger.debug('%s - Resumed by completion of: %s',
-                          self._log, active._log)  # pylint: disable=protected-access
+        logger.debug('%s - Resumed by completion of: %s',
+                     self._log, active._log)  # pylint: disable=protected-access
 
         return active.exception
 
@@ -985,19 +1138,19 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             try:
                 paths = dp.glob_paths(formatted_pattern)
                 if not paths:
-                    Prog.logger.debug('%s - Nonexistent optional output(s): %s',
-                                      self._log, pattern)
+                    logger.debug('%s - Nonexistent optional output(s): %s',
+                                 self._log, pattern)
                 else:
                     for path in paths:
                         self.initial_outputs.append(path)
                         if path == pattern:
-                            Prog.logger.debug('%s - Existing output: %s', self._log, path)
+                            logger.debug('%s - Existing output: %s', self._log, path)
                         else:
-                            Prog.logger.debug('%s - Existing output: %s -> %s',
-                                              self._log, pattern, path)
+                            logger.debug('%s - Existing output: %s -> %s',
+                                         self._log, pattern, path)
             except dp.NonOptionalException:
-                Prog.logger.debug('%s - Nonexistent required output(s): %s',
-                                  self._log, pattern)
+                logger.debug('%s - Nonexistent required output(s): %s',
+                             self._log, pattern)
                 self.missing_output = formatted_pattern
                 missing_outputs.append(dp.capture2re(formatted_pattern))
 
@@ -1016,10 +1169,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     continue
 
                 if Stat.exists(path):
-                    Prog.logger.debug('%s - Changed to abandon the output: %s', self._log, path)
+                    logger.debug('%s - Changed to abandon the output: %s', self._log, path)
                     self.abandoned_output = path
                 else:
-                    Prog.logger.debug('%s - Missing the old built output: %s', self._log, path)
+                    logger.debug('%s - Missing the old built output: %s', self._log, path)
                     self.missing_output = path
 
                 Stat.forget(path)
@@ -1038,10 +1191,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 self.oldest_output_path = output_path
                 self.oldest_output_mtime_ns = output_mtime_ns
 
-        if Prog.logger.isEnabledFor(logging.DEBUG) and self.oldest_output_path is not None:
-            Prog.logger.debug('%s - Oldest output: %s time: %s',
-                              self._log, self.oldest_output_path,
-                              _datetime_from_nanoseconds(self.oldest_output_mtime_ns))
+        if logger.isEnabledFor(logging.DEBUG) and self.oldest_output_path is not None:
+            logger.debug('%s - Oldest output: %s time: %s',
+                         self._log, self.oldest_output_path,
+                         _datetime_from_nanoseconds(self.oldest_output_mtime_ns))
 
     async def collect_final_outputs(self) -> None:  # pylint: disable=too-many-branches
         """
@@ -1057,8 +1210,6 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         assert self.step is not None
 
         did_sleep = False
-        waited = 0.0
-        next_wait = 0.1
 
         for pattern in sorted(self.step.output):  # pylint: disable=too-many-nested-blocks
             formatted_pattern = dp.fmt_capture(self.kwargs, pattern)
@@ -1067,57 +1218,40 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     UpToDate(self.name, self.newest_input_mtime_ns + 1)
                 continue
 
-            did_wait = False
-            while True:
-                try:
-                    paths = dp.glob_paths(formatted_pattern)
-                    if not paths:
-                        # TODO: Should we wait here for NFS timeout? We don't, so we might record
-                        # partial outputs on the persistent action.
-                        Prog.logger.debug('%s - Did not make the optional output(s): %s',
-                                          self._log, pattern)
-                    else:
-                        for path in paths:
-                            self.built_outputs.append(path)
-                            if did_wait:
-                                Prog.logger.warn('%s - Waited: %s seconds for the output: %s',
-                                                 self._log, round(waited, 2), path)
+            try:
+                paths = dp.glob_paths(formatted_pattern)
+                if not paths:
+                    logger.debug('%s - Did not make the optional output(s): %s',
+                                 self._log, pattern)
+                else:
+                    for path in paths:
+                        self.built_outputs.append(path)
 
-                            if Make.touch_success_outputs and not dp.is_exists(path):
-                                if not did_sleep:
-                                    await self.done(asyncio.sleep(0.01))
-                                    did_sleep = True
-                                Prog.logger.debug('%s - Touch the output: %s', self._log, path)
-                                Stat.touch(path)
+                        if touch_success_outputs.value:
+                            if not did_sleep:
+                                await self.done(asyncio.sleep(1.0))
+                                did_sleep = True
+                            logger.debug('%s - Touch the output: %s', self._log, path)
+                            Stat.touch(path)
 
-                            mtime_ns = Stat.stat(path).st_mtime_ns
-                            Invocation.up_to_date[path] = UpToDate(self.name, mtime_ns)
+                        mtime_ns = Stat.stat(path).st_mtime_ns
+                        Invocation.up_to_date[path] = UpToDate(self.name, mtime_ns)
 
-                            if Prog.logger.isEnabledFor(logging.DEBUG):
-                                if path == formatted_pattern:
-                                    Prog.logger.debug('%s - Has the output: %s time: %s',
-                                                      self._log, path,
-                                                      _datetime_from_nanoseconds(mtime_ns))
-                                else:
-                                    Prog.logger.debug('%s - Has the output: %s -> %s time: %s',
-                                                      self._log, pattern, path,
-                                                      _datetime_from_nanoseconds(mtime_ns))
+                        if logger.isEnabledFor(logging.DEBUG):
+                            if path == formatted_pattern:
+                                logger.debug('%s - Has the output: %s time: %s',
+                                             self._log, path,
+                                             _datetime_from_nanoseconds(mtime_ns))
+                            else:
+                                logger.debug('%s - Has the output: %s -> %s time: %s',
+                                             self._log, pattern, path,
+                                             _datetime_from_nanoseconds(mtime_ns))
 
-                    break
-
-                except dp.NonOptionalException:
-                    self._become_current()
-                    if Make.wait_nfs_outputs and waited < Make.nfs_outputs_timeout:
-                        await self.done(asyncio.sleep(next_wait))
-                        did_sleep = True
-                        waited += next_wait
-                        next_wait *= 2
-                        did_wait = True
-                        continue
-
-                    Prog.logger.error('%s - Missing the output(s): %s', self._log, pattern)
-                    missing_outputs = True
-                    break
+            except dp.NonOptionalException:
+                self._become_current()
+                logger.error('%s - Missing the output(s): %s', self._log, pattern)
+                missing_outputs = True
+                break
 
         if missing_outputs:
             self.abort('%s - Missing some output(s)' % self._log)
@@ -1130,7 +1264,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         for path in sorted(self.initial_outputs):
             if self.should_remove_stale_outputs and not is_precious(path):
-                Prog.logger.debug('%s - Remove the stale output: %s', self._log, path)
+                logger.debug('%s - Remove the stale output: %s', self._log, path)
                 self.remove_output(path)
             else:
                 Stat.forget(path)
@@ -1143,10 +1277,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         try:
             Stat.remove(path)
-            while Make.remove_empty_directories:
+            while remove_empty_directories.value:
                 path = os.path.dirname(path)
                 Stat.rmdir(path)
-                Prog.logger.debug('%s - Remove the empty directory: %s', self._log, path)
+                logger.debug('%s - Remove the empty directory: %s', self._log, path)
         except OSError:
             pass
 
@@ -1165,8 +1299,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 continue
             for path in dp.glob_paths(dp.optional(formatted_pattern)):
                 Invocation.poisoned.add(path)
-                if Make.remove_failed_outputs and not is_precious(path):
-                    Prog.logger.debug('%s - Remove the failed output: %s', self._log, path)
+                if remove_failed_outputs.value and not is_precious(path):
+                    logger.debug('%s - Remove the failed output: %s', self._log, path)
                     self.remove_output(path)
 
     def should_run_action(self) -> bool:  # pylint: disable=too-many-return-statements
@@ -1179,29 +1313,29 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if self.phony_outputs:
             # Either no output files (pure action) or missing output files.
-            Prog.logger.log(Make.WHY, '%s - Must run actions to satisfy the phony output: %s',
+            logger.log(WHY, '%s - Must run actions to satisfy the phony output: %s',
                             self._log, self.phony_outputs[0])
             return True
 
         if self.missing_output is not None:
-            Prog.logger.log(Make.WHY,
-                            '%s - Must run actions to create the missing output(s): %s',
-                            self._log, self.missing_output)
+            logger.log(WHY,
+                       '%s - Must run actions to create the missing output(s): %s',
+                       self._log, self.missing_output)
             return True
 
         if self.abandoned_output is not None:
-            Prog.logger.log(Make.WHY,
-                            '%s - Must run actions since it has changed to abandon the output: %s',
-                            self._log, self.abandoned_output)
+            logger.log(WHY,
+                       '%s - Must run actions since it has changed to abandon the output: %s',
+                       self._log, self.abandoned_output)
             return True
 
         if self.new_persistent_actions:
             # Compare with last successful build action.
             index = len(self.new_persistent_actions) - 1
             if index >= len(self.old_persistent_actions):
-                Prog.logger.log(Make.WHY,
-                                '%s - Must run actions since it has changed to add action(s)',
-                                self._log)
+                logger.log(WHY,
+                           '%s - Must run actions since it has changed to add action(s)',
+                           self._log)
                 return True
             new_action = self.new_persistent_actions[index]
             old_action = self.old_persistent_actions[index]
@@ -1212,9 +1346,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if self.newest_input_path is None:
             # No input files (pure computation).
-            Prog.logger.debug('%s - Can skip actions '
-                              'because all the outputs exist and there are no newer inputs',
-                              self._log)
+            logger.debug('%s - Can skip actions '
+                         'because all the outputs exist and there are no newer inputs',
+                         self._log)
             return False
 
         # There are input files:
@@ -1222,18 +1356,18 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         if self.oldest_output_path is not None \
                 and self.oldest_output_mtime_ns <= self.newest_input_mtime_ns:
             # Some output file is not newer than some input file.
-            Prog.logger.log(Make.WHY,
-                            '%s - Must run actions '
-                            'because the output: %s '
-                            'is not newer than the input: %s',
-                            self._log, self.oldest_output_path,
-                            self.newest_input_path)
+            logger.log(WHY,
+                       '%s - Must run actions '
+                       'because the output: %s '
+                       'is not newer than the input: %s',
+                       self._log, self.oldest_output_path,
+                       self.newest_input_path)
             return True
 
         # All output files are newer than all input files.
-        Prog.logger.debug('%s - Can skip actions '
-                          'because all the outputs exist and are newer than all the inputs',
-                          self._log)
+        logger.debug('%s - Can skip actions '
+                     'because all the outputs exist and are newer than all the inputs',
+                     self._log)
         return False
 
     def different_actions(self, old_action: PersistentAction, new_action: PersistentAction) -> bool:
@@ -1254,10 +1388,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             else:
                 new_action_kind = 'the command: %s' % ' '.join(new_action.command)
 
-            Prog.logger.log(Make.WHY,
-                            '%s - Must run actions '
-                            'because it has changed %s into %s',
-                            self._log, old_action_kind, new_action_kind)
+            logger.log(WHY,
+                       '%s - Must run actions '
+                       'because it has changed %s into %s',
+                       self._log, old_action_kind, new_action_kind)
             return True
 
         return False
@@ -1270,38 +1404,38 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         for new_path in sorted(new_required.keys()):
             if new_path not in old_required:
-                Prog.logger.log(Make.WHY,
-                                '%s - Must run actions because it has changed to require: %s',
-                                self._log, new_path)
+                logger.log(WHY,
+                           '%s - Must run actions because it has changed to require: %s',
+                           self._log, new_path)
                 return True
 
         for old_path in sorted(old_required.keys()):
             if old_path not in new_required:
-                Prog.logger.log(Make.WHY,
-                                '%s - Must run actions because it has changed to not require: %s',
-                                self._log, old_path)
+                logger.log(WHY,
+                           '%s - Must run actions because it has changed to not require: %s',
+                           self._log, old_path)
                 return True
 
         for path in sorted(new_required.keys()):
             old_up_to_date = old_required[path]
             new_up_to_date = new_required[path]
             if old_up_to_date.producer != new_up_to_date.producer:
-                Prog.logger.log(Make.WHY,
-                                '%s - Must run actions '
-                                'because the producer of the required: %s '
-                                'has changed from: %s into: %s',
-                                self._log, path,
-                                (old_up_to_date.producer or 'source file'),
-                                (new_up_to_date.producer or 'source file'))
+                logger.log(WHY,
+                           '%s - Must run actions '
+                           'because the producer of the required: %s '
+                           'has changed from: %s into: %s',
+                           self._log, path,
+                           (old_up_to_date.producer or 'source file'),
+                           (new_up_to_date.producer or 'source file'))
                 return True
             if not is_exists(path) and old_up_to_date.mtime_ns != new_up_to_date.mtime_ns:
-                Prog.logger.log(Make.WHY,
-                                '%s - Must run actions '
-                                'because the modification time of the required: %s '
-                                'has changed from: %s into: %s',
-                                self._log, path,
-                                _datetime_from_nanoseconds(old_up_to_date.mtime_ns),
-                                _datetime_from_nanoseconds(new_up_to_date.mtime_ns))
+                logger.log(WHY,
+                           '%s - Must run actions '
+                           'because the modification time of the required: %s '
+                           'has changed from: %s into: %s',
+                           self._log, path,
+                           _datetime_from_nanoseconds(old_up_to_date.mtime_ns),
+                           _datetime_from_nanoseconds(new_up_to_date.mtime_ns))
                 return True
 
         return False
@@ -1340,17 +1474,17 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         log_command = ' '.join(log_parts)
 
         if self.exception is not None:
-            Prog.logger.debug("%s - Can't run: %s", self._log, log_command)
+            logger.debug("%s - Can't run: %s", self._log, log_command)
             raise self.exception
 
         if self.new_persistent_actions:
             self.new_persistent_actions[-1].run_action(persistent_parts)
 
         if not self.should_run_action():
-            if Make.log_skipped_actions and not is_silent:
-                Prog.logger.info('%s - Skip: %s', self._log, log_command)
+            if log_skipped_actions.value and not is_silent:
+                logger.info('%s - Skip: %s', self._log, log_command)
             else:
-                Prog.logger.debug('%s - Skip: %s', self._log, log_command)
+                logger.debug('%s - Skip: %s', self._log, log_command)
             self.did_skip_actions = True
             if self.new_persistent_actions:
                 self.new_persistent_actions.append(  #
@@ -1360,7 +1494,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if self.did_skip_actions:
             self.must_run_action = True
-            Prog.logger.debug('Must restart step to run skipped action(s)')
+            logger.debug('Must restart step to run skipped action(s)')
             raise RestartException('To run skipped action(s)')
 
         self.must_run_action = True
@@ -1378,9 +1512,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             self.oldest_output_path = None
 
             if is_silent:
-                Prog.logger.debug('%s - Run: %s', self._log, log_command)
+                logger.debug('%s - Run: %s', self._log, log_command)
             else:
-                Prog.logger.info('%s - Run: %s', self._log, log_command)
+                logger.info('%s - Run: %s', self._log, log_command)
 
             sub_process = await self.done(runner(*run_parts))
             exit_status = await self.done(sub_process.wait())
@@ -1394,17 +1528,17 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 self.log_and_abort('%s - Failure: %s' % (self._log, log_command))
                 return
 
-            Prog.logger.log(Prog.TRACE, '%s - Success: %s', self._log, log_command)
+            logger.log(TRACE, '%s - Success: %s', self._log, log_command)
         finally:
             self._become_current()
             if resources:
-                if Prog.logger.isEnabledFor(logging.DEBUG):
-                    Prog.logger.debug('%s - Free resources: %s',
-                                      self._log, _dict_to_str(resources))
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug('%s - Free resources: %s',
+                                 self._log, _dict_to_str(resources))
                 Resources.free(resources)
-                if Prog.logger.isEnabledFor(logging.DEBUG):
-                    Prog.logger.debug('%s - Available resources: %s',
-                                      self._log, _dict_to_str(Resources.available))
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug('%s - Available resources: %s',
+                                 self._log, _dict_to_str(Resources.available))
                 await self.done(Resources.condition.acquire())
                 Resources.condition.notify_all()
                 Resources.condition.release()
@@ -1414,21 +1548,21 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         while True:
             if Resources.have(amounts):
-                if Prog.logger.isEnabledFor(logging.DEBUG):
-                    Prog.logger.debug('%s - Grab resources: %s',
-                                      self._log, _dict_to_str(amounts))
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug('%s - Grab resources: %s',
+                                 self._log, _dict_to_str(amounts))
                 Resources.grab(amounts)
-                if Prog.logger.isEnabledFor(logging.DEBUG):
-                    Prog.logger.debug('%s - Available resources: %s',
-                                      self._log, _dict_to_str(Resources.available))
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug('%s - Available resources: %s',
+                                 self._log, _dict_to_str(Resources.available))
                 return
 
-            if Prog.logger.isEnabledFor(logging.DEBUG):
-                if Prog.logger.isEnabledFor(logging.DEBUG):
-                    Prog.logger.debug('%s - Available resources: %s',
-                                      self._log, _dict_to_str(Resources.available))
-                    Prog.logger.debug('%s - Paused by waiting for resources: %s',
-                                      self._log, _dict_to_str(amounts))
+            if logger.isEnabledFor(logging.DEBUG):
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug('%s - Available resources: %s',
+                                 self._log, _dict_to_str(Resources.available))
+                    logger.debug('%s - Paused by waiting for resources: %s',
+                                 self._log, _dict_to_str(amounts))
 
             await self.done(Resources.condition.acquire())
             await self.done(Resources.condition.wait())
@@ -1444,7 +1578,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         self._become_current()
 
         if self.async_actions:
-            Prog.logger.debug('%s - Sync', self._log)
+            logger.debug('%s - Sync', self._log)
             results: List[Optional[StepException]] = \
                 await self.done(asyncio.gather(*self.async_actions))
             if self.exception is None:
@@ -1454,7 +1588,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                         break
             self.async_actions = []
 
-        Prog.logger.debug('%s - Synced', self._log)
+        logger.debug('%s - Synced', self._log)
 
         failed_inputs = False
         for path in sorted(self.required):
@@ -1464,8 +1598,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     level = logging.ERROR
                 else:
                     level = logging.DEBUG
-                Prog.logger.log(level, '%s - The required: %s has failed to build',
-                                self._log, path)
+                logger.log(level, '%s - The required: %s has failed to build',
+                           self._log, path)
                 Invocation.poisoned.add(path)
                 failed_inputs = True
                 continue
@@ -1474,7 +1608,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 assert dp.is_optional(path)
                 continue
 
-            Prog.logger.debug('%s - Has the required: %s', self._log, path)
+            logger.debug('%s - Has the required: %s', self._log, path)
 
             if dp.is_exists(path):
                 continue
@@ -1503,114 +1637,15 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     assert full_up_to_date.producer == partial_up_to_date.producer
                     partial_up_to_date.mtime_ns = full_up_to_date.mtime_ns
 
-        if Prog.logger.isEnabledFor(logging.DEBUG) and self.oldest_output_path is not None:
+        if logger.isEnabledFor(logging.DEBUG) and self.oldest_output_path is not None:
             if self.newest_input_path is None:
-                Prog.logger.debug('%s - No inputs', self._log)
+                logger.debug('%s - No inputs', self._log)
             else:
-                Prog.logger.debug('%s - Newest input: %s time: %s',
-                                  self._log, self.newest_input_path,
-                                  _datetime_from_nanoseconds(self.newest_input_mtime_ns))
+                logger.debug('%s - Newest input: %s time: %s',
+                             self._log, self.newest_input_path,
+                             _datetime_from_nanoseconds(self.newest_input_mtime_ns))
 
         return None
-
-    def config_param(self, name: str, default: Any = None,
-                     *, keep_in_file: bool = False, is_required: bool = False) -> Any:
-        """
-        Access the value of a parameter from the step-specific configuration.
-
-        If ``keep_in_file`` is ``False``, then the parameter will be removed from the generated
-        persistent configuration file (if any). This ensures that when changing parameters that only
-        affect the internals of the build step, the resulting actions will not be triggered unless
-        they actually changed as well.
-        """
-        self._compute_config_values()
-        value = self.full_config_values.get(name, default)
-
-        if is_required and value is None:
-            self.log_and_abort('%s - No value for the step configuration parameter: %s'
-                               % (self._log, name))
-
-        if not keep_in_file:
-            for name_in_file in [name, name + '?']:
-                if name_in_file in self.file_config_values:
-                    del self.file_config_values[name_in_file]
-
-        self.used_config_params.add(name)
-
-        return value
-
-    def config_file(self) -> Optional[str]:
-        """
-        Use the step-specific configuration file in the following step action(s).
-        """
-        if self.config_path is not None:
-            return self.config_path or None
-        self._compute_config_values()
-
-        if not self.file_config_values:
-            new_config_text = ''
-        else:
-            new_config_text = yaml.dump(self.file_config_values)
-            for name in self.file_config_values:
-                if name.endswith('?'):
-                    name = name[:-1]
-                self.used_config_params.add(name)
-
-        config_path = os.path.join(Make.PERSISTENT_DIRECTORY, self.name + '.config.yaml')
-
-        if not new_config_text:
-            self.config_path = ''
-            if os.path.exists(config_path):
-                Prog.logger.log(Make.WHY,
-                                '%s - Must run actions '
-                                'because removing the unused persistent configuration: %s',
-                                self._log, config_path)
-
-                self.must_run_action = True
-                Stat.remove(config_path)
-            else:
-                Prog.logger.debug('%s - No need for a persistent configuration: %s',
-                                  self._log, config_path)
-            return None
-
-        self.config_path = config_path
-        if os.path.exists(config_path):
-            with open(config_path, 'r') as file:
-                old_config_text = file.read()
-            if new_config_text == old_config_text:
-                Prog.logger.debug('%s - Use the same persistent configuration: %s',
-                                  self._log, config_path)
-                return self.config_path
-
-            Prog.logger.log(Make.WHY,
-                            '%s - Must run actions '
-                            'because changed the persistent configuration: %s',
-                            self._log, config_path)
-            Prog.logger.debug('%s - From the old persistent configuration:\n%s',
-                              self._log, old_config_text)
-            Prog.logger.debug('%s - To the new persistent configuration:\n%s',
-                              self._log, new_config_text)
-        else:
-            Prog.logger.log(Make.WHY,
-                            '%s - Must run actions '
-                            'because creating the missing persistent configuration: %s',
-                            self._log, config_path)
-
-        self.must_run_action = True
-        os.makedirs(os.path.dirname(config_path), exist_ok=True)
-        with open(config_path, 'w') as file:
-            file.write(new_config_text)
-        return self.config_path
-
-    def _verify_used_config(self) -> None:
-        self._compute_config_values()
-
-        unused_names = sorted([name
-                               for name in self.file_config_values
-                               if not name.endswith('?') and name not in self.used_config_params])
-        if unused_names:
-            self.log_and_abort('%s - Unused step configuration parameter(s): %s'
-                               % (self._log, ', '.join(unused_names)))
 
     async def done(self, awaitable: Awaitable) -> Any:
         """
@@ -1634,7 +1669,7 @@ def _datetime_from_str(string: str) -> datetime:
 
 
 def _datetime_from_nanoseconds(nanoseconds: int) -> str:
-    if not Prog._is_test:  # pylint: disable=protected-access
+    if not _is_test:  # pylint: disable=protected-access
         seconds = datetime.fromtimestamp(nanoseconds // 1_000_000_000).strftime('%Y-%m-%d %H:%M:%S')
         fraction = '%09d' % (nanoseconds % 1_000_000_000)
         return '%s.%s' % (seconds, fraction)
@@ -1676,7 +1711,7 @@ def _datetime_from_nanoseconds(nanoseconds: int) -> str:
 
 
 def _nanoseconds_from_datetime_str(string: str) -> int:
-    if Prog._is_test:  # pylint: disable=protected-access
+    if _is_test:  # pylint: disable=protected-access
         return _NANOSECONDS_OF_QUANTIZED[string]
     seconds_string, nanoseconds_string = string.split('.')
 
@@ -1704,7 +1739,8 @@ def step(output: Strings) -> Callable[[Callable], Callable]:
     function.
     """
     def _wrap(wrapped: Callable) -> Callable:
-        return Step.collect(wrapped, output).func.wrapper
+        Step(wrapped, output)
+        return wrapped
     return _wrap
 
 
@@ -1790,301 +1826,95 @@ async def espawn(*templates: Strings, **resources: int) -> None:
     await spawn(e(*templates), **resources)
 
 
-async def submit(*command: Strings, **resources: int) -> None:
-    """
-    Execute an external command using a submit prefix.
-
-    This allows the action configuration file to specify a ``run_prefix`` and/or ``run_suffix``
-    injected before and/or after the spawned command. The result is treated as a shell command. This
-    allows setting up environment variables, submitting the command to execute on a compute cluster,
-    etc.
-    """
-    current = Invocation.current
-
-    full_context = current.kwargs.copy()
-    full_context.update(current.require_context)
-    full_context.update(current.config_context)
-    assert current.step is not None
-    full_context['step'] = current.step.name()
-    Invocation.submits_count += 1
-    full_context['submit_id'] = Invocation.submits_count
-
-    prefix = current.config_param('run_prefix', [])
-    suffix = current.config_param('run_suffix', [])
-    if not prefix and not suffix:
-        await spawn(*command, **resources)
-        return
-
-    parts = list(dp.each_string(*command))
-    if prefix and parts and parts[0].startswith('@'):
-        if parts[0] == '@':
-            parts = parts[1:]
-        else:
-            parts[0] = parts[0][1:]
-
-        if not prefix[0].startswith('@'):
-            prefix[0] = '@' + prefix[0]
-
-    prefix = [dp.phony(part.format(**full_context)) for part in dp.each_string(prefix)]
-    wrapped = [dp.copy_annotations(part, shlex.quote(part)) for part in parts]
-    suffix = [dp.phony(part.format(**full_context)) for part in dp.each_string(suffix)]
-
-    await shell(*prefix, *wrapped, *suffix, **resources)
-
-
-async def esubmit(*templates: Strings, **resources: int) -> None:
-    """
-    Similar to :py:func:`dynamake.make.submit`, but first :py:func:`dynamake.make.e`-xpands each
-    parameter.
-
-    That is, ``esubmit(...)`` is the same as ``submit(e(...))``.
-    """
-    await submit(e(*templates), **resources)
-
-
 def log_prefix() -> str:
     """
-    The prefix for log messages.
+    A prefix for log messages.
     """
     return Invocation.current._log  # pylint: disable=protected-access
 
 
-def require_context() -> Dict[str, Any]:
-    """
-    Access the context used by steps for building required input files.
-
-    Modifications to this context will be visible in the configuration context of steps invoked to
-    create required input files.
-
-    .. note::
-
-        Once a required file was already built to be used as an input for some step, then the
-        contexts specified by other steps (requiring the same file) will be silently ignored.
-    """
-    return Invocation.current.require_context
-
-
-@contextmanager
-def config_context(**values: Any) -> Iterator[None]:
-    """
-    Provide additional context information for computing configuration parameters.
-
-    Writing:
-
-    .. code-block:: python
-
-        with config_context(foo=value):
-            bar = config_param('baz')
-            call(...)
-
-    Will (re)compute the configuration parameters, taking into account the specified context
-    parameters. The configuration parameters can be queried as usual:
-
-    .. code-block:: yaml
-
-        - when: { foo: value }
-          then: { ... }
-
-    However, this will fail when trying to match steps when ``foo`` does not appear in the context.
-    Avoid this by further restricting the ``when`` clause, either by adding a ``step`` constraint,
-    or by testing that ``foo`` does appear in the context:
-
-    .. code-block:: yaml
-
-        - when: { context_contains: foo, foo: value }
-          then: { ... }
-
-    .. note::
-
-        The path of the :py:func:`dynamake.make.config_file` is **not** affected by the context,
-        even though the content of the file **is** affected. Therefore, do **not** invoke
-        ``config_file`` both inside and outside a ``config_context`` block in the same step.
-
-        Similarly, the contexts of steps invoked to build required input file(s) are
-        **not** affected by the ``config_context``. It only affects the current step.
-    """
-    old_config_context = Invocation.current.config_context.copy()
-    old_config_path = Invocation.current.config_path
-    old_full_config_values = Invocation.current.full_config_values
-    old_file_config_values = Invocation.current.file_config_values
-    old_computed_configuration = Invocation.current.computed_configuration
-
-    Invocation.current.config_context.update(values)
-    Invocation.current.config_path = None
-    Invocation.current.full_config_values = {}
-    Invocation.current.file_config_values = {}
-    Invocation.current.computed_configuration = False
-
-    try:
-        yield None
-    finally:
-        Invocation.current.config_context = old_config_context
-        Invocation.current.config_path = old_config_path
-        Invocation.current.full_config_values = old_full_config_values
-        Invocation.current.file_config_values = old_file_config_values
-        Invocation.current.computed_configuration = old_computed_configuration
-
-
-def config_param(name: str, default: Any = None,
-                 *, keep_in_file: bool = False, is_required: bool = False) -> Any:
-    """
-    Access the value of a parameter from the step-specific configuration.
-    """
-    return Invocation.current.config_param(name, default, keep_in_file=keep_in_file,
-                                           is_required=is_required)
-
-
-def config_file() -> Optional[str]:
-    """
-    Use the step-specific configuration file in the following step action(s).
-    """
-    return Invocation.current.config_file()
-
-
-def _define_parameters() -> None:
-    Param(name='failure_aborts_build', short='fab', metavar='BOOL', default=True,
-          parser=dp.str2bool, group='global options',
-          description='Whether to stop the script if any action fails')
-
-    Param(name='remove_stale_outputs', short='dso', metavar='BOOL', default=True,
-          parser=dp.str2bool, group='global options',
-          description='Whether to remove old output files before executing an action')
-
-    Param(name='wait_nfs_outputs', short='wno', metavar='BOOL', default=False,
-          parser=dp.str2bool, group='global options',
-          description='Whether to wait before assuming an output file does not exist')
-
-    Param(name='nfs_outputs_timeout', short='not', metavar='SECONDS', default=60,
-          parser=dp.str2int(min=1), group='global options',
-          description='The amount of time to wait for slow NFS outputs')
-
-    Param(name='touch_success_outputs', short='tso', metavar='BOOL', default=False,
-          parser=dp.str2bool, group='global options',
-          description='Whether to touch output files on a successful action '
-          'to ensure they are newer than the input file(s)')
-
-    Param(name='remove_failed_outputs', short='dfo', metavar='BOOL', default=True,
-          parser=dp.str2bool, group='global options',
-          description='Whether to remove output files on a failing action')
-
-    Param(name='remove_empty_directories', short='ded', metavar='BOOL', default=False,
-          parser=dp.str2bool, group='global options',
-          description='Whether to remove empty directories when deleting the last file in them')
-
-    Param(name='log_skipped_actions', short='lsa', metavar='BOOL', default=False,
-          parser=dp.str2bool, group='global options',
-          description='Whether to log (level INFO) skipped actions')
-
-    Param(name='rebuild_changed_actions', short='rca', metavar='BOOL', default=True,
-          parser=dp.str2bool, group='global options',
-          description='Whether to rebuild outputs if the actions have changed')
-
-    @config(top=True, parallel=True)
-    def _use_parameters(  # pylint: disable=unused-argument,too-many-arguments
-        failure_aborts_build: bool = env(),
-        remove_stale_outputs: bool = env(),
-        wait_nfs_outputs: bool = env(),
-        nfs_outputs_timeout: int = env(),
-        touch_success_outputs: bool = env(),
-        remove_failed_outputs: bool = env(),
-        remove_empty_directories: bool = env(),
-        log_skipped_actions: bool = env(),
-        rebuild_changed_actions: bool = env(),
-    ) -> None:
-        pass
-
-
-def _collect_parameters() -> None:
-    Resources.available['jobs'] = Resources.total['jobs'] = processes_for(0)
-    Make.failure_aborts_build = Prog.get_parameter('failure_aborts_build')
-    Make.remove_stale_outputs = Prog.get_parameter('remove_stale_outputs')
-    Make.wait_nfs_outputs = Prog.get_parameter('wait_nfs_outputs')
-    Make.nfs_outputs_timeout = Prog.get_parameter('nfs_outputs_timeout')
-    Make.touch_success_outputs = Prog.get_parameter('touch_success_outputs')
-    Make.remove_failed_outputs = Prog.get_parameter('remove_failed_outputs')
-    Make.remove_empty_directories = Prog.get_parameter('remove_empty_directories')
-    Make.log_skipped_actions = Prog.get_parameter('log_skipped_actions')
-    Make.rebuild_changed_actions = Prog.get_parameter('rebuild_changed_actions')
-
-
 def make(parser: ArgumentParser, *,
-         default_targets: Strings = 'all', logger_name: Optional[str] = None,
+         default_targets: Strings = 'all',
+         logger_name: str = 'dynamake',
          adapter: Optional[Callable[[Namespace], None]] = None) -> None:
     """
     A generic ``main`` function for ``DynaMake``.
 
-    The optional ``adapter`` may perform additional adaptation of the execution environment based on
-    the parsed command-line arguments before the actual function(s) are invoked.
+    If no explicit targets are given, will build the ``default_targets``
+    (default: ``all``).
+
+    Uses the ``logger_name`` (default: ``dynamake``) to create the global
+    logger.
+
+    The optional ``adapter`` may perform additional adaptation of the execution
+    environment based on the parsed command-line arguments before the actual
+    function(s) are invoked.
     """
-    Func.collect_indirect_invocations = False
-    Prog.load_modules()
-    Prog.logger = logging.getLogger(logger_name or sys.argv[0])
-    logging.getLogger('asyncio').setLevel('WARN')
     default_targets = dp.flatten(default_targets)
+
+    _load_modules()
+
     parser.add_argument('TARGET', nargs='*',
                         help='The file or target to make (default: %s)' % ' '.join(default_targets))
-    group = Prog.add_global_parameters(parser)
-    group.add_argument('--list_steps', '-ls', default=False, action='store_true',
-                       help='List the build steps and their targets, and exit.')
-    group.add_argument('--step_config', '-sc', metavar='FILE', action='append',
-                       help='Load a step parameters configuration YAML file')
 
-    Prog.add_sorted_parameters(parser, extra_help=_extra_parameter_help)
+    parser.add_argument('--module', '-m', metavar='MODULE', action='append',
+                        help='A Python module to load (containing function definitions)')
+
+    Parameter.add_to_parser(parser)
+
+    parser.add_argument('--list_steps', '-ls', default=False, action='store_true',
+                        help='List all the build steps and their targets, and exit.')
+
     args = parser.parse_args()
-    Prog.parse_args(args)
+    Parameter.parse_args(args)
 
-    if os.path.exists(Make.DEFAULT_STEP_CONFIG):
-        Config.load(Make.DEFAULT_STEP_CONFIG)
-    for path in (args.step_config or []):
-        Config.load(path)
+    _setup_logging(logger_name)
 
     if adapter is not None:
         adapter(args)
 
-    _collect_parameters()
+    _compute_jobs()
 
     if args.list_steps:
         _list_steps()
-
-    _build_targets([path for path in args.TARGET if path is not None]
-                   or dp.flatten(default_targets))
-
-
-def _build_targets(targets: List[str]) -> None:
-    Prog.logger.log(Prog.TRACE, '%s - Targets: %s',
-                    Invocation.top._log, ' '.join(targets))  # pylint: disable=protected-access
-    if Prog.logger.isEnabledFor(logging.DEBUG):
-        for value in Resources.available.values():
-            if value > 0:
-                Prog.logger.debug('%s - Available resources: %s',
-                                  Invocation.top._log,  # pylint: disable=protected-access
-                                  _dict_to_str(Resources.available))
-                break
-    # TODO: Switch to `asyncio.run(sync())` in Python 3.7.
-    try:
-        for target in targets:
-            require(target)
-        result: Optional[BaseException] = run(Invocation.top.sync())
-    except StepException as exception:  # pylint: disable=broad-except
-        result = exception
-
-    if result is None:
-        if Invocation.actions_count > 0:
-            Prog.logger.log(Prog.TRACE, '%s - Done',
-                            Invocation.top._log)  # pylint: disable=protected-access
-        elif Invocation.skipped_count > 0:
-            Prog.logger.log(Prog.TRACE, '%s - Skipped',
-                            Invocation.top._log)  # pylint: disable=protected-access
-        else:
-            Prog.logger.log(Prog.TRACE, '%s - Complete',
-                            Invocation.top._log)  # pylint: disable=protected-access
-        if not Prog._is_test:  # pylint: disable=protected-access
-            sys.exit(0)
     else:
-        Prog.logger.error('%s - Fail', Invocation.top._log)  # pylint: disable=protected-access
-        if not Prog._is_test:  # pylint: disable=protected-access
-            sys.exit(1)
-        raise result
+        _build_targets([path for path in args.TARGET if path is not None]
+                       or dp.flatten(default_targets))
+
+
+def _load_modules() -> None:
+    # TODO: This needs to be done before we set up the command line options
+    # parser, because the options depend on the loaded modules. Catch-22. This
+    # therefore employs a brutish option detection which may not be 100% correct.
+    did_import = False
+    for option, value in zip(sys.argv, sys.argv[1:]):
+        if option in ['-m', '--module']:
+            did_import = True
+            import_module(value)
+    if not did_import and os.path.exists(DEFAULT_MODULE + '.py'):
+        import_module(DEFAULT_MODULE)
+
+
+def _setup_logging(logger_name: str) -> None:
+    global logger  # pylint: disable=invalid-name
+    logger = logging.getLogger(logger_name)
+    logging.getLogger('asyncio').setLevel('WARN')
+
+    if not _is_test:
+        handler = logging.StreamHandler(sys.stderr)
+        log_format = '%(asctime)s - dynamake - %(levelname)s - %(message)s'
+        handler.setFormatter(LoggingFormatter(log_format))
+        logger.addHandler(handler)
+
+    logger.setLevel(log_level.value)
+
+
+def _compute_jobs() -> None:
+    if jobs.value < 0:
+        jobs.value = (os.cpu_count() or 1) // -jobs.value
+        if jobs.value < 1:
+            jobs.value = 1
+    Resources.available['jobs'] = Resources.total['jobs'] = jobs.value
 
 
 def _list_steps() -> None:
@@ -2093,7 +1923,7 @@ def _list_steps() -> None:
         if not is_first:
             print()
         is_first = False
-        doc = step_data.func.wrapped.__doc__
+        doc = step_data.function.__doc__
         if doc:
             print('# ' + dedent(doc).strip().replace('\n', '\n# '))
         print('%s:' % name)
@@ -2111,12 +1941,83 @@ def _list_steps() -> None:
                 print('- %s: %s' % (output, ', '.join(properties)))
             else:
                 print('- %s' % output)
-    if not Prog._is_test:  # pylint: disable=protected-access
-        sys.exit(0)
 
+
+def _build_targets(targets: List[str]) -> None:
+    logger.log(TRACE, '%s - Targets: %s',
+               Invocation.top._log, ' '.join(targets))  # pylint: disable=protected-access
+    if logger.isEnabledFor(logging.DEBUG):
+        for value in Resources.available.values():
+            if value > 0:
+                logger.debug('%s - Available resources: %s',
+                             Invocation.top._log,  # pylint: disable=protected-access
+                             _dict_to_str(Resources.available))
+                break
+    try:
+        for target in targets:
+            require(target)
+        result: Optional[BaseException] = \
+            asyncio.get_event_loop().run_until_complete(Invocation.top.sync())
+    except StepException as exception:  # pylint: disable=broad-except
+        result = exception
+
+    if result is not None:
+        logger.error('%s - Fail', Invocation.top._log)  # pylint: disable=protected-access
+        if _is_test:  # pylint: disable=protected-access
+            raise result
+        sys.exit(1)
+
+    if Invocation.actions_count > 0:
+        logger.log(TRACE, '%s - Done',
+                   Invocation.top._log)  # pylint: disable=protected-access
+    elif Invocation.skipped_count > 0:
+        logger.log(TRACE, '%s - Skipped',
+                   Invocation.top._log)  # pylint: disable=protected-access
+    else:
+        logger.log(TRACE, '%s - Complete',
+                   Invocation.top._log)  # pylint: disable=protected-access
+
+
+def reset_make(is_test: bool = False, reset_test_times: bool = False) -> None:
+    """
+    Reset all the current state, for tests.
+    """
+    Parameter.reset()
+    _define_parameters()
+
+    Resources.reset()
+    Step.reset()
+    Invocation.reset()
+    Stat.reset()
+
+    if is_test:
+        global _is_test, logger  # pylint: disable=invalid-name
+        _is_test = True
+        logger = logging.getLogger('dynamake')
+        logger.setLevel('DEBUG')
+        logging.getLogger('asyncio').setLevel('WARN')
+
+    if reset_test_times:
+        _reset_test_dates()
+
+
+reset_make()
+
+
+def main() -> None:
+    """
+    Universal main function for invoking DynaMake steps.
+    """
+    make(argparse.ArgumentParser(description='Build some target(s) using DynaMake.'),
+         logger_name=sys.argv[0])
+
+
+if __name__ == '__main__':
+    main()
 
 # pylint: disable=function-redefined
 # pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
 
 @overload
 def e(string: str) -> str: ...  # pylint: disable=invalid-name
@@ -2204,43 +2105,3 @@ async def done(awaitable: Awaitable) -> Any:
     Await some non-DynaMake function.
     """
     return await Invocation.current.done(awaitable)
-
-
-def run(awaitable: Awaitable) -> Any:
-    """
-    A Python3.6 way to implement the `asyncio.run` function from Python 3.7.
-    """
-    return asyncio.get_event_loop().run_until_complete(awaitable)
-
-
-def _extra_parameter_help(parameter_name: str) -> str:
-    if parameter_name in Param.BUILTIN:
-        return ''
-    globs: List[str] = []
-    for func_name in Func.names_by_parameter[parameter_name]:
-        for pattern in Step.by_name[func_name].output:
-            globs.append(dp.capture2glob(pattern))
-    if not globs:
-        return ''
-    return '. Used when making: %s' % ' '.join(sorted(globs))
-
-
-logging.addLevelName(Make.WHY, 'WHY')
-
-
-def reset_make() -> None:
-    """
-    Reset all the current state, for tests.
-    """
-    reset_application()
-    Prog.DEFAULT_MODULE = 'DynaMake'
-    Prog.DEFAULT_CONFIG = 'DynaConf.yaml'
-    _define_parameters()
-    Resources.reset()
-    Make.reset()
-    Config.reset()
-    Invocation.reset()
-    Step.reset()
-
-
-reset_make()

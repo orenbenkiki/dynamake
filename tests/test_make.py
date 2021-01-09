@@ -4,28 +4,19 @@ Test the make utilities.
 
 # pylint: disable=too-many-lines
 
-from dynamake.make import config_context
-from dynamake.make import config_file
-from dynamake.make import config_param
-from dynamake.make import done
-from dynamake.make import env
-from dynamake.make import make
-from dynamake.make import override
-from dynamake.make import Param
-from dynamake.make import require
-from dynamake.make import require_context
-from dynamake.make import reset_make
-from dynamake.make import resource_parameters
-from dynamake.make import run
-from dynamake.make import shell
-from dynamake.make import spawn
-from dynamake.make import step
-from dynamake.make import StepException
-from dynamake.make import submit
-from dynamake.make import sync
-from dynamake.patterns import optional
-from dynamake.patterns import phony
-from dynamake.patterns import Stat
+from dynamake import done
+from dynamake import make
+from dynamake import optional
+from dynamake import Parameter
+from dynamake import phony
+from dynamake import require
+from dynamake import reset_make
+from dynamake import resource_parameters
+from dynamake import shell
+from dynamake import spawn
+from dynamake import step
+from dynamake import StepException
+from dynamake import sync
 from testfixtures import LogCapture  # type: ignore
 from tests import TestWithFiles
 from tests import TestWithReset
@@ -38,7 +29,6 @@ from typing import Tuple
 
 import argparse
 import asyncio
-import logging
 import os
 import sys
 
@@ -70,29 +60,6 @@ class TestMake(TestWithReset):
                                'specifies no output',
                                define)
 
-    def test_call_step(self) -> None:
-        called_function = False
-
-        @step(output='none')
-        async def function() -> None:
-            nonlocal called_function
-            called_function = True
-
-        run(function())
-        self.assertTrue(called_function)
-
-    def test_call_static_method(self) -> None:
-        class Klass:
-            called_static_method = False
-
-            @step(output='none')
-            @staticmethod
-            async def static_method() -> None:
-                Klass.called_static_method = True
-
-        run(Klass.static_method())
-        self.assertTrue(Klass.called_static_method)
-
     def test_conflicting_steps(self) -> None:
         @step(output='none')
         async def function() -> None:  # pylint: disable=unused-variable
@@ -100,51 +67,18 @@ class TestMake(TestWithReset):
 
         def _register() -> None:
             @step(output='none')
-            def function() -> None:  # pylint: disable=unused-variable
+            async def function() -> None:  # pylint: disable=unused-variable
                 pass
 
         self.assertRaisesRegex(RuntimeError,
-                               'Conflicting .* function: function .* '
+                               'Conflicting .* step: function .* '
                                'both: .*.test_conflicting_steps.<locals>.function '
                                'and: .*._register.<locals>.function',
                                _register)
 
-    def test_use_env_parameters(self) -> None:
-        Param(name='foo', default=0, parser=int, description='foo')
-        Param(name='bar', default=0, parser=int, description='bar')
-        Param(name='baz', default=0, parser=int, description='baz')
-
-        @step(output='use')
-        async def use_env(foo: int = env(), bar: int = env(), baz: int = env()) -> None:
-            self.assertEqual(foo, 0)
-            self.assertEqual(bar, 2)
-            self.assertEqual(baz, 3)
-
-        @step(output='set')
-        async def set_env(foo: int = env()) -> None:  # pylint: disable=unused-argument
-            self.assertEqual(foo, 1)
-            with override(baz=3):
-                await use_env(bar=2)
-
-        run(set_env(1))
-
-    def test_missing_env_parameters(self) -> None:
-        @step(output='use')
-        async def use_env(foo: int = env()) -> None:  # pylint: disable=unused-argument
-            pass
-
-        @step(output='none')
-        async def no_env() -> None:
-            use_env()
-
-        self.assertRaisesRegex(RuntimeError,
-                               'Missing .* parameter: foo .* '
-                               'function: .*.test_missing_env_parameters.<locals>.use_env',
-                               run, no_env())
-
     def test_bad_resources(self) -> None:
         self.assertRaisesRegex(RuntimeError,
-                               'Unknown parameter: foo',
+                               'Unknown resource parameter: foo',
                                resource_parameters, foo=1)
 
         self.assertRaisesRegex(RuntimeError,
@@ -156,9 +90,7 @@ class TestMain(TestWithFiles):
 
     def check(self, register: Callable, *, error: Optional[str] = None,
               log: Optional[List[Tuple[str, str, str]]] = None) -> None:
-        reset_make()
-        Stat.reset()
-        logging.getLogger('asyncio').setLevel('WARN')
+        reset_make(is_test=True)
         register()
 
         sys.argv += ['--log_level', 'DEBUG']
@@ -178,7 +110,7 @@ class TestMain(TestWithFiles):
             async def no_op() -> None:  # pylint: disable=unused-variable
                 pass
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
 
         self.check(_register, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -215,20 +147,19 @@ class TestMain(TestWithFiles):
 
     def test_generate_many(self) -> None:
         def _register() -> None:
-            Param(name='foo', default=1, parser=int, description='foo')
+            foo = Parameter(name='foo', default=1, parser=int, description='foo')
 
             @step(output=phony('all'))
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo.1.1')
 
             @step(output='foo.{*major}.{*_minor}')
-            async def make_foos(major: str, foo: int = env()) -> None:  # pylint: disable=unused-variable
-                for index in range(0, foo):
+            async def make_foos(major: str) -> None:  # pylint: disable=unused-variable
+                for index in range(0, foo.value):
                     await done(asyncio.sleep(1))
                     await shell('touch foo.{major}.{index}'.format(major=major, index=index))
 
-        sys.argv += ['--jobs', 'None']
-        sys.argv += ['--foo', '2']
+        sys.argv += ['--jobs', '0', '--foo', '2']
 
         self.check(_register, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -498,7 +429,7 @@ class TestMain(TestWithFiles):
                 require('foo')
                 await spawn('cp', 'foo', 'bar')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false', 'bar']
 
         write_file('foo', '!\n')
@@ -604,7 +535,7 @@ class TestMain(TestWithFiles):
         self.expect_file('bar', '?\n')
 
     def test_require_active(self) -> None:
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         def _register() -> None:
@@ -682,7 +613,7 @@ class TestMain(TestWithFiles):
             async def no_op() -> None:  # pylint: disable=unused-variable
                 pass
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, error='no_op - Missing some output.s.', log=[
@@ -709,7 +640,7 @@ class TestMain(TestWithFiles):
         os.makedirs('foo')
         write_file('foo/baz', 'z')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false']
         sys.argv += ['--remove_empty_directories', 'true', 'foo/bar']
 
@@ -750,7 +681,7 @@ class TestMain(TestWithFiles):
 
         write_file('foo', '!\n')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, log=[
@@ -812,7 +743,7 @@ class TestMain(TestWithFiles):
                 await shell('true')
 
         write_file('bar', '0\n')
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, log=[
@@ -948,7 +879,7 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 await shell('false')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, error='make_all - Failure: false', log=[
@@ -992,7 +923,7 @@ class TestMain(TestWithFiles):
                 await shell('touch baz')
                 await shell('false')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false']
         sys.argv += ['--failure_aborts_build', 'false']
 
@@ -1062,7 +993,7 @@ class TestMain(TestWithFiles):
 
         write_file('foo', '!\n')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, error='make_all - Failure: echo @ > all ; false', log=[
@@ -1124,7 +1055,7 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 await shell('touch all')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false']
         sys.argv += ['--touch_success_outputs', 'true']
 
@@ -1167,7 +1098,7 @@ class TestMain(TestWithFiles):
                 require('foo')
                 await shell('touch bar')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, log=[
@@ -1228,7 +1159,7 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, error="Don't know how to make the required: foo", log=[
@@ -1255,41 +1186,8 @@ class TestMain(TestWithFiles):
             ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
-    def test_slow_outputs(self) -> None:
-        def _register() -> None:
-            @step(output='all')
-            async def make_all() -> None:  # pylint: disable=unused-variable
-                await shell('(sleep 1 ; touch all) &')
-
-        sys.argv += ['--jobs', 'None']
-        sys.argv += ['--rebuild_changed_actions', 'false']
-        sys.argv += ['--wait_nfs_outputs', 'true']
-
-        self.check(_register, log=[
-            ('dynamake', 'TRACE', '#0 - make - Targets: all'),
-            ('dynamake', 'DEBUG', '#0 - make - Build the required: all'),
-            ('dynamake', 'DEBUG',
-             '#0 - make - The required: all will be produced by the spawned: #1 - make_all'),
-            ('dynamake', 'TRACE', '#1 - make_all - Call'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Nonexistent required output(s): all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'WHY',
-             '#1 - make_all - Must run actions to create the missing output(s): all'),
-            ('dynamake', 'INFO', '#1 - make_all - Run: (sleep 1 ; touch all) &'),
-            ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'TRACE', '#1 - make_all - Success: (sleep 1 ; touch all) &'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'WARNING',
-             '#1 - make_all - Waited: 1.5 seconds for the output: all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 1'),
-            ('dynamake', 'TRACE', '#1 - make_all - Done'),
-            ('dynamake', 'DEBUG', '#0 - make - Synced'),
-            ('dynamake', 'DEBUG', '#0 - make - Has the required: all'),
-            ('dynamake', 'TRACE', '#0 - make - Done'),
-        ])
-
     def test_require_optional(self) -> None:
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         def _register() -> None:
@@ -1373,7 +1271,7 @@ class TestMain(TestWithFiles):
 
     def test_optional_output(self) -> None:
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         def _register_without() -> None:
@@ -1507,7 +1405,7 @@ class TestMain(TestWithFiles):
         os.mkdir('.dynamake')
         write_file('.dynamake/make_all.actions.yaml', '*invalid')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
 
         self.check(_register, error='make_all - Failure: false', log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -1556,7 +1454,7 @@ class TestMain(TestWithFiles):
         os.makedirs('.dynamake/make_all')
         write_file('.dynamake/make_all/name=all.actions.yaml', '*invalid')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
 
         self.check(_register, error='make_all/name=all - Failure: false', log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -1606,7 +1504,7 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 await shell('touch all')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
 
         self.check(_register_without, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -1684,7 +1582,7 @@ class TestMain(TestWithFiles):
                 await shell('true')
                 await shell('touch all')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
 
         self.check(_register_with, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -1753,7 +1651,7 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 await shell('touch all ; sleep 1 ; touch foo')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
 
         self.check(_register_with, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -1850,7 +1748,7 @@ class TestMain(TestWithFiles):
                 await shell('touch all')
                 await shell('true')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
 
         self.check(_register_with, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -1922,7 +1820,7 @@ class TestMain(TestWithFiles):
         write_file('foo', '!\n')
         sleep(1)
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
 
         self.check(_register_without, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -1995,7 +1893,7 @@ class TestMain(TestWithFiles):
 
         write_file('foo', '!\n')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
 
         self.check(_register_with, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -2068,7 +1966,7 @@ class TestMain(TestWithFiles):
 
         write_file('foo', '0\n')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
 
         self.check(_register, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -2142,7 +2040,7 @@ class TestMain(TestWithFiles):
 
         write_file('foo', '!\n')
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
 
         self.check(_register_without, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -2231,305 +2129,6 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#0 - make - Done'),
         ])
 
-    def test_config_param(self) -> None:
-        def _register() -> None:
-            @step(output='all')
-            async def make_all() -> None:  # pylint: disable=unused-variable
-                foo = config_param('foo', '0')
-                await shell('echo %s > all' % foo)
-
-        sys.argv += ['--jobs', 'None']
-
-        self.check(_register, log=[
-            ('dynamake', 'TRACE', '#0 - make - Targets: all'),
-            ('dynamake', 'DEBUG', '#0 - make - Build the required: all'),
-            ('dynamake', 'DEBUG',
-             '#0 - make - The required: all will be produced by the spawned: #1 - make_all'),
-            ('dynamake', 'TRACE', '#1 - make_all - Call'),
-            ('dynamake', 'WHY',
-             '#1 - make_all - Must run actions because missing the persistent actions: '
-             '.dynamake/make_all.actions.yaml'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Nonexistent required output(s): all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'INFO', '#1 - make_all - Run: echo 0 > all'),
-            ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'TRACE', '#1 - make_all - Success: echo 0 > all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 1'),
-            ('dynamake', 'DEBUG',
-             '#1 - make_all - Write the persistent actions: .dynamake/make_all.actions.yaml'),
-            ('dynamake', 'TRACE', '#1 - make_all - Done'),
-            ('dynamake', 'DEBUG', '#0 - make - Synced'),
-            ('dynamake', 'DEBUG', '#0 - make - Has the required: all'),
-            ('dynamake', 'TRACE', '#0 - make - Done'),
-        ])
-
-        self.expect_file('all', '0\n')
-
-        write_file('DynaMake.yaml', '- { when: { step: make_all }, then: { foo: 1 } }\n')
-        write_file('conf.yaml', '- { when: { step: make_all }, then: { foo: 2 } }\n')
-
-        self.check(_register, log=[
-            ('dynamake', 'TRACE', '#0 - make - Targets: all'),
-            ('dynamake', 'DEBUG', '#0 - make - Build the required: all'),
-            ('dynamake', 'DEBUG',
-             '#0 - make - The required: all will be produced by the spawned: #1 - make_all'),
-            ('dynamake', 'TRACE', '#1 - make_all - Call'),
-            ('dynamake', 'DEBUG',
-             '#1 - make_all - Read the persistent actions: .dynamake/make_all.actions.yaml'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Existing output: all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Oldest output: all time: 1'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'DEBUG', '#1 - make_all - No inputs'),
-            ('dynamake', 'WHY',
-             '#1 - make_all - Must run actions because it has changed '
-             'the command: echo 0 > all into the command: echo 1 > all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Remove the stale output: all'),
-            ('dynamake', 'INFO', '#1 - make_all - Run: echo 1 > all'),
-            ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'TRACE', '#1 - make_all - Success: echo 1 > all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 2'),
-            ('dynamake', 'DEBUG',
-             '#1 - make_all - Write the persistent actions: .dynamake/make_all.actions.yaml'),
-            ('dynamake', 'TRACE', '#1 - make_all - Done'),
-            ('dynamake', 'DEBUG', '#0 - make - Synced'),
-            ('dynamake', 'DEBUG', '#0 - make - Has the required: all'),
-            ('dynamake', 'TRACE', '#0 - make - Done'),
-        ])
-
-        self.expect_file('all', '1\n')
-
-        sys.argv += ['--step_config', 'conf.yaml']
-
-        self.check(_register, log=[
-            ('dynamake', 'TRACE', '#0 - make - Targets: all'),
-            ('dynamake', 'DEBUG', '#0 - make - Build the required: all'),
-            ('dynamake', 'DEBUG',
-             '#0 - make - The required: all will be produced by the spawned: #1 - make_all'),
-            ('dynamake', 'TRACE', '#1 - make_all - Call'),
-            ('dynamake', 'DEBUG',
-             '#1 - make_all - Read the persistent actions: .dynamake/make_all.actions.yaml'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Existing output: all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Oldest output: all time: 2'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'DEBUG', '#1 - make_all - No inputs'),
-            ('dynamake', 'WHY',
-             '#1 - make_all - Must run actions because it has changed '
-             'the command: echo 1 > all into the command: echo 2 > all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Remove the stale output: all'),
-            ('dynamake', 'INFO', '#1 - make_all - Run: echo 2 > all'),
-            ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'TRACE', '#1 - make_all - Success: echo 2 > all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 3'),
-            ('dynamake', 'DEBUG',
-             '#1 - make_all - Write the persistent actions: .dynamake/make_all.actions.yaml'),
-            ('dynamake', 'TRACE', '#1 - make_all - Done'),
-            ('dynamake', 'DEBUG', '#0 - make - Synced'),
-            ('dynamake', 'DEBUG', '#0 - make - Has the required: all'),
-            ('dynamake', 'TRACE', '#0 - make - Done'),
-        ])
-
-        self.expect_file('all', '2\n')
-
-    def test_unused_config_param(self) -> None:
-        def _register() -> None:
-            @step(output=phony('all'))
-            async def make_all() -> None:  # pylint: disable=unused-variable
-                config_param('foo')
-
-        write_file('DynaMake.yaml', """
-            - when: { step: make_all }
-              then:
-                foo: 0
-                bar: 1
-                baz?: 2
-        """)
-
-        sys.argv += ['--jobs', 'None']
-        sys.argv += ['--rebuild_changed_actions', 'false']
-
-        self.check(_register, error='Unused step configuration parameter.s.: bar', log=[
-            ('dynamake', 'TRACE', '#0 - make - Targets: all'),
-            ('dynamake', 'DEBUG', '#0 - make - Build the required: all'),
-            ('dynamake', 'DEBUG',
-             '#0 - make - The required: all will be produced by the spawned: #1 - make_all'),
-            ('dynamake', 'TRACE', '#1 - make_all - Call'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'ERROR', '#1 - make_all - Unused step configuration parameter(s): bar'),
-            ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'ERROR', '#0 - make - Fail'),
-        ])
-
-    def test_config_file(self) -> None:
-        def _register() -> None:
-            @step(output='all')
-            async def make_all() -> None:  # pylint: disable=unused-variable
-                config_file()
-                await shell('echo', config_file() or 'None', '> all')
-
-        sys.argv += ['--jobs', 'None']
-        sys.argv += ['--rebuild_changed_actions', 'false']
-
-        self.check(_register, log=[
-            ('dynamake', 'TRACE', '#0 - make - Targets: all'),
-            ('dynamake', 'DEBUG', '#0 - make - Build the required: all'),
-            ('dynamake', 'DEBUG',
-             '#0 - make - The required: all will be produced by the spawned: #1 - make_all'),
-            ('dynamake', 'TRACE', '#1 - make_all - Call'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Nonexistent required output(s): all'),
-            ('dynamake', 'DEBUG',
-             '#1 - make_all - No need for a persistent configuration: '
-             '.dynamake/make_all.config.yaml'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'WHY',
-             '#1 - make_all - Must run actions to create the missing output(s): all'),
-            ('dynamake', 'INFO', '#1 - make_all - Run: echo None > all'),
-            ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'TRACE', '#1 - make_all - Success: echo None > all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 1'),
-            ('dynamake', 'TRACE', '#1 - make_all - Done'),
-            ('dynamake', 'DEBUG', '#0 - make - Synced'),
-            ('dynamake', 'DEBUG', '#0 - make - Has the required: all'),
-            ('dynamake', 'TRACE', '#0 - make - Done'),
-        ])
-
-        self.expect_file('all', 'None\n')
-
-        write_file('DynaMake.yaml', '- { when: { step: make_all }, then: { foo: 1 } }\n')
-        write_file('conf.yaml', '- { when: { step: make_all }, then: { foo: 2 } }\n')
-
-        self.check(_register, log=[
-            ('dynamake', 'TRACE', '#0 - make - Targets: all'),
-            ('dynamake', 'DEBUG', '#0 - make - Build the required: all'),
-            ('dynamake', 'DEBUG',
-             '#0 - make - The required: all will be produced by the spawned: #1 - '
-             'make_all'),
-            ('dynamake', 'TRACE', '#1 - make_all - Call'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Existing output: all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Oldest output: all time: 1'),
-            ('dynamake', 'WHY',
-             '#1 - make_all - Must run actions because creating the missing persistent '
-             'configuration: .dynamake/make_all.config.yaml'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'DEBUG', '#1 - make_all - No inputs'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Remove the stale output: all'),
-            ('dynamake', 'INFO',
-             '#1 - make_all - Run: echo .dynamake/make_all.config.yaml > all'),
-            ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'TRACE',
-             '#1 - make_all - Success: echo .dynamake/make_all.config.yaml > all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 2'),
-            ('dynamake', 'TRACE', '#1 - make_all - Done'),
-            ('dynamake', 'DEBUG', '#0 - make - Synced'),
-            ('dynamake', 'DEBUG', '#0 - make - Has the required: all'),
-            ('dynamake', 'TRACE', '#0 - make - Done'),
-        ])
-
-        self.expect_file('.dynamake/make_all.config.yaml', 'foo: 1\n')
-
-        sys.argv += ['--step_config', 'conf.yaml']
-
-        self.check(_register, log=[
-            ('dynamake', 'TRACE', '#0 - make - Targets: all'),
-            ('dynamake', 'DEBUG', '#0 - make - Build the required: all'),
-            ('dynamake', 'DEBUG',
-             '#0 - make - The required: all will be produced by the spawned: #1 - make_all'),
-            ('dynamake', 'TRACE', '#1 - make_all - Call'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Existing output: all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Oldest output: all time: 2'),
-            ('dynamake', 'WHY',
-             '#1 - make_all - Must run actions because changed '
-             'the persistent configuration: .dynamake/make_all.config.yaml'),
-            ('dynamake', 'DEBUG',
-             '#1 - make_all - From the old persistent configuration:\nfoo: 1\n'),
-            ('dynamake', 'DEBUG',
-             '#1 - make_all - To the new persistent configuration:\nfoo: 2\n'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'DEBUG', '#1 - make_all - No inputs'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Remove the stale output: all'),
-            ('dynamake', 'INFO', '#1 - make_all - Run: echo .dynamake/make_all.config.yaml > all'),
-            ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'TRACE',
-             '#1 - make_all - Success: echo .dynamake/make_all.config.yaml > all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 3'),
-            ('dynamake', 'TRACE', '#1 - make_all - Done'),
-            ('dynamake', 'DEBUG', '#0 - make - Synced'),
-            ('dynamake', 'DEBUG', '#0 - make - Has the required: all'),
-            ('dynamake', 'TRACE', '#0 - make - Done'),
-        ])
-
-        self.expect_file('.dynamake/make_all.config.yaml', 'foo: 2\n')
-
-        self.check(_register, log=[
-            ('dynamake', 'TRACE', '#0 - make - Targets: all'),
-            ('dynamake', 'DEBUG', '#0 - make - Build the required: all'),
-            ('dynamake', 'DEBUG',
-             '#0 - make - The required: all will be produced by the spawned: #1 - make_all'),
-            ('dynamake', 'TRACE', '#1 - make_all - Call'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Existing output: all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Oldest output: all time: 3'),
-            ('dynamake', 'DEBUG',
-             '#1 - make_all - Use '
-             'the same persistent configuration: .dynamake/make_all.config.yaml'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'DEBUG', '#1 - make_all - No inputs'),
-            ('dynamake', 'DEBUG',
-             '#1 - make_all - Can skip actions '
-             'because all the outputs exist and there are no newer inputs'),
-            ('dynamake', 'DEBUG',
-             '#1 - make_all - Skip: echo .dynamake/make_all.config.yaml > all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'DEBUG', '#1 - make_all - No inputs'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 3'),
-            ('dynamake', 'TRACE', '#1 - make_all - Skipped'),
-            ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'DEBUG', '#0 - make - Synced'),
-            ('dynamake', 'DEBUG', '#0 - make - Has the required: all'),
-            ('dynamake', 'TRACE', '#0 - make - Skipped'),
-        ])
-
-        self.expect_file('.dynamake/make_all.config.yaml', 'foo: 2\n')
-
-    def test_run_wrapper(self) -> None:
-        def _register() -> None:
-            @step(output='all')
-            async def make_all() -> None:  # pylint: disable=unused-variable
-                await submit('touch', 'all')
-
-        write_file('DynaMake.yaml',
-                   '- { when: {step: make_all}, then: {run_prefix: "echo {submit_id} > log;"} }\n')
-
-        sys.argv += ['--jobs', 'None']
-        sys.argv += ['--rebuild_changed_actions', 'false']
-
-        self.check(_register, log=[
-            ('dynamake', 'TRACE', '#0 - make - Targets: all'),
-            ('dynamake', 'DEBUG', '#0 - make - Build the required: all'),
-            ('dynamake', 'DEBUG',
-             '#0 - make - The required: all will be produced by the spawned: #1 - make_all'),
-            ('dynamake', 'TRACE', '#1 - make_all - Call'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Nonexistent required output(s): all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'WHY',
-             '#1 - make_all - Must run actions to create the missing output(s): all'),
-            ('dynamake', 'INFO', '#1 - make_all - Run: echo 1 > log; touch all'),
-            ('dynamake', 'DEBUG', '#0 - make - Sync'),
-            ('dynamake', 'TRACE', '#1 - make_all - Success: echo 1 > log; touch all'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Has the output: all time: 1'),
-            ('dynamake', 'TRACE', '#1 - make_all - Done'),
-            ('dynamake', 'DEBUG', '#0 - make - Synced'),
-            ('dynamake', 'DEBUG', '#0 - make - Has the required: all'),
-            ('dynamake', 'TRACE', '#0 - make - Done')
-        ])
-
-        self.expect_file('log', '1\n')
-
     def test_resources(self) -> None:
         def _register() -> None:
             @step(output=phony('all'))
@@ -2545,8 +2144,7 @@ class TestMain(TestWithFiles):
             async def make_bar() -> None:  # pylint: disable=unused-variable
                 await shell('sleep 2 ; touch bar')
 
-        os.environ['DYNAMAKE_JOBS'] = '1'
-        sys.argv += ['--rebuild_changed_actions', 'false']
+        sys.argv += ['--jobs', '1', '--rebuild_changed_actions', 'false']
 
         self.check(_register, log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
@@ -2604,7 +2202,7 @@ class TestMain(TestWithFiles):
 
     def test_custom_resources(self) -> None:
         def _register() -> None:
-            Param(name='foo', default=2, parser=int, description='foo')
+            Parameter(name='foo', default=2, parser=int, description='foo')
 
             resource_parameters(foo=1)
 
@@ -2622,7 +2220,8 @@ class TestMain(TestWithFiles):
             async def make_bar() -> None:  # pylint: disable=unused-variable
                 await shell('touch bar', jobs=0)
 
-        sys.argv += ['--jobs', '8']
+        write_file('DynaMake.yaml', 'jobs: 8\n')
+
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, log=[
@@ -2687,7 +2286,7 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 await shell('true', foo=2)
 
-        sys.argv += ['--jobs', 'None']
+        sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
         self.check(_register, error='unknown resource: foo', log=[
@@ -2723,81 +2322,3 @@ class TestMain(TestWithFiles):
              '#1 - make_all - Must run actions to satisfy the phony output: all'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
         ])
-
-    def test_config_context(self) -> None:
-        def _register() -> None:
-            @step(output='foo')
-            async def make_foo() -> None:  # pylint: disable=unused-variable
-                assert 'foo' not in require_context()
-                with config_context(foo=True):
-                    await _write('foo')
-
-            @step(output='bar')
-            async def make_bar() -> None:  # pylint: disable=unused-variable
-                assert 'foo' not in require_context()
-                with config_context(foo=False):
-                    await _write('bar')
-
-            @step(output='baz')
-            async def make_baz() -> None:  # pylint: disable=unused-variable
-                assert 'foo' not in require_context()
-                await _write('baz')
-
-            async def _write(path: str) -> None:
-                bar = config_param('bar', False)
-                await shell('echo %s > %s' % (bar, path))
-
-            @step(output=phony('all'))
-            async def make_all() -> None:  # pylint: disable=unused-variable
-                require('foo')
-                require('bar')
-                require('baz')
-
-        write_file('DynaMake.yaml', """
-            - when: { context_contains: foo, foo: True }
-              then: { bar: True }
-        """)
-
-        sys.argv += ['--jobs', 'None']
-        sys.argv += ['--rebuild_changed_actions', 'false']
-
-        self.check(_register)
-
-        self.expect_file('foo', 'True\n')
-        self.expect_file('bar', 'False\n')
-        self.expect_file('baz', 'False\n')
-
-    def test_require_context(self) -> None:
-        def _register() -> None:
-            @step(output='foo')
-            async def make_foo() -> None:  # pylint: disable=unused-variable
-                await done(asyncio.sleep(2))
-                await shell('echo', require_context()['foo'], '> foo')
-
-            @step(output='bar')
-            async def make_bar() -> None:  # pylint: disable=unused-variable
-                require_context()['foo'] = 'bar'
-                require('foo')
-                await done(asyncio.sleep(1))
-                await shell('touch bar')
-
-            @step(output='baz')
-            async def make_baz() -> None:  # pylint: disable=unused-variable
-                require_context()['foo'] = 'baz'
-                require('foo')
-                await done(asyncio.sleep(2))
-                await shell('touch baz')
-
-            @step(output=phony('all'))
-            async def make_all() -> None:  # pylint: disable=unused-variable
-                require('bar')
-                require('baz')
-
-        sys.argv += ['--jobs', 'None']
-        sys.argv += ['--rebuild_changed_actions', 'false']
-
-        self.check(_register)
-
-        self.expect_file('foo', 'bar\n')
-        self.expect_file('bar', '')
-        self.expect_file('baz', '')

@@ -1,3 +1,0 @@
-"""
-Executable scripts.
-"""
