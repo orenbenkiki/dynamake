@@ -142,8 +142,41 @@ class TestMain(TestWithFiles):
                 pass
 
         self.assertRaisesRegex(StepException,
-                               'output: all .* step: foo .* step: bar',
+                               'output: all .* step: bar .* step: foo .* priority: 0',
                                self.check, _register)
+
+    def test_multiple_producers_priorities(self) -> None:
+        def _register() -> None:
+            @step(output=phony('all'), priority=1)
+            async def foo() -> None:  # pylint: disable=unused-variable
+                pass
+
+            @step(output=phony('all'))
+            async def bar() -> None:  # pylint: disable=unused-variable
+                pass
+
+        sys.argv += ['--jobs', '0']
+
+        self.check(_register, log=[
+            ('dynamake', 'TRACE', '#0 - make - Targets: all'),
+            ('dynamake', 'DEBUG', '#0 - make - Build the required: all'),
+            ('dynamake', 'DEBUG', '#0 - make - candidate producer: foo priority: 1'),
+            ('dynamake', 'DEBUG', '#0 - make - candidate producer: bar priority: 0'),
+            ('dynamake', 'DEBUG',
+             '#0 - make - The required: all will be produced by the spawned: #1 - foo'),
+            ('dynamake', 'TRACE', '#1 - foo - Call'),
+            ('dynamake', 'WHY',
+             '#1 - foo - Must run actions because missing the persistent actions: '
+             '.dynamake/foo.actions.yaml'),
+            ('dynamake', 'DEBUG', '#1 - foo - Synced'),
+            ('dynamake', 'DEBUG', '#1 - foo - Write the persistent actions: '
+             '.dynamake/foo.actions.yaml'),
+            ('dynamake', 'TRACE', '#1 - foo - Complete'),
+            ('dynamake', 'DEBUG', '#0 - make - Sync'),
+            ('dynamake', 'DEBUG', '#0 - make - Synced'),
+            ('dynamake', 'DEBUG', '#0 - make - Has the required: all'),
+            ('dynamake', 'TRACE', '#0 - make - Complete')
+        ])
 
     def test_generate_many(self) -> None:
         def _register() -> None:

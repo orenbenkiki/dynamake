@@ -402,7 +402,7 @@ And that all parts need to be collected together:
         dm.erequire('unzipped_messages/{id}/.all.done')
         await dm.sync()
         all_parts = dm.eglob_fmt('unzipped_messages/{id}/{*part}.txt',
-                                 'processed_messages/{id}/{*part}.txt')
+                                 'processed_messages/{id}/{part}.txt')
         await dm.eshell('cat', sorted(all_parts), '>', 'collected_messages/{id}.txt')
 
 This sort of flow can only be approximated using static build tools. Typically
