@@ -171,8 +171,8 @@ class ToxCommand(SimpleCommand):
 
 
 # TODO: Replicated in tox.ini
-INSTALL_REQUIRES = ['prwlock', 'pyyaml', 'sortedcontainers', 'termcolor']
-TESTS_REQUIRE = ['nose', 'testfixtures', 'coverage']
+INSTALL_REQUIRES = ['pyyaml', 'sortedcontainers', 'termcolor']
+TESTS_REQUIRE = ['nose', 'testfixtures', 'coverage', 'aiorwlock']
 DEVELOP_REQUIRES = ['autopep8', 'isort', 'mypy', 'pylint', 'sphinx', 'sphinx_rtd_theme', 'tox']
 
 

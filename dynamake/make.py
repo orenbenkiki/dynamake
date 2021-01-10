@@ -7,12 +7,14 @@ Dynamic make main code.
 from .patterns import *  # pylint: disable=redefined-builtin,wildcard-import,unused-wildcard-import
 from argparse import ArgumentParser
 from argparse import Namespace
+from contextlib import asynccontextmanager
 from datetime import datetime
 from importlib import import_module
 from inspect import iscoroutinefunction
 from textwrap import dedent
 from threading import current_thread
 from typing import Any
+from typing import AsyncGenerator
 from typing import Awaitable
 from typing import Callable
 from typing import Coroutine
@@ -356,7 +358,7 @@ class Resources:
     #: The default amount used by each action.
     default: Dict[str, int]
 
-    #: A condition for synchronizing between the asynchronous actions.
+    #: A condition for synchronizing between the async actions.
     condition: asyncio.Condition
 
     @staticmethod
@@ -2127,6 +2129,18 @@ def step_kwargs() -> Dict[str, Any]:
 
 async def done(awaitable: Awaitable) -> Any:
     """
-    Await some non-DynaMake function.
+    Await some non-DynaMake async function.
     """
     return await Invocation.current.done(awaitable)
+
+
+@asynccontextmanager
+async def context(wrapped: AsyncGenerator) -> AsyncGenerator:
+    """
+    Await some non-DynaMake async context.
+    """
+    invocation = Invocation.current
+    async with wrapped:  # type: ignore
+        invocation._become_current()  # pylint: disable=protected-access
+        yield()
+    invocation._become_current()  # pylint: disable=protected-access
