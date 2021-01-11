@@ -18,18 +18,16 @@ import sys
 
 subprocess.check_call('../tools/prepare_for_sphinx')
 sys.path.insert(0, os.path.abspath('..'))
-import dynamake.version
+from dynamake.version import version
 
 
 # -- Project information -----------------------------------------------------
 
 project = 'DynaMake'
-copyright = '2019, Weizmann Institute of Science'
+copyright = '2020, Oren Ben-Kiki'
 author = 'Oren Ben-Kiki'
 
-version = dynamake.version.__version__
 release = version
-
 
 # -- General configuration ---------------------------------------------------
 
