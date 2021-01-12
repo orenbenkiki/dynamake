@@ -1,6 +1,6 @@
 language: python
-python: [ "3.6", "3.7", "3.8", "3.9" ]
+python: [ "3.7", "3.8", "3.9" ]
 install:
 - pip install -e .[develop]
 script:
-- if [[ "$TRAVIS_PYTHON_VERSION" == "3.6" ]]; then tox; else python setup.py all; fi
+- python setup.py all

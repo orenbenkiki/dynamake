@@ -191,7 +191,7 @@ class TestMain(TestWithFiles):
             @step(output='foo.{*major}.{*_minor}')
             async def make_foos(major: str) -> None:  # pylint: disable=unused-variable
                 for index in range(0, foo.value):
-                    await done(asyncio.sleep(1))
+                    await done(asyncio.sleep(2))
                     await shell('touch foo.{major}.{index}'.format(major=major, index=index))
 
         sys.argv += ['--jobs', '0', '--foo', '2']
@@ -577,7 +577,7 @@ class TestMain(TestWithFiles):
             @step(output=phony('all'))
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
-                await done(asyncio.sleep(1))
+                await done(asyncio.sleep(2))
                 require('bar')
 
             @step(output='foo')
@@ -1055,7 +1055,7 @@ class TestMain(TestWithFiles):
         sys.argv += ['--remove_failed_outputs', 'false']
 
         write_file('all', '?\n')
-        sleep(1)
+        sleep(2)
         write_file('foo', '!\n')
 
         self.check(_register, error='make_all - Failure: echo @ > all ; false', log=[
@@ -1853,7 +1853,7 @@ class TestMain(TestWithFiles):
                 await shell('touch all')
 
         write_file('foo', '!\n')
-        sleep(1)
+        sleep(2)
 
         sys.argv += ['--jobs', '0']
 
@@ -1996,7 +1996,7 @@ class TestMain(TestWithFiles):
             @step(output='all')
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
-                await done(asyncio.sleep(1))
+                await done(asyncio.sleep(2))
                 await shell('touch all')
 
         write_file('foo', '0\n')
@@ -2372,7 +2372,7 @@ class TestMain(TestWithFiles):
             @step(output=phony('all'))
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
-                await done(asyncio.sleep(1))
+                await done(asyncio.sleep(2))
                 require('bar')
                 require('baz')
 
