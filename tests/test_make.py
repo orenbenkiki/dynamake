@@ -2380,7 +2380,7 @@ class TestMain(TestWithFiles):
             async def make_foo() -> None:  # pylint: disable=unused-variable
                 rw_lock = await done(RwLock.get())
                 async with context(rw_lock.reader_lock):
-                    await shell('sleep 2 ; touch foo')
+                    await shell('sleep 4 ; touch foo')
 
             @step(output='bar')
             async def make_bar() -> None:  # pylint: disable=unused-variable
@@ -2411,13 +2411,15 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
             ('dynamake', 'WHY',
              '#1.1 - make_foo - Must run actions to create the missing output(s): foo'),
-            ('dynamake', 'INFO', '#1.1 - make_foo - Run: sleep 2 ; touch foo'),
+            ('dynamake', 'INFO', '#1.1 - make_foo - Run: sleep 4 ; touch foo'),
             ('dynamake', 'DEBUG', '#1 - make_all - Build the required: bar'),
             ('dynamake', 'DEBUG',
-             '#1 - make_all - The required: bar will be produced by the spawned: #1.2 - make_bar'),
+             '#1 - make_all - The required: bar will be produced by the spawned: '
+             '#1.2 - make_bar'),
             ('dynamake', 'DEBUG', '#1 - make_all - Build the required: baz'),
             ('dynamake', 'DEBUG',
-             '#1 - make_all - The required: baz will be produced by the spawned: #1.3 - make_baz'),
+             '#1 - make_all - The required: baz will be produced by the spawned: '
+             '#1.3 - make_baz'),
             ('dynamake', 'DEBUG', '#1 - make_all - Sync'),
             ('dynamake', 'TRACE', '#1.2 - make_bar - Call'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Nonexistent required output(s): bar'),
@@ -2431,7 +2433,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Has the output: bar time: 1'),
             ('dynamake', 'TRACE', '#1.2 - make_bar - Done'),
-            ('dynamake', 'TRACE', '#1.1 - make_foo - Success: sleep 2 ; touch foo'),
+            ('dynamake', 'TRACE', '#1.1 - make_foo - Success: sleep 4 ; touch foo'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Has the output: foo time: 2'),
             ('dynamake', 'TRACE', '#1.1 - make_foo - Done'),
