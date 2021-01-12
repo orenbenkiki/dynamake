@@ -1546,6 +1546,9 @@ class Parameter:  # pylint: disable=too-many-instance-attributes
             parameter.value = value
 
 
+#: The shell to use to execute commands.
+shell_executable: Parameter
+
 #: The number of jobs to run in parallel.
 jobs: Parameter
 
@@ -1703,6 +1706,15 @@ def _define_parameters() -> None:
         default=False,
         parser=str2bool,
         description='Whether to remove empty directories when deleting the last file in them')
+
+    global shell_executable
+    shell_executable = Parameter(  #
+        name='shell',
+        short='s',
+        metavar='STR',
+        default='/bin/bash',
+        parser=str,
+        description='The shell to use to execute commands.')
 
     global default_shell_prefix
     default_shell_prefix = Parameter(  #
@@ -3206,7 +3218,8 @@ async def shell(*command: Strings, prefix: Optional[Strings] = None,
 
     def _run_shell(*parts: Strings) -> Any:
         assert prefix is not None
-        return asyncio.create_subprocess_shell(' '.join(flatten(prefix, *parts)))
+        return asyncio.create_subprocess_shell(' '.join(flatten(prefix, *parts)),
+                                               executable=shell_executable.value)
     await current.done(current.run_action('shell', _run_shell, *command, **resources))
 
 
