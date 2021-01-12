@@ -2883,10 +2883,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             self.new_persistent_actions[-1].run_action(persistent_parts)
 
         if not self.should_run_action():
-            if log_skipped_actions.value and not is_silent:
-                logger.info('%s - Skip: %s', self._log, log_command)
-            else:
+            if not log_skipped_actions.value:
                 logger.debug('%s - Skip: %s', self._log, log_command)
+            elif is_silent:
+                logger.log(FILE, '%s - Skip: %s', self._log, log_command)
+            else:
+                logger.info('%s - Skip: %s', self._log, log_command)
             self.did_skip_actions = True
             if self.new_persistent_actions:
                 self.new_persistent_actions.append(  #
@@ -2914,7 +2916,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             self.oldest_output_path = None
 
             if is_silent:
-                logger.debug('%s - Run: %s', self._log, log_command)
+                logger.log(FILE, '%s - Run: %s', self._log, log_command)
             else:
                 logger.info('%s - Run: %s', self._log, log_command)
 
@@ -3186,7 +3188,7 @@ async def shell(*command: Strings, prefix: Optional[Strings] = None,
     Execute a shell command.
 
     The caller is responsible for all quotations. If the first character of the
-    command is ``@`` then it is "silent", that is, it is logged in the DEBUG
+    command is ``@`` then it is "silent", that is, it is logged in the FILE
     level and not the INFO level.
 
     This first waits until all input files requested so far are ready.
@@ -3225,7 +3227,7 @@ async def spawn(*command: Strings, **resources: int) -> None:
     Execute an external program with arguments.
 
     If the first character of the command is ``@`` then it is "silent", that
-    is, it is logged in the DEBUG level and not the INFO level.
+    is, it is logged in the FILE level and not the INFO level.
 
     This first waits until all input files requested so far are ready.
     """
