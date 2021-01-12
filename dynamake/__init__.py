@@ -1341,7 +1341,7 @@ class Stat:
         path = clean_path(path)
         index = Stat._cache.bisect_left(path)
         while index < len(Stat._cache):
-            index_path = Stat._cache.iloc[index]
+            index_path = Stat._cache.keys()[index]
             if os.path.commonpath([path, index_path]) != path:
                 return
             Stat._cache.popitem(index)
