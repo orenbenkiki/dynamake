@@ -157,7 +157,7 @@ setup(name='dynamake',
       packages=find_packages(exclude=['tests']),
       package_data={'dynamake': ['py.typed']},
       entry_points={'console_scripts': [
-          'dynamake=dynamake.make:main',
+          'dynamake=dynamake.__main__:main',
       ]},
       # TODO: Replicated in tox.ini
       setup_requires=SETUP_REQUIRES,

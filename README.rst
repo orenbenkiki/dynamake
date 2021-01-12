@@ -173,19 +173,19 @@ WHAT
 
 DynaMake is essentially a Python library. There is a ``dynamake`` universal
 executable script provided with the package, similar to `SCons
-<https://scons.org/>`_, but you still need to write your build script in
-Python, using the library's utilities, and you can also easily invoke the
-provided ``make`` main function from your code. You can even directly invoke
-the build functionality from your own custom main function.
+<https://scons.org/>`_, (which you can also invoke as ``python -m dynamake`` if
+you prefer). However, you still need to write your build script in Python,
+using the library's utilities, and you can also easily invoke the provided
+``make`` function from your own custom main function.
 
-DynaMake build steps may invoke applications written in any language, which are
-configured in any way (command line flags, configuration files, etc.).
+DynaMake build steps may invoke applications written in any language, either
+directly or by invoking shell commands, similarly to any other build tool.
 
 Build Scripts
 .............
 
 A typical build script consists of a set of step functions, which are functions
-decorated with :py:func:`dynamake.make.step`. This requires an explicit
+decorated with :py:func:`dynamake.step`. This requires an explicit
 ``output=...`` parameter listing the file(s) created by the step.
 
 Here is a DynaMake build script which copies the file ``foo`` to the file
@@ -222,17 +222,17 @@ scripts that are impossible in ``make``, justifying the additional syntax.
 
 For example, inside each step, you can do the following:
 
-* Invoke :py:func:`dynamake.make.require` to ensure the specified path exists
-  and is and up-to-date. Building of required input files is done
-  asynchronously (concurrently).
+* Invoke :py:func:`dynamake.require` to ensure the specified path exists and is
+  and up-to-date. Building of required input files is done asynchronously
+  (concurrently).
 
-* Invoke ``await`` of :py:func:`dynamake.make.sync` to ensure all required
-  input files specified so far have completed to build.
+* Invoke ``await`` of :py:func:`dynamake.sync` to ensure all required input
+  files specified so far have completed to build.
 
-* Invoke ``await`` of :py:func:`dynamake.make.shell` or
-  :py:func:`dynamake.make.spawn` to trigger the execution of a shell command or
-  an arbitrary external program. This will automatically ``sync`` first to
-  ensure all required input files have completed to build.
+* Invoke ``await`` of :py:func:`dynamake.shell` or :py:func:`dynamake.spawn` to
+  trigger the execution of a shell command or an arbitrary external program.
+  This will automatically ``sync`` first to ensure all required input files
+  have completed to build.
 
 .. note::
 
@@ -240,9 +240,9 @@ For example, inside each step, you can do the following:
    by DynaMake.**
 
    DynaMake tracks the current step, and invoking ``await`` of some other
-   co-routines will confuse it. Use :py:func:`dynamake.make.done` to ``await``
-   on external co-routines. That is, write ``await done(something())`` rather
-   than ``await something()``.
+   co-routines will confuse it. Use :py:func:`dynamake.done` to ``await`` on
+   external co-routines. That is, write ``await done(something())`` rather than
+   ``await something()``.
 
 * Use Python code to examine the file system, analyze the content of required
   input files (following a ``sync``), perform control flow operations
@@ -290,7 +290,7 @@ A more generic script might be:
     async def make_object(**kwargs: str) -> None:
         source_path = 'src/{name}.c'.format(**kwargs)
         source_path = dm.fmt(kwargs, 'src/{name}.c')  # Same as above
-        source_path = dm.e('src/{name}.c')  # Same as above
+        source_path = dm.expand('src/{name}.c')  # Same as above
         require_included_files(source_path)
         await dm.espawn('cc', '-o', 'obj/{name}.o', source_path)
 
@@ -302,34 +302,35 @@ A more generic script might be:
 
 This demonstrates some additional concepts:
 
-* If the ``output`` of a step contains a :py:func:`dynamake.patterns.capture`
-  pattern, then the extracted values are passed to the function as string
-  arguments. These can be used inside the function to generate file names (in
-  the above, the source file names).
+* If the ``output`` of a step contains a :py:func:`dynamake.capture` pattern,
+  then the extracted values are passed to the function as string arguments.
+  These can be used inside the function to generate file names (in the above,
+  the source file names).
 
   This is similar to ``make`` pattern rules, but is more powerful, as you can
   specify multiple parts of the file name to be captured. A pattern such as
   ``foo/{*phase}/{*part}/bar`` is essentially impossible to express in
   ``make``.
 
-  When a target is :py:func:`dynamake.make.require`-d, it is matched against
-  these patterns, and the unique step that matches the target is triggered,
-  with the appropriate (extracted) arguments. If multiple such patterns match
-  the file, the one with the highest step ``priority`` is used. It is an error
-  for more than one step with the same priority to match the same output file.
-  If no step matches, the target is assumed to be a source file, and must exist
-  on the disk. Otherwise, DynaMake complains it doesn't know how to make this
+  When a target is :py:func:`dynamake.require`-d, it is matched against these
+  patterns, and the unique step that matches the target is triggered, with the
+  appropriate (extracted) arguments. If multiple such patterns match the file,
+  the one with the highest step ``priority`` is used. It is an error for more
+  than one step with the same priority to match the same output file.  If no
+  step matches, the target is assumed to be a source file, and must exist on
+  the disk. Otherwise, DynaMake complains it doesn't know how to make this
   target.
 
 * DynaMake provides many functions to deal with ``glob``-ing, capturing, and
-  formatting lists of strings, listed in the :py:func:`dynamake.patterns`
-  module. These make it convenient to perform common operations. For example,
-  ``:py:func:`dynamake.make.e`` is equivalent to
-  :py:func:`dynamake.patterns.fmt` using the ``kwargs`` of the current step.
-  This is an extremely common operation so we give it such a short function
-  name. Another example is :py:func:`dynamake.patterns.glob_fmt` which uses a
-  ``glob`` to obtain a list of file names, then ``extract`` some part(s) of
-  each, then ``fmt`` some other pattern(s) using these values.
+  formatting lists of strings.  These make it convenient to perform common
+  operations. For example, :py:func:`dynamake.expand` is equivalent to
+  :py:func:`dynamake.fmt` using the ``kwargs`` of the current step.  This is an
+  extremely common operation so many functions have a variant prefixed with
+  ``e`` which automatically expands the relevant argument(s).  Another example
+  is :py:func:`dynamake.glob_fmt` which uses a ``glob`` to obtain a list of
+  file names, then ``extract`` some part(s) of each, then ``fmt`` some other
+  pattern(s) using these values. Using :py:func:`dynamake.eglob_fmt` will
+  automatically first :py:func:`dynamake.expand` each of the file names.
 
 * Most DynaMake functions accept :py:class:`Strings`, that is, either a single
   string, or a list of strings, or a list of list of strings, etc.; and return
@@ -358,12 +359,13 @@ For example:
 
 .. code-block:: python
 
-    import dynamake.make as dm
+    import dynamake as dm
 
     @dm.step(output=['unzipped_messages/{*id}/{*_part}.txt',
                      'unzipped_messages/{*id}/.all.done')
     async def unzip_message(**kwargs: str) -> None:
         dm.require('zipped_messages/{id}.zip'.format(**kwargs))
+        dm.require(dm.expand('zipped_messages/{id}.zip')) # Same as above
         dm.erequire('zipped_messages/{id}.zip')  # Same as above
         await dm.shell('unzip ...')
         await dm.eshell('touch unzipped_messages/{id}/.all.done')
@@ -373,12 +375,6 @@ single invocation will generate all ``_part`` values. This demonstrates another
 point: if a step specifies multiple ``output`` patterns, each must capture the
 same named argument(s) (in this case ``name``), but may include different (or
 no) non-captured path parts.
-
-The :py:func:`dynamake.make.eshell` is equivalent to ``shell(e(...))``, that
-is, it automatically formats all the string(s) using the step's ``kwargs``.
-DynaMake defines several additional such functions with an ``e`` prefix, for
-example :py:func:`dynamake.make.erequire` and
-:py:func:`dynamake.make.eglob_paths`.
 
 Requiring *any* of the specific output files will cause the step to be invoked
 and ensure *all* outputs are up-to-date. A common trick, demonstrated above, it
@@ -413,15 +409,16 @@ changes is to "delete all files and rebuild" to ensure the results are correct.
 Universal Main Program
 ......................
 
-Installing DynaMake provides a universal executable build script called
-``dynamake``, which is a thin wrapper around the generic
-:py:func:`dynamake.make.make` main function. The easiest way to invoke DynaMake
-is to place your steps inside ``DynaMake.py`` (or modules included by
-``DynaMake.py``) and invoke this ``dynamake`` script. You can also specify
-explicit ``--module`` options in the command line to directly import your step
-functions from other Python modules.
+The easiest way to invoke DynaMake is to place your steps inside
+``DynaMake.py`` (or modules included by ``DynaMake.py``) and invoke the
+provided ``dynamake`` script (which is equivalent to running ``python -m
+dynamake``).
 
-You can write your own executable script:
+You can specify explicit ``--module`` options in the command line to directly
+import your step functions from arbitrary Python modules, instead of the
+default ``DynaMake.py`` file.
+
+You can also write your own executable script:
 
 .. code-block:: python
 
@@ -444,40 +441,39 @@ Annotations
 ...........
 
 DynaMake allows attaching annotations
-(:py:class:`dynamake.patterns.AnnotatedStr`) to strings (and patterns).
-Multiple annotations may be applied to the same string. The provided string
-processing functions preserve these (that is, pass the annotations from the
-input(s) to the output(s)). These annotations are used by DynaMake to modify
-the handling of required and output files, and in some cases, control
-formatting.
+(:py:class:`dynamake.AnnotatedStr`) to strings (and patterns).  Multiple
+annotations may be applied to the same string. The provided string processing
+functions preserve these (that is, pass the annotations from the input(s) to
+the output(s)). These annotations are used by DynaMake to modify the handling
+of required and output files, and in some cases, control formatting.
 
-* :py:func:`dynamake.patterns.optional` indicates that an output need not exist
-  at the end of the step, or a required file need not exist for the following
-  actions to succeed. That is, invoking ``require(optional('foo'))`` will
-  invoke the step that provides ``foo``. If there is no such step, then ``foo``
-  need not exist on the disk. If this step exists, and succeeds, but does not
-  in fact create ``foo``, and specifies ``output=optional('foo')``, then
-  DynaMake will accept this and continue. If either of the requiring or invoked
-  steps did not specify the ``optional`` annotation, then DynaMake will
-  complain and abort the build.
+* :py:func:`dynamake.optional` indicates that an output need not exist at the
+  end of the step, or a required file need not exist for the following actions
+  to succeed. That is, invoking ``require(optional('foo'))`` will invoke the
+  step that provides ``foo``. If there is no such step, then ``foo`` need not
+  exist on the disk. If this step exists, and succeeds, but does not in fact
+  create ``foo``, and specifies ``output=optional('foo')``, then DynaMake will
+  accept this and continue. If either of the requiring or invoked steps did not
+  specify the ``optional`` annotation, then DynaMake will complain and abort
+  the build.
 
-* :py:func:`dynamake.patterns.exists` ignores the modification time of an input
-  or an output, instead just considering whether it exists. That is, invoking
+* :py:func:`dynamake.exists` ignores the modification time of an input or an
+  output, instead just considering whether it exists. That is, invoking
   ``require(exists('foo'))`` will attempt to build ``foo`` but will ignore its
   timestamp when deciding whether to skip the execution of following actions in
   this step. Specifying ``output=exists('foo')`` will disable touching the
   output file to ensure it is newer than the required input file(s) (regardless
   of the setting of ``--touch_success_outputs``).
 
-* :py:func:`dynamake.patterns.precious` prevents output file(s) from being
-  removed (regardless of the setting of ``--remove_stale_outputs`` and
+* :py:func:`dynamake.precious` prevents output file(s) from being removed
+  (regardless of the setting of ``--remove_stale_outputs`` and
   ``--remove_failed_outputs``).
 
-* :py:func:`dynamake.patterns.phony` marks an output as a non-file target.
-  Typically the default top-level ``all`` target is ``phony``, as well as
-  similar top-level targets such as ``clean``. When a step has any ``phony``
-  output(s), its actions are always executed, and a synthetic modification time
-  is assigned to it: one nanosecond newer than the newest required input.
+* :py:func:`dynamake.phony` marks an output as a non-file target.  Typically
+  the default top-level ``all`` target is ``phony``, as well as similar
+  top-level targets such as ``clean``. When a step has any ``phony`` output(s),
+  its actions are always executed, and a synthetic modification time is
+  assigned to it: one nanosecond newer than the newest required input.
 
   If using persistent state to track actions (see below), this state will
   ignore any parts of invoked commands that are marked as ``phony``. This
@@ -486,17 +482,16 @@ formatting.
   line option of a program should not impact its outputs, and therefore should
   not trigger a rebuild.
 
-* :py:func:`dynamake.patterns.emphasized` is used by ``shell`` and ``spawn``.
-  Arguments so annotated are printed in **bold** in the log file.  This makes
-  it easier to see the important bits of long command lines.
+* :py:func:`dynamake.emphasized` is used by ``shell`` and ``spawn``.  Arguments
+  so annotated are printed in **bold** in the log file.  This makes it easier
+  to see the important bits of long command lines.
 
 Control Flags
 .............
 
-The behavior of DynaMake can be tweaked by modifying the options specified in
-:py:func:`dynamake.make.Make`. This is typically done by specifying the
-appropriate command line option which is then handled by the provided ``make``
-main function.
+The behavior of DynaMake can be tweaked by modifying the built-in global
+parameter values.  This is typically done by specifying the appropriate command
+line option, which is then handled by the provided ``make`` main function.
 
 * ``--rebuild_changed_actions`` controls whether DynaMake uses the persistent
   state to track the list of outputs, inputs, invoked sub-steps, and actions
@@ -637,7 +632,7 @@ DynaMake will execute several actions in parallel, subject to the setting of
 ``--jobs``.
 
 It is possible to define some additional resources using
-:py:func:`dynamake.make.resources` to restrict parallel execution. For example,
+:py:func:`dynamake.resources` to restrict parallel execution. For example,
 invoking ``resource_parameters(ram=1, io=1)`` will create two new resources,
 ``ram`` and ``io``, which must have been previously defined using configuration
 ``Param`` calls. The values specified are the default consumption for actions
@@ -660,6 +655,12 @@ the following logging levels:
   all is well. If ``--log_skipped_actions`` is set, then this will also log
   skipped actions.
 
+* ``FILE`` also print file operations done by DynaMake itself, specifically
+  touching and removing files (controlled by the flags
+  ``--touch_success_outputs``, ``--remove_stale_outputs`` and
+  ``--remove_failed_outputs``). This gives a more complete picture of the
+  effect DynaMake had on the file system.
+
 * ``WHY`` also prints the reason for executing each action (which output file
   does not exist and needs to be created, which input file is newer than which
   output file, etc.). This is useful for debugging the logic of the build
@@ -674,8 +675,8 @@ the following logging levels:
   from the ``WHY`` and ``TRACE`` levels is not sufficient for figuring out what
   went wrong.
 
-The ``WHY`` and ``TRACE`` levels are not a standard python log level. They are
-defined to be between ``DEBUG`` and ``INFO``, in the proper order.
+The ``FILE``, ``WHY`` and ``TRACE`` levels are not a standard python log level.
+They are defined to be between ``INFO`` and ``DEBUG``, in the proper order.
 
 If using the provided ``make`` main function, the logging level can be set
 using the ``--log-level`` command line option. The default log level is

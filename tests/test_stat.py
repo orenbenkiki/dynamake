@@ -2,7 +2,7 @@
 Test the stat caching.
 """
 
-from dynamake.patterns import Stat
+from dynamake import Stat
 from tests import TestWithFiles
 from tests import write_file
 
