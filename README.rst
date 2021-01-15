@@ -643,6 +643,10 @@ Complex build scripts are notoriously difficult to debug. To help alleviate
 this pain, DynaMake uses the standard Python logging mechanism, and supports
 the following logging levels:
 
+* ``STDOUT`` and ``STDERR`` print the standard output and standard error of the
+  executed commands, annotated with the identification of the step that emitted
+  them. This makes it possible to untangle the results of parallel actions.
+
 * ``INFO`` prints only the executed actions. This is similar to the default
   ``make`` behavior. Use this if you just want to know what is being run, when
   all is well. If ``--log_skipped_actions`` is set, then this will also log
@@ -715,3 +719,6 @@ but haven't been worked on yet:
 
 * Allow using checksums instead of timestamps to determine if actions can be
   skipped, either by default or on a per-file basis.
+
+* Allow easy access to the expanded list of output files. For pattern outputs,
+  the captured names should remain as capture patterns.

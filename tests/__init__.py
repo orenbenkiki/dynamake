@@ -6,6 +6,7 @@ from dynamake import reset
 from textwrap import dedent
 from unittest import TestCase
 
+import gc
 import os
 import shutil
 import sys
@@ -34,6 +35,7 @@ class TestWithReset(TestCase):
 
     def setUp(self) -> None:
         reset(is_test=True, reset_test_times=True)
+        gc.collect()
 
 
 class TestWithFiles(TestWithReset):

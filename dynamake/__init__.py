@@ -47,9 +47,18 @@ import re
 import shlex
 import shutil
 import sys
+import warnings
 import yaml
 
 _REGEXP_ERROR_POSITION = re.compile(r'(.*) at position (\d+)')
+
+
+def no_additional_complaints() -> None:
+    '''
+    Disable all warnings when aborting execution.
+    '''
+    logging.getLogger('asyncio').setLevel('CRITICAL')
+    warnings.simplefilter('ignore')
 
 
 def capture2re(capture: str) -> str:  # pylint: disable=too-many-statements
@@ -66,6 +75,7 @@ def capture2re(capture: str) -> str:  # pylint: disable=too-many-statements
 
     def _invalid(reason: str = '') -> None:
         nonlocal capture, index
+        no_additional_complaints()
         raise RuntimeError(f'Invalid capture pattern:\n{capture}\n{index * " "}^ {reason}')
 
     def _expect_close() -> None:
@@ -182,6 +192,7 @@ def capture2glob(capture: str) -> str:  # pylint: disable=too-many-statements
 
     def _invalid(reason: str = '') -> None:
         nonlocal capture, index
+        no_additional_complaints()
         raise RuntimeError(f'Invalid capture pattern:\n{capture}\n{index * " "}^ {reason}')
 
     def _parse_glob(glob: str, terminators: str) -> None:
@@ -236,6 +247,7 @@ def _fmt_capture(kwargs: Dict[str, Any], capture: str) -> str:  # pylint: disabl
 
     def _invalid(reason: str = '') -> None:
         nonlocal capture, index
+        no_additional_complaints()
         raise RuntimeError(f'Invalid capture pattern:\n{capture}\n{index * " "}^ {reason}')
 
     def _expect_close() -> None:
@@ -978,6 +990,7 @@ def match_extract(pattern: str, *strings: Strings) -> List[Dict[str, Any]]:
 def _capture_string(pattern: str, regexp: Pattern, string: str) -> Dict[str, Any]:
     match = re.fullmatch(regexp, string)
     if not match:
+        no_additional_complaints()
         raise RuntimeError(f'The string: {string} does not match the capture pattern: {pattern}')
 
     values = match.groupdict()
@@ -1284,6 +1297,7 @@ class Stat:
         Stat._cache[path] = result
 
         if throw and isinstance(result, BaseException):
+            no_additional_complaints()
             raise result
 
         return result
@@ -1371,18 +1385,6 @@ class Stat:
             Stat.forget(path)
             os.makedirs(path, exist_ok=True)
 
-
-#: The log level for tracing calls.
-FILE = (1 * logging.DEBUG + 3 * logging.INFO) // 4
-logging.addLevelName(FILE, 'FILE')
-
-#: The log level for logging the reasons for action execution.
-WHY = (2 * logging.DEBUG + 2 * logging.INFO) // 4
-logging.addLevelName(WHY, 'WHY')
-
-#: The log level for tracing calls.
-TRACE = (3 * logging.DEBUG + 1 * logging.INFO) // 4
-logging.addLevelName(TRACE, 'TRACE')
 
 #: The default module to load for steps and parameter definitions.
 DEFAULT_MODULE = 'DynaMake'
@@ -1600,7 +1602,7 @@ def _define_parameters() -> None:
         name='log_level',
         short='ll',
         metavar='STR',
-        default='WARN',
+        default='STDOUT',
         parser=str,
         description='The log level to use')
 
@@ -1743,6 +1745,7 @@ class Resources:
         for name, amount in sorted(requested.items()):
             total = Resources.total.get(name)
             if total is None:
+                no_additional_complaints()
                 raise RuntimeError(f'Requested the unknown resource: {name}')
             if amount == 0 or total <= 0:
                 continue
@@ -1865,6 +1868,7 @@ class Step:
             function = getattr(function, '__func__')
 
         if Step._is_finalized:
+            no_additional_complaints()
             raise RuntimeError(f'Late registration of the step: '
                                f'{function.__module__}.{function.__qualname__}')
 
@@ -2064,25 +2068,30 @@ class LoggingFormatter(logging.Formatter):  # pragma: no cover
         return '%s.%03d' % (seconds, record.msecs)
 
 
-#: The log level for tracing calls.
-logging.TRACE = (3 * logging.DEBUG + 1 * logging.INFO) // 4  # type: ignore
-logging.addLevelName(logging.TRACE, 'TRACE')  # type: ignore
-
-#: The log level for logging the reasons for action execution.
-logging.WHY = (2 * logging.DEBUG + 2 * logging.INFO) // 4  # type: ignore
-logging.addLevelName(logging.WHY, 'WHY')  # type: ignore
-
-#: The log level for tracing calls.
-logging.FILE = (1 * logging.DEBUG + 3 * logging.INFO) // 4  # type: ignore
-logging.addLevelName(logging.FILE, 'FILE')  # type: ignore
-
-
 class Logger:
     """
     Customized logging.
     """
 
     _logger: logging.Logger
+
+    #: The log level for captured standard output.
+    STDOUT = (1 * logging.INFO + 2 * logging.WARNING) // 3
+
+    #: The log level for captured standard error.
+    STDERR = (2 * logging.INFO + 1 * logging.WARNING) // 3
+
+    #: The log level for tracing calls.
+    FILE = (1 * logging.DEBUG + 3 * logging.INFO) // 4
+
+    #: The log level for logging the reasons for action execution.
+    WHY = (2 * logging.DEBUG + 2 * logging.INFO) // 4
+
+    #: The log level for tracing calls.
+    TRACE = (3 * logging.DEBUG + 1 * logging.INFO) // 4
+
+    #: Whether we have seen any errors.
+    errors: bool
 
     @staticmethod
     def reset() -> None:
@@ -2091,6 +2100,7 @@ class Logger:
         """
         Logger._logger = logging.getLogger('dynamake')
         Logger._logger.setLevel('DEBUG')
+        Logger.errors = False
         logging.getLogger('asyncio').setLevel('WARN')
 
     @staticmethod
@@ -2099,6 +2109,7 @@ class Logger:
         Set up the global logger.
         """
         Logger._logger = logging.getLogger(logger_name)
+        Logger.errors = False
         logging.getLogger('asyncio').setLevel('WARN')
 
         if not _is_test:
@@ -2122,12 +2133,18 @@ class Logger:
         """
         Log a ``level`` ``message``.
         """
-        try:
-            message = message % args
-        except TypeError:
-            raise RuntimeError(  # pylint: disable=raise-missing-from
-                f'mismatch between format: {message} '
-                f'and args: {args}')
+        if level >= logging.ERROR:
+            Logger.errors = True
+
+        if len(args) > 0:
+            try:
+                message = message % args
+            except TypeError:
+                no_additional_complaints()
+                raise RuntimeError(  # pylint: disable=raise-missing-from
+                    f'mismatch between format: {message} '
+                    f'and args: {args}')
+
         message = f'{Invocation.current.log} - {message}'
         Logger._logger.log(level, message)
 
@@ -2143,21 +2160,21 @@ class Logger:
         """
         Log a ``TRACE`` level ``message``.
         """
-        Logger.log(logging.TRACE, message, *args)  # type: ignore
+        Logger.log(Logger.TRACE, message, *args)
 
     @staticmethod
     def why(message: str, *args: Any) -> None:
         """
         Log a ``WHY`` level ``message``.
         """
-        Logger.log(logging.WHY, message, *args)  # type: ignore
+        Logger.log(Logger.WHY, message, *args)
 
     @staticmethod
     def file(message: str, *args: Any) -> None:
         """
         Log a ``FILE`` level ``message``.
         """
-        Logger.log(logging.FILE, message, *args)  # type: ignore
+        Logger.log(Logger.FILE, message, *args)
 
     @staticmethod
     def info(message: str, *args: Any) -> None:
@@ -2186,6 +2203,13 @@ class Logger:
         Log a ``CRITICAL`` level ``message``.
         """
         Logger.log(logging.CRITICAL, message, *args)
+
+
+logging.addLevelName(Logger.STDOUT, 'STDOUT')
+logging.addLevelName(Logger.STDERR, 'STDERR')
+logging.addLevelName(Logger.FILE, 'FILE')
+logging.addLevelName(Logger.WHY, 'WHY')
+logging.addLevelName(Logger.TRACE, 'TRACE')
 
 
 class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
@@ -2273,7 +2297,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         #: The full name used for logging.
         self.log = self.name
-        if Logger.isEnabledFor(logging.TRACE):  # type: ignore
+        if Logger.isEnabledFor(Logger.TRACE):
             self.log = self.stack + ' - ' + self.name
 
         self._verify_no_loop()
@@ -2363,6 +2387,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         while parent is not None:
             call_chain.append(parent.name)
             if self.name == parent.name:
+                no_additional_complaints()
                 raise RuntimeError('step invokes itself: ' + ' -> '.join(reversed(call_chain)))
             parent = parent.parent
 
@@ -2437,6 +2462,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         message = f'{Invocation.current.log} - {message}'
         self.exception = StepException(message)
         if failure_aborts_build.value:
+            no_additional_complaints()
             raise self.exception
 
     def require(self, path: str) -> None:
@@ -2445,6 +2471,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         completing the current invocation.
         """
         self._become_current()
+
+        if Logger.errors and failure_aborts_build.value:
+            self.abort('Aborting due to previous error')
 
         path = clean_path(path)
 
@@ -2608,6 +2637,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             self.condition.release()
 
         if self.exception is not None and failure_aborts_build.value:
+            no_additional_complaints()
             raise self.exception
 
         return self.exception
@@ -2928,12 +2958,16 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         return False
 
-    async def run_action(self,  # pylint: disable=too-many-branches,too-many-statements
-                         kind: str, runner: Callable, *command: Strings, **resources: int) -> None:
+    async def run_action(self,  # pylint: disable=too-many-branches,too-many-statements,too-many-locals
+                         kind: str, runner: Callable[[List[str]], Awaitable],
+                         *command: Strings, **resources: int) -> None:
         """
         Spawn a action to actually create some files.
         """
         self._become_current()
+
+        if Logger.errors and failure_aborts_build.value:
+            self.abort('Aborting due to previous error')
 
         await self.done(self.sync())
 
@@ -2963,6 +2997,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if self.exception is not None:
             Logger.debug(f"Can't run: {log_command}")
+            no_additional_complaints()
             raise self.exception
 
         if self.new_persistent_actions:
@@ -2972,7 +3007,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             if not log_skipped_actions.value:
                 level = logging.DEBUG
             elif is_silent:
-                level = logging.FILE  # type: ignore
+                level = Logger.FILE
             else:
                 level = logging.INFO
             Logger.log(level, f'Skip: {log_command}')
@@ -3007,7 +3042,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             else:
                 Logger.info(f'Run: {log_command}')
 
-            sub_process = await self.done(runner(*run_parts))
+            sub_process = await self.done(runner(run_parts))
+
+            read_stdout = self._read_pipe(sub_process.stdout, Logger.STDOUT)
+            read_stderr = self._read_pipe(sub_process.stderr, Logger.STDERR)
+            await self.done(asyncio.gather(read_stdout, read_stderr))
+
             exit_status = await self.done(sub_process.wait())
 
             if self.new_persistent_actions:
@@ -3031,6 +3071,15 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 await self.done(Resources.condition.acquire())
                 Resources.condition.notify_all()
                 Resources.condition.release()
+
+    async def _read_pipe(self, pipe: asyncio.StreamReader, level: int) -> None:
+        while True:
+            line = await self.done(pipe.readline())
+            if not line:
+                return
+            message = line.decode('utf-8').rstrip('\n')
+            message = Invocation.current.stack + ' - ' + message
+            Logger._logger.log(level, message)  # pylint: disable=protected-access
 
     async def _use_resources(self, amounts: Dict[str, int]) -> None:
         self._become_current()
@@ -3060,6 +3109,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         This is implicitly called before running a action.
         """
         self._become_current()
+
+        if Logger.errors and failure_aborts_build.value:
+            self.abort('Aborting due to previous error')
 
         if self.async_actions:
             Logger.debug('Sync')
@@ -3133,6 +3185,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         Await some non-DynaMake function.
         """
+        if Logger.errors and failure_aborts_build.value:
+            self.abort('Aborting due to previous error')
+
         result = await awaitable
         self._become_current()
         return result
@@ -3272,10 +3327,12 @@ async def shell(*command: Strings, prefix: Optional[Strings] = None,
     if prefix is None:
         prefix = default_shell_prefix.value
 
-    def _run_shell(*parts: Strings) -> Any:
+    def _run_shell(parts: List[str]) -> Awaitable:
         assert prefix is not None
-        return asyncio.create_subprocess_shell(' '.join(flatten(prefix, *parts)),
-                                               executable=shell_executable.value)
+        return asyncio.create_subprocess_shell(' '.join(flatten(prefix, parts)),
+                                               executable=shell_executable.value,
+                                               stdout=asyncio.subprocess.PIPE,
+                                               stderr=asyncio.subprocess.PIPE)
     await current.done(current.run_action('shell', _run_shell, *command, **resources))
 
 
@@ -3289,8 +3346,12 @@ async def spawn(*command: Strings, **resources: int) -> None:
     This first waits until all input files requested so far are ready.
     """
     current = Invocation.current
-    await current.done(current.run_action('spawn', asyncio.create_subprocess_exec,
-                                          *command, **resources))
+
+    def _run_exec(parts: List[str]) -> Awaitable:
+        return asyncio.create_subprocess_exec(*parts,
+                                              stdout=asyncio.subprocess.PIPE,
+                                              stderr=asyncio.subprocess.PIPE)
+    await current.done(current.run_action('spawn', _run_exec, *command, **resources))
 
 
 def log_prefix() -> str:
@@ -3417,6 +3478,7 @@ def _build_targets(targets: List[str]) -> None:
     if result is not None:
         Logger.error('Fail')
         if _is_test:  # pylint: disable=protected-access
+            no_additional_complaints()
             raise result
         sys.exit(1)
 
@@ -3515,12 +3577,14 @@ class RwLocks:
 
         lockers_status = RwLocks.lockers.get(name)
         if lockers_status is not None and name in lockers_status[index]:
+            no_additional_complaints()
             raise RuntimeError(f'{Invocation.current.log} has already locked {action} {name}')
 
         waiters_status = RwLocks.waiters.get(name)
         if waiters_status is None:
             RwLocks.waiters[name] = waiters_status = (set(), set())
         if Invocation.current.log in waiters_status[index]:
+            no_additional_complaints()
             raise RuntimeError(f'{Invocation.current.log} is already waiting to {action} {name}')
         waiters_status[index].add(Invocation.current.log)
 
