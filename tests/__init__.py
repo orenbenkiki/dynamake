@@ -2,7 +2,7 @@
 Common utilities for tests.
 """
 
-from dynamake import reset_make
+from dynamake import reset
 from textwrap import dedent
 from unittest import TestCase
 
@@ -33,7 +33,7 @@ def _exit(status: int) -> None:
 class TestWithReset(TestCase):
 
     def setUp(self) -> None:
-        reset_make(is_test=True, reset_test_times=True)
+        reset(is_test=True, reset_test_times=True)
 
 
 class TestWithFiles(TestWithReset):

@@ -9,9 +9,9 @@ import re
 import subprocess
 
 SETUP_REQUIRES = ['setuptools_scm']
-INSTALL_REQUIRES = ['pyyaml', 'sortedcontainers', 'termcolor']
+INSTALL_REQUIRES = ['pyyaml', 'sortedcontainers', 'termcolor', 'aiorwlock']
 DEVELOP_REQUIRES = ['autopep8', 'isort', 'mypy', 'pylint', 'sphinx', 'sphinx_rtd_theme', 'tox']
-TESTS_REQUIRE = ['nose', 'testfixtures', 'coverage', 'aiorwlock']  # TODO: Replicated in tox.ini
+TESTS_REQUIRE = ['nose', 'testfixtures', 'coverage']  # TODO: Replicated in tox.ini
 
 
 def readme():
@@ -79,6 +79,7 @@ class MypyCommand(SimpleCommand):
 class NoseCommand(SimpleCommand):
     description = 'run nosetests and generate coverage reports'
     command = ['nosetests',
+               '--stop',
                '--with-coverage',
                '--cover-package=dynamake',
                '--cover-branches',

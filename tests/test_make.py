@@ -4,15 +4,15 @@ Test the make utilities.
 
 # pylint: disable=too-many-lines
 
-from aiorwlock import RWLock
-from dynamake import context
 from dynamake import done
 from dynamake import make
+from dynamake import modifying
 from dynamake import optional
 from dynamake import Parameter
 from dynamake import phony
+from dynamake import reading
 from dynamake import require
-from dynamake import reset_make
+from dynamake import reset
 from dynamake import resource_parameters
 from dynamake import shell
 from dynamake import spawn
@@ -92,7 +92,7 @@ class TestMain(TestWithFiles):
 
     def check(self, register: Callable, *, error: Optional[str] = None,
               log: Optional[List[Tuple[str, str, str]]] = None) -> None:
-        reset_make(is_test=True)
+        reset(is_test=True)
         register()
 
         sys.argv += ['--log_level', 'DEBUG']
@@ -1591,7 +1591,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - No inputs'),
             ('dynamake', 'WHY',
              '#1 - make_all - Must run actions since it has changed to add action(s)'),
-            ('dynamake', 'DEBUG', 'Must restart step to run skipped action(s)'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Must restart step to run skipped action(s)'),
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'FILE', '#1 - make_all - Remove the stale output: all'),
             ('dynamake', 'INFO', '#1 - make_all - Run: touch all'),
@@ -2360,15 +2360,6 @@ class TestMain(TestWithFiles):
 
     def test_async_rwlock(self) -> None:
         def _register() -> None:
-            class RwLock:
-                lock: Optional[RWLock] = None
-
-                @staticmethod
-                async def get() -> RWLock:
-                    if RwLock.lock is None:
-                        RwLock.lock = RWLock()
-                    return RwLock.lock
-
             @step(output=phony('all'))
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
@@ -2378,20 +2369,17 @@ class TestMain(TestWithFiles):
 
             @step(output='foo')
             async def make_foo() -> None:  # pylint: disable=unused-variable
-                rw_lock = await done(RwLock.get())
-                async with context(rw_lock.reader_lock):
+                async with reading('db'):
                     await shell('sleep 4; touch foo')
 
             @step(output='bar')
             async def make_bar() -> None:  # pylint: disable=unused-variable
-                rw_lock = await done(RwLock.get())
-                async with context(rw_lock.reader_lock):
+                async with reading('db'):
                     await shell('touch bar')
 
             @step(output='baz')
             async def make_baz() -> None:  # pylint: disable=unused-variable
-                rw_lock = await done(RwLock.get())
-                async with context(rw_lock.writer_lock):
+                async with modifying('db'):
                     await shell('sleep 2; touch baz', jobs=0)
 
         sys.argv += ['--jobs', '0', '--rebuild_changed_actions', 'false']
@@ -2400,14 +2388,19 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#0 - make - Targets: all'),
             ('dynamake', 'DEBUG', '#0 - make - Build the required: all'),
             ('dynamake', 'DEBUG',
-             '#0 - make - The required: all will be produced by the spawned: #1 - make_all'),
+             '#0 - make - The required: all will be produced by the spawned: '
+             '#1 - make_all'),
             ('dynamake', 'TRACE', '#1 - make_all - Call'),
             ('dynamake', 'DEBUG', '#1 - make_all - Build the required: foo'),
             ('dynamake', 'DEBUG',
-             '#1 - make_all - The required: foo will be produced by the spawned: #1.1 - make_foo'),
+             '#1 - make_all - The required: foo will be produced by the spawned: '
+             '#1.1 - make_foo'),
             ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'TRACE', '#1.1 - make_foo - Call'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Nonexistent required output(s): foo'),
+            ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
+            ('dynamake', 'DEBUG', '#1.1 - make_foo - Will read data: db'),
+            ('dynamake', 'DEBUG', '#1.1 - make_foo - Lock read data: db'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
             ('dynamake', 'WHY',
              '#1.1 - make_foo - Must run actions to create the missing output(s): foo'),
@@ -2423,25 +2416,50 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - Sync'),
             ('dynamake', 'TRACE', '#1.2 - make_bar - Call'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Nonexistent required output(s): bar'),
+            ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
+            ('dynamake', 'DEBUG', '#1.2 - make_bar - Will read data: db'),
+            ('dynamake', 'DEBUG',
+             '#1.2 - make_bar - step: #1.1 - make_foo is reading data: db'),
             ('dynamake', 'TRACE', '#1.3 - make_baz - Call'),
             ('dynamake', 'DEBUG', '#1.3 - make_baz - Nonexistent required output(s): baz'),
+            ('dynamake', 'DEBUG', '#1.3 - make_baz - Synced'),
+            ('dynamake', 'DEBUG', '#1.3 - make_baz - Will modify data: db'),
+            ('dynamake', 'DEBUG',
+             '#1.3 - make_baz - step: #1.1 - make_foo is reading data: db'),
+            ('dynamake', 'DEBUG',
+             '#1.3 - make_baz - step: #1.2 - make_bar is waiting to read data: db'),
+            ('dynamake', 'DEBUG', '#1.2 - make_bar - Lock read data: db'),
+            ('dynamake', 'DEBUG',
+             '#1.2 - make_bar - step: #1.1 - make_foo is reading data: db'),
+            ('dynamake', 'DEBUG',
+             '#1.2 - make_bar - step: #1.3 - make_baz is waiting to modify data: db'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
             ('dynamake', 'WHY',
              '#1.2 - make_bar - Must run actions to create the missing output(s): bar'),
             ('dynamake', 'INFO', '#1.2 - make_bar - Run: touch bar'),
             ('dynamake', 'TRACE', '#1.2 - make_bar - Success: touch bar'),
+            ('dynamake', 'DEBUG', '#1.2 - make_bar - Unlock db data: read'),
+            ('dynamake', 'DEBUG',
+             '#1.2 - make_bar - step: #1.1 - make_foo is reading data: db'),
+            ('dynamake', 'DEBUG',
+             '#1.2 - make_bar - step: #1.3 - make_baz is waiting to modify data: db'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Has the output: bar time: 1'),
             ('dynamake', 'TRACE', '#1.2 - make_bar - Done'),
             ('dynamake', 'TRACE', '#1.1 - make_foo - Success: sleep 4; touch foo'),
+            ('dynamake', 'DEBUG', '#1.1 - make_foo - Unlock db data: read'),
+            ('dynamake', 'DEBUG',
+             '#1.1 - make_foo - step: #1.3 - make_baz is waiting to modify data: db'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Has the output: foo time: 2'),
             ('dynamake', 'TRACE', '#1.1 - make_foo - Done'),
+            ('dynamake', 'DEBUG', '#1.3 - make_baz - Lock modify data: db'),
             ('dynamake', 'DEBUG', '#1.3 - make_baz - Synced'),
             ('dynamake', 'WHY',
              '#1.3 - make_baz - Must run actions to create the missing output(s): baz'),
             ('dynamake', 'INFO', '#1.3 - make_baz - Run: sleep 2; touch baz'),
             ('dynamake', 'TRACE', '#1.3 - make_baz - Success: sleep 2; touch baz'),
+            ('dynamake', 'DEBUG', '#1.3 - make_baz - Unlock db data: modify'),
             ('dynamake', 'DEBUG', '#1.3 - make_baz - Synced'),
             ('dynamake', 'DEBUG', '#1.3 - make_baz - Has the output: baz time: 3'),
             ('dynamake', 'TRACE', '#1.3 - make_baz - Done'),
