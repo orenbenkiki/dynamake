@@ -66,7 +66,7 @@ def capture2re(capture: str) -> str:  # pylint: disable=too-many-statements
 
     def _invalid(reason: str = '') -> None:
         nonlocal capture, index
-        raise RuntimeError('Invalid capture pattern:\n%s\n%s^ %s' % (capture, index * ' ', reason))
+        raise RuntimeError(f'Invalid capture pattern:\n{capture}\n{index * " "}^ {reason}')
 
     def _expect_close() -> None:
         if not _is_next('}'):
@@ -182,7 +182,7 @@ def capture2glob(capture: str) -> str:  # pylint: disable=too-many-statements
 
     def _invalid(reason: str = '') -> None:
         nonlocal capture, index
-        raise RuntimeError('Invalid capture pattern:\n%s\n%s^ %s' % (capture, index * ' ', reason))
+        raise RuntimeError(f'Invalid capture pattern:\n{capture}\n{index * " "}^ {reason}')
 
     def _parse_glob(glob: str, terminators: str) -> None:
         nonlocal capture, index, size
@@ -236,7 +236,7 @@ def _fmt_capture(kwargs: Dict[str, Any], capture: str) -> str:  # pylint: disabl
 
     def _invalid(reason: str = '') -> None:
         nonlocal capture, index
-        raise RuntimeError('Invalid capture pattern:\n%s\n%s^ %s' % (capture, index * ' ', reason))
+        raise RuntimeError(f'Invalid capture pattern:\n{capture}\n{index * " "}^ {reason}')
 
     def _expect_close() -> None:
         if not _is_next('}'):
@@ -871,10 +871,9 @@ class NonOptionalException(Exception):
         Create a new exception when no disk files matched the pattern.
         """
         if capture == glob:
-            super().__init__('No files matched the non-optional glob pattern: %s' % (glob))
+            super().__init__(f'No files matched the non-optional glob pattern: {glob}')
         else:
-            super().__init__('No files matched the non-optional glob: %s pattern: %s'
-                             % (glob, capture))
+            super().__init__(f'No files matched the non-optional glob: {glob} pattern: {capture}')
 
         #: The glob pattern that failed to match.
         self.glob = glob
@@ -979,8 +978,7 @@ def match_extract(pattern: str, *strings: Strings) -> List[Dict[str, Any]]:
 def _capture_string(pattern: str, regexp: Pattern, string: str) -> Dict[str, Any]:
     match = re.fullmatch(regexp, string)
     if not match:
-        raise RuntimeError('The string: %s does not match the capture pattern: %s'
-                           % (string, pattern))
+        raise RuntimeError(f'The string: {string} does not match the capture pattern: {pattern}')
 
     values = match.groupdict()
     for name, value in values.items():
@@ -1021,8 +1019,8 @@ def str2enum(enum: type) -> Callable[[str], Any]:
             return enum[string.lower()]  # type: ignore
         except BaseException:
             raise argparse.ArgumentTypeError(  # pylint: disable=raise-missing-from
-                'Expected one of: %s'
-                % ' '.join([value.name for value in enum]))  # type: ignore
+                'Expected one of: '
+                + ' '.join([value.name for value in enum]))  # type: ignore
     return _parse
 
 
@@ -1123,11 +1121,11 @@ def _str2range(string: str, parser: Callable[[str], Union[int, float]], range: R
         value = parser(string)
     except BaseException:
         raise argparse.ArgumentTypeError(  # pylint: disable=raise-missing-from
-            'Expected %s value' % parser.__name__)
+            f'Expected {parser.__name__} value')
 
     if not range.is_valid(value):
-        raise argparse.ArgumentTypeError('Expected %s value, where %s'
-                                         % (parser.__name__, range.text()))
+        raise argparse.ArgumentTypeError(f'Expected {parser.__name__} value, '
+                                         f'where {range.text()}')
 
     return value
 
@@ -1172,7 +1170,7 @@ def str2choice(options: List[str]) -> Callable[[str], str]:
     """
     def _parse(string: str) -> str:
         if string not in options:
-            raise argparse.ArgumentTypeError('Expected one of: %s' % ' '.join(options))
+            raise argparse.ArgumentTypeError('Expected one of: ' + ' '.join(options))
         return string
 
     return _parse
@@ -1396,7 +1394,7 @@ _is_test: bool = False
 
 
 def _dict_to_str(values: Dict[str, Any]) -> str:
-    return ','.join(['%s=%s' % (quote_plus(name), quote_plus(str(value)))
+    return ','.join([f'{quote_plus(name)}={quote_plus(str(value))}'
                      for name, value in sorted(values.items())])
 
 
@@ -1447,7 +1445,7 @@ class Parameter:  # pylint: disable=too-many-instance-attributes
         self.value = default
 
         if name in Parameter.by_name:
-            raise RuntimeError('Multiple definitions for the parameter: %s' % name)
+            raise RuntimeError(f'Multiple definitions for the parameter: {name}')
         Parameter.by_name[name] = self
 
     @staticmethod
@@ -1461,7 +1459,7 @@ class Parameter:  # pylint: disable=too-many-instance-attributes
         parameters = [(parameter.order, parameter.name, parameter)
                       for parameter in Parameter.by_name.values()]
         for _, _, parameter in sorted(parameters):
-            text = parameter.description.replace('%', '%%') + ' (default: %s)' % parameter.default
+            text = parameter.description.replace('%', '%%') + f' (default: {parameter.default})'
             if parameter.short:
                 parser.add_argument('--' + parameter.name, '-' + parameter.short,
                                     help=text, metavar=parameter.metavar)
@@ -1486,7 +1484,7 @@ class Parameter:  # pylint: disable=too-many-instance-attributes
                     parameter.value = parameter.parser(value)
                 except BaseException:
                     raise RuntimeError(  # pylint: disable=raise-missing-from
-                        'Invalid value: %s for the parameter: %s' % (vars(args)[name], name))
+                        f'Invalid value: {vars(args)[name]} for the parameter: {name}')
 
         name = sys.argv[0].split('/')[-1]
 
@@ -1502,25 +1500,23 @@ class Parameter:  # pylint: disable=too-many-instance-attributes
             data = {}
 
         if not isinstance(data, dict):
-            raise RuntimeError('The configuration file: %s '
-                               'does not contain a top-level mapping' % path)
+            raise RuntimeError(f'The configuration file: {path} '
+                               f'does not contain a top-level mapping')
 
         for name, value in data.items():
             parameter = Parameter.by_name.get(name)
             if parameter is None:
-                raise RuntimeError('Unknown parameter: %s '
-                                   'specified in the configuration file: %s'
-                                   % (name, path))
+                raise RuntimeError(f'Unknown parameter: {name} '
+                                   f'specified in the configuration file: {path}')
 
             if isinstance(value, str):
                 try:
                     value = parameter.parser(value)
                 except BaseException:
                     raise RuntimeError(  # pylint: disable=raise-missing-from
-                        'Invalid value: %s '
-                        'for the parameter: %s '
-                        'specified in the configuration file: %s'
-                        % (value, name, path))
+                        f'Invalid value: {value} '
+                        f'for the parameter: {name} '
+                        f'specified in the configuration file: {path}')
 
             parameter.value = value
 
@@ -1747,15 +1743,14 @@ class Resources:
         for name, amount in sorted(requested.items()):
             total = Resources.total.get(name)
             if total is None:
-                raise RuntimeError('Requested the unknown resource: %s' % name)
+                raise RuntimeError(f'Requested the unknown resource: {name}')
             if amount == 0 or total <= 0:
                 continue
             if amount < 0:
                 amount = max(total // -amount, 1)
             if amount > total:
-                raise RuntimeError('The requested resource: %s amount: %s '
-                                   'is greater than the total amount: %s'
-                                   % (name, amount, total))
+                raise RuntimeError(f'The requested resource: {name} amount: {amount} '
+                                   f'is greater than the total amount: {total}')
             amounts[name] = amount
 
         for name, total in Resources.total.items():
@@ -1811,16 +1806,15 @@ def resource_parameters(**default_amounts: int) -> None:
         if total is None:
             parameter = Parameter.by_name.get(name)
             if parameter is None:
-                raise RuntimeError('Unknown resource parameter: %s' % name)
+                raise RuntimeError(f'Unknown resource parameter: {name}')
             total = int(parameter.value)
             Resources.total[name] = total
             Resources.available[name] = total
 
         if amount > total:
-            raise RuntimeError('The default amount: %s '
-                               'of the resource: %s '
-                               'is greater than the total amount: %s'
-                               % (amount, name, total))
+            raise RuntimeError(f'The default amount: {amount} '
+                               f'of the resource: {name} '
+                               f'is greater than the total amount: {total}')
 
         Resources.default[name] = amount
 
@@ -1871,12 +1865,13 @@ class Step:
             function = getattr(function, '__func__')
 
         if Step._is_finalized:
-            raise RuntimeError('Late registration of the step: %s.%s'
-                               % (function.__module__, function.__qualname__))
+            raise RuntimeError(f'Late registration of the step: '
+                               f'{function.__module__}.{function.__qualname__}')
 
         if not iscoroutinefunction(function):
-            raise RuntimeError('The step function: %s.%s is not a coroutine'
-                               % (function.__module__, function.__qualname__))
+            raise RuntimeError(f'The step function: '
+                               f'{function.__module__}.{function.__qualname__}'
+                               f' is not a coroutine')
 
         #: The name of the step.
         self.name = function.__name__
@@ -1893,17 +1888,17 @@ class Step:
             Step.by_regexp.append((capture2re(capture), self))
 
         if not self.output:
-            raise RuntimeError('The step function: %s.%s specifies no output'
-                               % (self.function.__module__, self.function.__qualname__))
+            raise RuntimeError(f'The step function: '
+                               f'{function.__module__}.{function.__qualname__}'
+                               f' specifies no output')
 
         if self.name in Step.by_name:
             conflicting = Step.by_name[self.name].function
-            raise RuntimeError('Conflicting definitions for the step: %s '
-                               'in both: %s.%s '
-                               'and: %s.%s'
-                               % (self.name,
-                                  conflicting.__module__, conflicting.__qualname__,
-                                  function.__module__, function.__qualname__))
+            raise RuntimeError(f'Conflicting definitions for the step: {self.name} '
+                               f'in both: '
+                               f'{conflicting.__module__}.{conflicting.__qualname__}'
+                               f' and: '
+                               f'{function.__module__}.{function.__qualname__}')
         Step.by_name[self.name] = self
 
 
@@ -2127,8 +2122,13 @@ class Logger:
         """
         Log a ``level`` ``message``.
         """
-        message = message % args
-        message = '%s - %s' % (Invocation.current.log, message)
+        try:
+            message = message % args
+        except TypeError:
+            raise RuntimeError(  # pylint: disable=raise-missing-from
+                f'mismatch between format: {message} '
+                f'and args: {args}')
+        message = f'{Invocation.current.log} - {message}'
         Logger._logger.log(level, message)
 
     @staticmethod
@@ -2267,9 +2267,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         else:
             self.parent.sub_count += 1
             if self.parent.stack == '#0':
-                self.stack = '#%s' % self.parent.sub_count
+                self.stack = '#' + str(self.parent.sub_count)
             else:
-                self.stack = '%s.%s' % (self.parent.stack, self.parent.sub_count)
+                self.stack = self.parent.stack + '.' + str(self.parent.sub_count)
 
         #: The full name used for logging.
         self.log = self.name
@@ -2374,7 +2374,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         path = os.path.join(persistent_directory.value, self.name + '.actions.yaml')
         if not os.path.exists(path):
-            Logger.why('Must run actions because missing the persistent actions: %s', path)
+            Logger.why(f'Must run actions because missing the persistent actions: {path}')
             self.must_run_action = True
             return
 
@@ -2383,12 +2383,11 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 data = yaml.full_load(file.read())
             self.old_persistent_actions = PersistentAction.from_data(data['actions'])
             self.old_persistent_outputs = data['outputs']
-            Logger.debug('Read the persistent actions: %s', path)
+            Logger.debug(f'Read the persistent actions: {path}')
 
         except BaseException:  # pylint: disable=broad-except
-            Logger.warning('Must run actions '
-                           'because read the invalid persistent actions: %s',
-                           path)
+            Logger.warning(f'Must run actions '
+                           f'because read the invalid persistent actions: {path}')
             self.must_run_action = True
 
     def remove_old_persistent_data(self) -> None:
@@ -2397,7 +2396,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         path = os.path.join(persistent_directory.value, self.name + '.actions.yaml')
         if os.path.exists(path):
-            Logger.debug('Remove the persistent actions: %s', path)
+            Logger.debug(f'Remove the persistent actions: {path}')
             os.remove(path)
 
         if '/' not in self.name:
@@ -2414,7 +2413,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         This is only done on a successful build.
         """
         path = os.path.join(persistent_directory.value, self.name + '.actions.yaml')
-        Logger.debug('Write the persistent actions: %s', path)
+        Logger.debug(f'Write the persistent actions: {path}')
 
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
@@ -2435,7 +2434,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Abort the invocation for some reason.
         """
         message = message % args
-        message = '%s - %s' % (Invocation.current.log, message)
+        message = f'{Invocation.current.log} - {message}'
         self.exception = StepException(message)
         if failure_aborts_build.value:
             raise self.exception
@@ -2449,17 +2448,17 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         path = clean_path(path)
 
-        Logger.debug('Build the required: %s', path)
+        Logger.debug(f'Build the required: {path}')
 
         self.required.append(path)
 
         if path in Invocation.poisoned:
-            self.abort('The required: %s has failed to build', path)
+            self.abort(f'The required: {path} has failed to build')
             return
 
         up_to_date = Invocation.up_to_date.get(path)
         if up_to_date is not None:
-            Logger.debug('The required: %s was built', path)
+            Logger.debug(f'The required: {path} was built')
             if self.new_persistent_actions:
                 self.new_persistent_actions[-1].require(path, UpToDate(up_to_date.producer))
             return
@@ -2472,12 +2471,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             stat = Stat.try_stat(path)
             if stat is None:
                 if is_optional(path):
-                    Logger.debug('The optional required: %s '
-                                 "does not exist and can't be built", path)
+                    Logger.debug(f'The optional required: {path} '
+                                 f"does not exist and can't be built")
                 else:
-                    self.log_and_abort("Don't know how to make the required: %s", path)
+                    self.log_and_abort(f"Don't know how to make the required: {path}")
                 return
-            Logger.debug('The required: %s is a source file', path)
+            Logger.debug(f'The required: {path} is a source file')
             up_to_date = UpToDate('', stat.st_mtime_ns)
             Invocation.up_to_date[path] = up_to_date
             if self.new_persistent_actions:
@@ -2487,9 +2486,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         invocation = Invocation(step, **kwargs)
         if self.new_persistent_actions:
             self.new_persistent_actions[-1].require(path, UpToDate(invocation.name))
-        Logger.debug('The required: %s '
-                     'will be produced by the spawned: %s',
-                     path, invocation.log)
+        Logger.debug(f'The required: {path} '
+                     f'will be produced by the spawned: {invocation.log}')
         self.async_actions.append(asyncio.Task(invocation.run()))  # type: ignore
 
     def producer_of(self,  # pylint: disable=too-many-locals
@@ -2516,19 +2514,18 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if Logger.isEnabledFor(logging.DEBUG) and len(producers) > 1:
             for _, _, _, candidate in producers:
-                Logger.debug('candidate producer: %s priority: %s',
-                             candidate.name, candidate.priority)
+                Logger.debug(f'candidate producer: {candidate.name} '
+                             f'priority: {candidate.priority}')
 
         if len(producers) > 1:
             first_priority, first_name, _, _ = producers[0]
             second_priority, second_name, _, _ = producers[1]
 
             if second_priority == first_priority:
-                self.log_and_abort('The output: %s '
-                                   'may be created by both the step: %s '
-                                   'and the step: %s '
-                                   'at the same priority: %s',
-                                   path, first_name, second_name, first_priority)
+                self.log_and_abort(f'The output: {path} '
+                                   f'may be created by both the step: {first_name} '
+                                   f'and the step: {second_name} '
+                                   f'at the same priority: {first_priority}')
                 return None, None
 
         if len(producers) > 0:
@@ -2585,7 +2582,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     self.write_new_persistent_actions()
                 elif len(self.new_persistent_actions) < len(self.old_persistent_actions):
                     Logger.warning('Skipped some action(s) '
-                                   'even though it has changed to remove some final action(s)')
+                                   'even though changed to remove some final action(s)')
 
             if self.did_run_actions:
                 Logger.trace('Done')
@@ -2624,7 +2621,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         self._become_current()
 
-        Logger.debug('Paused by waiting for: %s', active.log)
+        Logger.debug(f'Paused by waiting for: {active.log}')
 
         if active.condition is None:
             active.condition = asyncio.Condition()
@@ -2633,7 +2630,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         await self.done(active.condition.wait())
         active.condition.release()
 
-        Logger.debug('Resumed by completion of: %s', active.log)
+        Logger.debug(f'Resumed by completion of: {active.log}')
 
         return active.exception
 
@@ -2655,16 +2652,16 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             try:
                 paths = glob_paths(formatted_pattern)
                 if not paths:
-                    Logger.debug('Nonexistent optional output(s): %s', pattern)
+                    Logger.debug(f'Nonexistent optional output(s): {pattern}')
                 else:
                     for path in paths:
                         self.initial_outputs.append(path)
                         if path == pattern:
-                            Logger.debug('Existing output: %s', path)
+                            Logger.debug(f'Existing output: {path}')
                         else:
-                            Logger.debug('Existing output: %s -> %s', pattern, path)
+                            Logger.debug(f'Existing output: {pattern} -> {path}')
             except NonOptionalException:
-                Logger.debug('Nonexistent required output(s): %s', pattern)
+                Logger.debug(f'Nonexistent required output(s): {pattern}')
                 self.missing_output = formatted_pattern
                 missing_outputs.append(capture2re(formatted_pattern))
 
@@ -2683,10 +2680,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     continue
 
                 if Stat.exists(path):
-                    Logger.debug('Changed to abandon the output: %s', path)
+                    Logger.debug(f'Changed to abandon the output: {path}')
                     self.abandoned_output = path
                 else:
-                    Logger.debug('Missing the old built output: %s', path)
+                    Logger.debug(f'Missing the old built output: {path}')
                     self.missing_output = path
 
                 Stat.forget(path)
@@ -2706,9 +2703,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 self.oldest_output_mtime_ns = output_mtime_ns
 
         if Logger.isEnabledFor(logging.DEBUG) and self.oldest_output_path is not None:
-            Logger.debug('Oldest output: %s time: %s',
-                         self.oldest_output_path,
-                         _datetime_from_nanoseconds(self.oldest_output_mtime_ns))
+            Logger.debug(f'Oldest output: {self.oldest_output_path} '
+                         f'time: {_datetime_from_nanoseconds(self.oldest_output_mtime_ns)}')
 
     async def collect_final_outputs(self) -> None:  # pylint: disable=too-many-branches
         """
@@ -2735,7 +2731,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             try:
                 paths = glob_paths(formatted_pattern)
                 if not paths:
-                    Logger.debug('Did not make the optional output(s): %s', pattern)
+                    Logger.debug(f'Did not make the optional output(s): {pattern}')
                 else:
                     for path in paths:
                         self.built_outputs.append(path)
@@ -2744,7 +2740,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                             if not did_sleep:
                                 await self.done(asyncio.sleep(1.0))
                                 did_sleep = True
-                            Logger.file('Touch the output: %s', path)
+                            Logger.file(f'Touch the output: {path}')
                             Stat.touch(path)
 
                         mtime_ns = Stat.stat(path).st_mtime_ns
@@ -2752,15 +2748,15 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
                         if Logger.isEnabledFor(logging.DEBUG):
                             if path == formatted_pattern:
-                                Logger.debug('Has the output: %s time: %s',
-                                             path, _datetime_from_nanoseconds(mtime_ns))
+                                Logger.debug(f'Has the output: {path} '
+                                             f'time: {_datetime_from_nanoseconds(mtime_ns)}')
                             else:
-                                Logger.debug('Has the output: %s -> %s time: %s',
-                                             pattern, path, _datetime_from_nanoseconds(mtime_ns))
+                                Logger.debug(f'Has the output: {pattern} -> {path} '
+                                             f'time: {_datetime_from_nanoseconds(mtime_ns)}')
 
             except NonOptionalException:
                 self._become_current()
-                Logger.error('Missing the output(s): %s', pattern)
+                Logger.error(f'Missing the output(s): {pattern}')
                 missing_outputs = True
                 break
 
@@ -2775,7 +2771,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         for path in sorted(self.initial_outputs):
             if self.should_remove_stale_outputs and not is_precious(path):
-                Logger.file('Remove the stale output: %s', path)
+                Logger.file(f'Remove the stale output: {path}')
                 Invocation.remove_output(path)
             else:
                 Stat.forget(path)
@@ -2793,7 +2789,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             while remove_empty_directories.value:
                 path = os.path.dirname(path)
                 Stat.rmdir(path)
-                Logger.file('Remove the empty directory: %s', path)
+                Logger.file(f'Remove the empty directory: {path}')
         except OSError:
             pass
 
@@ -2813,7 +2809,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             for path in glob_paths(optional(formatted_pattern)):
                 Invocation.poisoned.add(path)
                 if remove_failed_outputs.value and not is_precious(path):
-                    Logger.file('Remove the failed output: %s', path)
+                    Logger.file(f'Remove the failed output: {path}')
                     Invocation.remove_output(path)
 
     def should_run_action(self) -> bool:  # pylint: disable=too-many-return-statements
@@ -2826,23 +2822,23 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if self.phony_outputs:
             # Either no output files (pure action) or missing output files.
-            Logger.why('Must run actions to satisfy the phony output: %s', self.phony_outputs[0])
+            Logger.why(f'Must run actions to satisfy the phony output: {self.phony_outputs[0]}')
             return True
 
         if self.missing_output is not None:
-            Logger.why('Must run actions to create the missing output(s): %s', self.missing_output)
+            Logger.why(f'Must run actions to create the missing output(s): {self.missing_output}')
             return True
 
         if self.abandoned_output is not None:
-            Logger.why('Must run actions since it has changed to abandon the output: %s',
-                       self.abandoned_output)
+            Logger.why(f'Must run actions '
+                       f'because changed to abandon the output: {self.abandoned_output}')
             return True
 
         if self.new_persistent_actions:
             # Compare with last successful build action.
             index = len(self.new_persistent_actions) - 1
             if index >= len(self.old_persistent_actions):
-                Logger.why('Must run actions since it has changed to add action(s)')
+                Logger.why('Must run actions because changed to add action(s)')
                 return True
             new_action = self.new_persistent_actions[index]
             old_action = self.old_persistent_actions[index]
@@ -2862,10 +2858,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         if self.oldest_output_path is not None \
                 and self.oldest_output_mtime_ns <= self.newest_input_mtime_ns:
             # Some output file is not newer than some input file.
-            Logger.why('Must run actions because the output: %s '
-                       'is not newer than the input: %s',
-                       self.oldest_output_path,
-                       self.newest_input_path)
+            Logger.why(f'Must run actions because the output: {self.oldest_output_path} '
+                       f'is not newer than the input: {self.newest_input_path}')
             return True
 
         # All output files are newer than all input files.
@@ -2885,15 +2879,15 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             if old_action.command is None:
                 old_action_kind = 'a phony command'
             else:
-                old_action_kind = 'the command: %s' % ' '.join(old_action.command)
+                old_action_kind = 'the command: ' + ' '.join(old_action.command)
 
             if new_action.command is None:
                 new_action_kind = 'a phony command'
             else:
-                new_action_kind = 'the command: %s' % ' '.join(new_action.command)
+                new_action_kind = 'the command: ' + ' '.join(new_action.command)
 
-            Logger.why('Must run actions because it has changed %s into %s',
-                       old_action_kind, new_action_kind)
+            Logger.why(f'Must run actions because changed {old_action_kind} '
+                       f'into {new_action_kind}')
             return True
 
         return False
@@ -2907,32 +2901,29 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         for new_path in sorted(new_required.keys()):
             if new_path not in old_required:
-                Logger.why('Must run actions because it has changed to require: %s',
-                           new_path)
+                Logger.why(f'Must run actions because changed to require: {new_path}')
                 return True
 
         for old_path in sorted(old_required.keys()):
             if old_path not in new_required:
-                Logger.why('Must run actions because it has changed to not require: %s',
-                           old_path)
+                Logger.why(f'Must run actions because changed to not require: {old_path}')
                 return True
 
         for path in sorted(new_required.keys()):
             old_up_to_date = old_required[path]
             new_up_to_date = new_required[path]
             if old_up_to_date.producer != new_up_to_date.producer:
-                Logger.why('Must run actions because the producer of the required: %s '
-                           'has changed from: %s into: %s',
-                           path,
-                           (old_up_to_date.producer or 'source file'),
-                           (new_up_to_date.producer or 'source file'))
+                Logger.why(f'Must run actions because the producer of the required: {path} '
+                           f'has changed from: {old_up_to_date.producer or "source file"} '
+                           f'into: {new_up_to_date.producer or "source file"}')
                 return True
             if not is_exists(path) and old_up_to_date.mtime_ns != new_up_to_date.mtime_ns:
-                Logger.why('Must run actions because the modification time of the required: %s '
-                           'has changed from: %s into: %s',
-                           path,
-                           _datetime_from_nanoseconds(old_up_to_date.mtime_ns),
-                           _datetime_from_nanoseconds(new_up_to_date.mtime_ns))
+                Logger.why(f'Must run actions '
+                           f'because the modification time of the required: {path} '
+                           f'has changed from: '
+                           f'{_datetime_from_nanoseconds(old_up_to_date.mtime_ns)} '
+                           f'into: '
+                           f'{_datetime_from_nanoseconds(new_up_to_date.mtime_ns)}')
                 return True
 
         return False
@@ -2971,7 +2962,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         log_command = ' '.join(log_parts)
 
         if self.exception is not None:
-            Logger.debug("Can't run: %s", log_command)
+            Logger.debug(f"Can't run: {log_command}")
             raise self.exception
 
         if self.new_persistent_actions:
@@ -2984,7 +2975,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 level = logging.FILE  # type: ignore
             else:
                 level = logging.INFO
-            Logger.log(level, 'Skip: %s', log_command)
+            Logger.log(level, f'Skip: {log_command}')
             self.did_skip_actions = True
             if self.new_persistent_actions:
                 self.new_persistent_actions.append(  #
@@ -3012,9 +3003,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             self.oldest_output_path = None
 
             if is_silent:
-                Logger.file('Run: %s', log_command)
+                Logger.file(f'Run: {log_command}')
             else:
-                Logger.info('Run: %s', log_command)
+                Logger.info(f'Run: {log_command}')
 
             sub_process = await self.done(runner(*run_parts))
             exit_status = await self.done(sub_process.wait())
@@ -3025,18 +3016,18 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 self.new_persistent_actions.append(PersistentAction(persistent_action))
 
             if exit_status != 0:
-                self.log_and_abort('Failure: %s', log_command)
+                self.log_and_abort(f'Failure: {log_command}')
                 return
 
-            Logger.trace('Success: %s', log_command)
+            Logger.trace(f'Success: {log_command}')
         finally:
             self._become_current()
             if resources:
                 if Logger.isEnabledFor(logging.DEBUG):
-                    Logger.debug('Free resources: %s', _dict_to_str(resources))
+                    Logger.debug('Free resources: ' + _dict_to_str(resources))
                 Resources.free(resources)
                 if Logger.isEnabledFor(logging.DEBUG):
-                    Logger.debug('Available resources: %s', _dict_to_str(Resources.available))
+                    Logger.debug('Available resources: ' + _dict_to_str(Resources.available))
                 await self.done(Resources.condition.acquire())
                 Resources.condition.notify_all()
                 Resources.condition.release()
@@ -3047,15 +3038,15 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         while True:
             if Resources.have(amounts):
                 if Logger.isEnabledFor(logging.DEBUG):
-                    Logger.debug('Grab resources: %s', _dict_to_str(amounts))
+                    Logger.debug('Grab resources: ' + _dict_to_str(amounts))
                 Resources.grab(amounts)
                 if Logger.isEnabledFor(logging.DEBUG):
-                    Logger.debug('Available resources: %s', _dict_to_str(Resources.available))
+                    Logger.debug('Available resources: ' + _dict_to_str(Resources.available))
                 return
 
             if Logger.isEnabledFor(logging.DEBUG):
-                Logger.debug('Available resources: %s', _dict_to_str(Resources.available))
-                Logger.debug('Paused by waiting for resources: %s', _dict_to_str(amounts))
+                Logger.debug('Available resources: ' + _dict_to_str(Resources.available))
+                Logger.debug('Paused by waiting for resources: ' + _dict_to_str(amounts))
 
             await self.done(Resources.condition.acquire())
             await self.done(Resources.condition.wait())
@@ -3091,8 +3082,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     level = logging.ERROR
                 else:
                     level = logging.DEBUG
-                Logger.log(level, 'The required: %s has failed to build',
-                           path)
+                Logger.log(level, f'The required: {path} has failed to build')
                 Invocation.poisoned.add(path)
                 failed_inputs = True
                 continue
@@ -3101,7 +3091,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 assert is_optional(path)
                 continue
 
-            Logger.debug('Has the required: %s', path)
+            Logger.debug(f'Has the required: {path}')
 
             if is_exists(path):
                 continue
@@ -3134,9 +3124,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             if self.newest_input_path is None:
                 Logger.debug('No inputs')
             else:
-                Logger.debug('Newest input: %s time: %s',
-                             self.newest_input_path,
-                             _datetime_from_nanoseconds(self.newest_input_mtime_ns))
+                Logger.debug(f'Newest input: {self.newest_input_path} '
+                             f'time: {_datetime_from_nanoseconds(self.newest_input_mtime_ns)}')
 
         return None
 
@@ -3166,7 +3155,7 @@ def _datetime_from_nanoseconds(nanoseconds: int) -> str:
         # pragma: no cover
         seconds = datetime.fromtimestamp(nanoseconds // 1_000_000_000).strftime('%Y-%m-%d %H:%M:%S')
         fraction = '%09d' % (nanoseconds % 1_000_000_000)
-        return '%s.%s' % (seconds, fraction)
+        return seconds + '.' + fraction
 
     global _QUANTIZED_OF_NANOSECONDS
     quantized = _QUANTIZED_OF_NANOSECONDS.get(nanoseconds, None)
@@ -3331,7 +3320,7 @@ def make(parser: ArgumentParser, *,
     _load_modules()
 
     parser.add_argument('TARGET', nargs='*',
-                        help='The file or target to make (default: %s)' % ' '.join(default_targets))
+                        help=f'The file or target to make (default: {" ".join(default_targets)})')
 
     parser.add_argument('--module', '-m', metavar='MODULE', action='append',
                         help='A Python module to load (containing function definitions)')
@@ -3390,8 +3379,8 @@ def _list_steps() -> None:
         doc = step.function.__doc__
         if doc:
             print('# ' + dedent(doc).strip().replace('\n', '\n# '))
-        print('%s:' % step.name)
-        print('  priority: %s' % step.priority)
+        print(f'{step.name}:')
+        print(f'  priority: {step.priority}')
         print('  outputs:')
         for output in sorted(step.output):
             properties = []
@@ -3404,17 +3393,17 @@ def _list_steps() -> None:
             if is_precious(output):
                 properties.append('precious')
             if properties:
-                print('  - %s: %s' % (output, ', '.join(properties)))
+                print(f'  - {output}: [{", ".join(properties)}]')
             else:
-                print('  - %s' % output)
+                print(f'  - {output}')
 
 
 def _build_targets(targets: List[str]) -> None:
-    Logger.trace('Targets: %s', ' '.join(targets))
+    Logger.trace('Targets: ' + ' '.join(targets))
     if Logger.isEnabledFor(logging.DEBUG):
         for value in Resources.available.values():
             if value > 0:
-                Logger.debug('Available resources: %s', _dict_to_str(Resources.available))
+                Logger.debug('Available resources: ' + _dict_to_str(Resources.available))
                 break
     try:
         for target in targets:
@@ -3518,21 +3507,21 @@ class RwLocks:
         """
         Record the fact we are waiting to lock some data.
         """
+        action = ('read', 'modify')[index]
+
         if Logger.isEnabledFor(logging.DEBUG):
-            Logger.debug('Will %s data: %s', ('read', 'modify')[index], name)
+            Logger.debug(f'Will {action} data: {name}')
             RwLocks.log_status(name)
 
         lockers_status = RwLocks.lockers.get(name)
         if lockers_status is not None and name in lockers_status[index]:
-            raise RuntimeError('%s has already locked %s %s'
-                               % (Invocation.current.log, ('read', 'modify')[index], name))
+            raise RuntimeError(f'{Invocation.current.log} has already locked {action} {name}')
 
         waiters_status = RwLocks.waiters.get(name)
         if waiters_status is None:
             RwLocks.waiters[name] = waiters_status = (set(), set())
         if Invocation.current.log in waiters_status[index]:
-            raise RuntimeError('%s is already waiting to %s %s'
-                               % (Invocation.current.log, ('read', 'modify')[index], name))
+            raise RuntimeError(f'{Invocation.current.log} is already waiting to {action} {name}')
         waiters_status[index].add(Invocation.current.log)
 
     @staticmethod
@@ -3540,8 +3529,10 @@ class RwLocks:
         """
         Record the fact we are no longer waiting and actually are locking some data.
         """
+        action = ('read', 'modify')[index]
+
         if Logger.isEnabledFor(logging.DEBUG):
-            Logger.debug('Lock %s data: %s', ('read', 'modify')[index], name)
+            Logger.debug(f'Lock {action} data: {name}')
             RwLocks.log_status(name, am_waiter=True)
 
         waiters_status = RwLocks.waiters[name]
@@ -3559,8 +3550,10 @@ class RwLocks:
         """
         Record the fact we have released the lock.
         """
+        action = ('read', 'modify')[index]
+
         if Logger.isEnabledFor(logging.DEBUG):
-            Logger.debug('Unlock %s data: %s', name, ('read', 'modify')[index])
+            Logger.debug(f'Unlock {action} data: {name}')
             RwLocks.log_status(name, am_locker=True)
 
         waiters_status = RwLocks.waiters[name]
@@ -3587,14 +3580,14 @@ class RwLocks:
                     assert not seen_locker
                     seen_locker = True
                 else:
-                    Logger.debug('step: %s is reading data: %s', reader, name)
+                    Logger.debug(f'step: {reader} is reading data: {name}')
 
             for modifier in modifiers:
                 if modifier == Invocation.current.log:
                     assert not seen_locker
                     seen_locker = True
                 else:
-                    Logger.debug('step: %s is modifying data: %s', modifier, name)
+                    Logger.debug(f'step: {modifier} is modifying data: {name}')
 
         assert seen_locker == am_locker
 
@@ -3609,14 +3602,14 @@ class RwLocks:
                     assert not seen_waiter
                     seen_waiter = True
                 else:
-                    Logger.debug('step: %s is waiting to read data: %s', reader, name)
+                    Logger.debug(f'step: {reader} is waiting to read data: {name}')
 
             for modifier in sorted(modifiers):
                 if modifier == Invocation.current.log:
                     assert not seen_waiter
                     seen_waiter = True
                 else:
-                    Logger.debug('step: %s is waiting to modify data: %s', modifier, name)
+                    Logger.debug(f'step: {modifier} is waiting to modify data: {name}')
 
         assert seen_waiter == am_waiter
 

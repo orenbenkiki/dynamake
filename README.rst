@@ -94,7 +94,7 @@ computation pipelines.
 
 Configuration parameters can be either specified as explicit command line
 options for executed actions, or inside configuration files(s). These
-parameters can then be used to modify the triggered command line actions.  If
+parameters can then be used to modify the triggered command line actions. If
 these differ, then DynaMake will re-invoke such actions, even if the output
 files are up-to-date.
 
@@ -287,12 +287,10 @@ A more generic script might be:
             require_included_files(scan_included_files(included_path))
 
     @dm.step(output='obj/{*name}.o')
-    async def make_object(**kwargs: str) -> None:
-        source_path = 'src/{name}.c'.format(**kwargs)
-        source_path = dm.fmt(kwargs, 'src/{name}.c')  # Same as above
-        source_path = dm.expand('src/{name}.c')  # Same as above
+    async def make_object(name: str) -> None:
+        source_path = f'src/{name}.c'
         require_included_files(source_path)
-        await dm.espawn('cc', '-o', 'obj/{name}.o', source_path)
+        await dm.spawn('cc', '-o', f'obj/{name}.o', source_path)
 
     @dm.step(output='bin/main')
     async def make_executable() -> None:
@@ -316,21 +314,18 @@ This demonstrates some additional concepts:
   patterns, and the unique step that matches the target is triggered, with the
   appropriate (extracted) arguments. If multiple such patterns match the file,
   the one with the highest step ``priority`` is used. It is an error for more
-  than one step with the same priority to match the same output file.  If no
+  than one step with the same priority to match the same output file. If no
   step matches, the target is assumed to be a source file, and must exist on
   the disk. Otherwise, DynaMake complains it doesn't know how to make this
   target.
 
 * DynaMake provides many functions to deal with ``glob``-ing, capturing, and
-  formatting lists of strings.  These make it convenient to perform common
+  formatting lists of strings. These make it convenient to perform common
   operations. For example, :py:func:`dynamake.expand` is equivalent to
-  :py:func:`dynamake.fmt` using the ``kwargs`` of the current step.  This is an
-  extremely common operation so many functions have a variant prefixed with
-  ``e`` which automatically expands the relevant argument(s).  Another example
-  is :py:func:`dynamake.glob_fmt` which uses a ``glob`` to obtain a list of
-  file names, then ``extract`` some part(s) of each, then ``fmt`` some other
-  pattern(s) using these values. Using :py:func:`dynamake.eglob_fmt` will
-  automatically first :py:func:`dynamake.expand` each of the file names.
+  :py:func:`dynamake.fmt` using the ``kwargs`` of the current step.
+  Another example is :py:func:`dynamake.glob_fmt` which uses a ``glob`` to
+  obtain a list of file names, then ``extract`` some part(s) of each, then
+  ``fmt`` some other pattern(s) using these values.
 
 * Most DynaMake functions accept :py:class:`Strings`, that is, either a single
   string, or a list of strings, or a list of list of strings, etc.; and return
@@ -363,12 +358,10 @@ For example:
 
     @dm.step(output=['unzipped_messages/{*id}/{*_part}.txt',
                      'unzipped_messages/{*id}/.all.done')
-    async def unzip_message(**kwargs: str) -> None:
-        dm.require('zipped_messages/{id}.zip'.format(**kwargs))
-        dm.require(dm.expand('zipped_messages/{id}.zip')) # Same as above
-        dm.erequire('zipped_messages/{id}.zip')  # Same as above
+    async def unzip_message(id: str) -> None:
+        dm.require(f'zipped_messages/{id}.zip')
         await dm.shell('unzip ...')
-        await dm.eshell('touch unzipped_messages/{id}/.all.done')
+        await dm.shell(f'touch unzipped_messages/{id}/.all.done')
 
 Note that only ``id`` will be set in ``kwargs``. DynaMake assumes that the same
 single invocation will generate all ``_part`` values. This demonstrates another
@@ -385,8 +378,8 @@ example, assume each part needs to be processed:
 .. code-block:: python
 
     @dm.step(output='processed_messages/{*id}/{*part}.txt')
-    async def process_part(**_kwargs) -> None:
-        dm.erequire('unzipped_messages/{id}/{part}.txt')
+    async def process_part(id: str, part: str) -> None:
+        dm.require(f'unzipped_messages/{id}/{part}.txt')
         ...
 
 And that all parts need to be collected together:
@@ -394,12 +387,12 @@ And that all parts need to be collected together:
 .. code-block:: python
 
     @dm.step(output='collected_messages/{*id}.txt')
-    async def collect_parts(**_kwargs) -> None:
-        dm.erequire('unzipped_messages/{id}/.all.done')
+    async def collect_parts(id: str) -> None:
+        dm.require(f'unzipped_messages/{id}/.all.done')
         await dm.sync()
-        all_parts = dm.eglob_fmt('unzipped_messages/{id}/{*part}.txt',
-                                 'processed_messages/{id}/{part}.txt')
-        await dm.eshell('cat', sorted(all_parts), '>', 'collected_messages/{id}.txt')
+        all_parts = dm.glob_fmt(f'unzipped_messages/{id}' + '/{*part}.txt',
+                                f'processed_messages/{id}' + '/{part}.txt')
+        await dm.shell('cat', sorted(all_parts), '>', f'collected_messages/{id}.txt')
 
 This sort of flow can only be approximated using static build tools. Typically
 this is done using explicit build phases, instead of a unified build script.
@@ -441,7 +434,7 @@ Annotations
 ...........
 
 DynaMake allows attaching annotations
-(:py:class:`dynamake.AnnotatedStr`) to strings (and patterns).  Multiple
+(:py:class:`dynamake.AnnotatedStr`) to strings (and patterns). Multiple
 annotations may be applied to the same string. The provided string processing
 functions preserve these (that is, pass the annotations from the input(s) to
 the output(s)). These annotations are used by DynaMake to modify the handling
@@ -469,7 +462,7 @@ of required and output files, and in some cases, control formatting.
   (regardless of the setting of ``--remove_stale_outputs`` and
   ``--remove_failed_outputs``).
 
-* :py:func:`dynamake.phony` marks an output as a non-file target.  Typically
+* :py:func:`dynamake.phony` marks an output as a non-file target. Typically
   the default top-level ``all`` target is ``phony``, as well as similar
   top-level targets such as ``clean``. When a step has any ``phony`` output(s),
   its actions are always executed, and a synthetic modification time is
@@ -482,15 +475,15 @@ of required and output files, and in some cases, control formatting.
   line option of a program should not impact its outputs, and therefore should
   not trigger a rebuild.
 
-* :py:func:`dynamake.emphasized` is used by ``shell`` and ``spawn``.  Arguments
-  so annotated are printed in **bold** in the log file.  This makes it easier
+* :py:func:`dynamake.emphasized` is used by ``shell`` and ``spawn``. Arguments
+  so annotated are printed in **bold** in the log file. This makes it easier
   to see the important bits of long command lines.
 
 Control Flags
 .............
 
 The behavior of DynaMake can be tweaked by modifying the built-in global
-parameter values.  This is typically done by specifying the appropriate command
+parameter values. This is typically done by specifying the appropriate command
 line option, which is then handled by the provided ``make`` main function.
 
 * ``--rebuild_changed_actions`` controls whether DynaMake uses the persistent
@@ -608,9 +601,9 @@ You can add your own custom configuration parameters. For example:
     }
 
     @dm.step(output='obj/{*name}.o')
-    async def make_object(**_kwargs: str) -> None:
-        dm.erequire('src/{name}.c')
-        await dm.espawn('cc', '-o', 'obj/{name}.o', MODE_FLAGS[mode.value], source_path)
+    async def make_object(name: str) -> None:
+        dm.require(f'src/{name}.c')
+        await dm.spawn('cc', '-o', f'obj/{name}.o', MODE_FLAGS[mode.value], source_path)
 
 That is, constructing a new :py:class:`dynamake.application.Param` specifies
 the name, default value and command line option(s) for the parameter. The
