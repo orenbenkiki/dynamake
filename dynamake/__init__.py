@@ -3750,11 +3750,11 @@ def outputs() -> List[str]:
     return Invocation.current.expanded_outputs
 
 
-def output() -> List[str]:
+def output(index: int = 0) -> str:
     """
-    Return the first expanded output from :py:func:`outputs`.
+    Return a specific expanded output.
     """
-    return outputs()[0]
+    return outputs()[index]
 
 
 async def done(awaitable: Awaitable) -> Any:
