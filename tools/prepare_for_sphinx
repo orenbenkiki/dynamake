@@ -3,6 +3,7 @@
 set -e
 
 cd ..
+pip install --user -e .
 test -f dynamake/version.py || python setup.py build > /dev/null
 rm -rf sphinx/*.rst sphinx/generated html
 mkdir -p sphinx/static sphinx/templates sphinx/themes sphinx/resources
