@@ -1857,7 +1857,9 @@ class Step:
         Step.by_regexp = []
         Step._is_finalized = False
 
-    def __init__(self, function: Callable, output: Strings, priority: int) -> None:
+    def __init__(self, function: Callable,
+                 output: Strings,  # pylint: disable=redefined-outer-name
+                 priority: int) -> None:
         """
         Register a build step function.
         """
@@ -3274,7 +3276,8 @@ def _reset_test_dates() -> None:
     _NANOSECONDS_OF_QUANTIZED = {}
 
 
-def step(output: Strings, priority: int = 0) -> Callable[[Callable], Callable]:
+def step(output: Strings,  # pylint: disable=redefined-outer-name
+         priority: int = 0) -> Callable[[Callable], Callable]:
     """
     Decorate a build step functions.
 
@@ -3448,7 +3451,7 @@ def _list_steps() -> None:
         print(f'{step.name}:')
         print(f'  priority: {step.priority}')
         print('  outputs:')
-        for output in sorted(step.output):
+        for output in sorted(step.output):  # pylint: disable=redefined-outer-name
             properties = []
             if is_exists(output):
                 properties.append('exists')
