@@ -8,6 +8,7 @@ from dynamake import capture2re
 from dynamake import copy_annotations
 from dynamake import emphasized
 from dynamake import exists
+from dynamake import expand
 from dynamake import flatten
 from dynamake import fmt
 from dynamake import fmt_capture
@@ -323,6 +324,10 @@ class TestGlob(TestWithFiles):
     def test_glob_fmt(self) -> None:
         write_file('x.txt', '')
         self.assertEqual(glob_fmt('{*foo}.txt', '{foo}.csv'), ['x.csv'])
+
+    def test_expand(self) -> None:
+        actual = expand('x.{a}.{b}', 'y.{a}.{b}', a='A', b=['B', 'b'])
+        self.assertEqual(sorted(actual), sorted(['x.A.b', 'y.A.b', 'x.A.B', 'y.A.B']))
 
 
 class TestMatch(TestWithReset):

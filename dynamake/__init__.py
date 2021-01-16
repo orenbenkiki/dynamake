@@ -13,6 +13,8 @@ from curses.ascii import isalnum
 from datetime import datetime
 from glob import glob as glob_files
 from importlib import import_module
+from inspect import getsourcefile
+from inspect import getsourcelines
 from inspect import iscoroutinefunction
 from sortedcontainers import SortedDict  # type: ignore
 from stat import S_ISDIR
@@ -1400,6 +1402,28 @@ def _dict_to_str(values: Dict[str, Any]) -> str:
                      for name, value in sorted(values.items())])
 
 
+def _location(function: Any) -> str:
+    if _is_test:
+        return f'{function.__module__}.{function.__qualname__}'
+    return (f'{getsourcefile(function)}:'  # pragma: no cover
+            f'{getsourcelines(function)[1]}:'
+            f'{function.__qualname__}')
+
+
+def exec_file(path: str, global_vars: Dict[str, Any]) -> None:
+    """
+    Execute the code in the specified ``path``.
+
+    This is intended so that one ``DynaMake.py`` file can include steps from other files without
+    going through the trouble of setting up importable Python modules. To do so transparently, you
+    must pass ``globals()`` as the value of ``global_vars``.
+
+    "With great power comes great responsibility", etc.
+    """
+    with open(path) as file:
+        exec(compile(file.read(), path, 'exec'), global_vars)  # pylint: disable=exec-used
+
+
 class Parameter:  # pylint: disable=too-many-instance-attributes
     """
     Describe a configurable build parameter.
@@ -1871,12 +1895,10 @@ class Step:
 
         if Step._is_finalized:
             no_additional_complaints()
-            raise RuntimeError(f'Late registration of the step: '
-                               f'{function.__module__}.{function.__qualname__}')
+            raise RuntimeError(f'Late registration of the step: {_location(function)}')
 
         if not iscoroutinefunction(function):
-            raise RuntimeError(f'The step function: '
-                               f'{function.__module__}.{function.__qualname__}'
+            raise RuntimeError(f'The step function: {_location(function)}'
                                f' is not a coroutine')
 
         #: The name of the step.
@@ -1894,17 +1916,14 @@ class Step:
             Step.by_regexp.append((capture2re(capture), self))
 
         if not self.output:
-            raise RuntimeError(f'The step function: '
-                               f'{function.__module__}.{function.__qualname__}'
+            raise RuntimeError(f'The step function: {_location(function)}'
                                f' specifies no output')
 
         if self.name in Step.by_name:
             conflicting = Step.by_name[self.name].function
             raise RuntimeError(f'Conflicting definitions for the step: {self.name} '
-                               f'in both: '
-                               f'{conflicting.__module__}.{conflicting.__qualname__}'
-                               f' and: '
-                               f'{function.__module__}.{function.__qualname__}')
+                               f'in both: {_location(conflicting)}'
+                               f' and: {_location(function)}')
         Step.by_name[self.name] = self
 
 
@@ -3800,3 +3819,28 @@ def try_require(path: str) -> bool:
         return True
 
     return False
+
+
+def expand(*templates: Strings, **kwargs: Strings) -> List[str]:
+    '''
+    Given some ``templates`` and one or more ``kwargs`` which specify a list of possible values,
+    expand each template with every possible combination of keyword argument values and return the
+    results as a list of strings.
+    '''
+    formats = flatten(*templates)
+    results: List[str] = []
+    data: Dict[str, Any] = {}
+
+    def _collect(items: List[Tuple[str, Strings]]) -> None:
+        if len(items) == 0:
+            for template in formats:
+                results.append(template.format(**data))
+        else:
+            name, values = items[0]
+            for value in flatten(values):
+                data[name] = value
+                _collect(items[1:])
+
+    _collect(list(kwargs.items()))
+
+    return results
