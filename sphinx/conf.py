@@ -17,8 +17,9 @@ import subprocess
 import sys
 
 subprocess.check_call('../tools/prepare_for_sphinx')
-sys.path.insert(0, os.path.abspath('..'))
-from dynamake.version import version
+
+from pkg_resources import get_distribution
+release = get_distribution('dynamake').version
 
 
 # -- Project information -----------------------------------------------------
@@ -26,8 +27,6 @@ from dynamake.version import version
 project = 'DynaMake'
 copyright = '2020, Oren Ben-Kiki'
 author = 'Oren Ben-Kiki'
-
-release = version
 
 # -- General configuration ---------------------------------------------------
 

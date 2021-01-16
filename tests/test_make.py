@@ -9,8 +9,8 @@ from dynamake import Logger
 from dynamake import make
 from dynamake import modifying
 from dynamake import optional
-from dynamake import outputs
 from dynamake import output
+from dynamake import outputs
 from dynamake import Parameter
 from dynamake import phony
 from dynamake import reading
