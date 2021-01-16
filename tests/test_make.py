@@ -462,6 +462,7 @@ class TestMain(TestWithFiles):
             @step(output='bar')
             async def copy_foo_to_bar() -> None:  # pylint: disable=unused-variable
                 require('foo')
+                await done(asyncio.sleep(2))
                 await spawn('cp', 'foo', 'bar')
 
         sys.argv += ['--jobs', '0']
@@ -482,12 +483,12 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Build the required: foo'),
             ('dynamake', 'DEBUG',
              '#1 - copy_foo_to_bar - The required: foo is a source file'),
+            ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Synced'),
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Has the required: foo'),
             ('dynamake', 'WHY',
              '#1 - copy_foo_to_bar - Must run actions to create the missing output(s): bar'),
             ('dynamake', 'INFO', '#1 - copy_foo_to_bar - Run: cp foo bar'),
-            ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'TRACE', '#1 - copy_foo_to_bar - Success: cp foo bar'),
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Synced'),
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Has the required: foo'),
@@ -512,6 +513,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Oldest output: bar time: 1'),
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Build the required: foo'),
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - The required: foo is a source file'),
+            ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Synced'),
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Has the required: foo'),
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Newest input: foo time: 0'),
@@ -524,7 +526,6 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Newest input: foo time: 0'),
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Has the output: bar time: 1'),
             ('dynamake', 'TRACE', '#1 - copy_foo_to_bar - Skipped'),
-            ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'DEBUG', '#0 - make - Synced'),
             ('dynamake', 'DEBUG', '#0 - make - Has the required: bar'),
             ('dynamake', 'TRACE', '#0 - make - Skipped'),
@@ -548,6 +549,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Build the required: foo'),
             ('dynamake', 'DEBUG',
              '#1 - copy_foo_to_bar - The required: foo is a source file'),
+            ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Synced'),
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Has the required: foo'),
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Newest input: foo time: 2'),
@@ -556,7 +558,6 @@ class TestMain(TestWithFiles):
              'because the output: bar is not newer than the input: foo'),
             ('dynamake', 'FILE', '#1 - copy_foo_to_bar - Remove the stale output: bar'),
             ('dynamake', 'INFO', '#1 - copy_foo_to_bar - Run: cp foo bar'),
-            ('dynamake', 'DEBUG', '#0 - make - Sync'),
             ('dynamake', 'TRACE', '#1 - copy_foo_to_bar - Success: cp foo bar'),
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Synced'),
             ('dynamake', 'DEBUG', '#1 - copy_foo_to_bar - Has the required: foo'),
@@ -2312,7 +2313,7 @@ class TestMain(TestWithFiles):
 
             @step(output='bar')
             async def make_bar() -> None:  # pylint: disable=unused-variable
-                await shell('touch bar', jobs=0)
+                await shell('sleep 2; touch bar', jobs=0)
 
         write_file('DynaMake.yaml', 'jobs: 8\n')
 
@@ -2358,8 +2359,8 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#1.1 - make_foo - Done'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Grab resources: foo=1'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Available resources: foo=1,jobs=8'),
-            ('dynamake', 'INFO', '#1.2 - make_bar - Run: touch bar'),
-            ('dynamake', 'TRACE', '#1.2 - make_bar - Success: touch bar'),
+            ('dynamake', 'INFO', '#1.2 - make_bar - Run: sleep 2; touch bar'),
+            ('dynamake', 'TRACE', '#1.2 - make_bar - Success: sleep 2; touch bar'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Free resources: foo=1'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Available resources: foo=2,jobs=8'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
