@@ -2317,6 +2317,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         #: The queued async actions for creating the input files.
         self.async_actions: List[Coroutine] = []
 
+        #: The expanded outputs for access by the step function.
+        self.expanded_outputs: List[str] = []
+
         #: The output files that existed prior to the invocation.
         self.initial_outputs: List[str] = []
 
@@ -2674,6 +2677,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         missing_outputs = []
         for pattern in sorted(self.step.output):
             formatted_pattern = fmt_capture(self.kwargs, pattern)
+            self.expanded_outputs.append(formatted_pattern)
+
             if is_phony(formatted_pattern):
                 self.phony_outputs.append(formatted_pattern)
                 Invocation.phony.add(formatted_pattern)
@@ -3733,6 +3738,23 @@ def step_kwargs() -> Dict[str, Any]:
     step was invoked to build.
     """
     return Invocation.current.kwargs
+
+
+def outputs() -> List[str]:
+    """
+    Return the list of expanded outputs of the current step.
+
+    These contain the concrete names for pattern outputs, except for the names
+    of dynamic outputs.
+    """
+    return Invocation.current.expanded_outputs
+
+
+def output() -> List[str]:
+    """
+    Return the first expanded output from :py:func:`outputs`.
+    """
+    return outputs()[0]
 
 
 async def done(awaitable: Awaitable) -> Any:

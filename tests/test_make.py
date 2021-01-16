@@ -5,9 +5,12 @@ Test the make utilities.
 # pylint: disable=too-many-lines
 
 from dynamake import done
+from dynamake import Logger
 from dynamake import make
 from dynamake import modifying
 from dynamake import optional
+from dynamake import outputs
+from dynamake import output
 from dynamake import Parameter
 from dynamake import phony
 from dynamake import reading
@@ -180,7 +183,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#0 - make - Complete')
         ])
 
-    def test_generate_many(self) -> None:
+    def test_aaa_generate_many(self) -> None:
         def _register() -> None:
             foo = Parameter(name='foo', default=1, parser=int, description='foo')
 
@@ -190,9 +193,11 @@ class TestMain(TestWithFiles):
 
             @step(output='foo.{*major}.{*_minor}')
             async def make_foos(major: str) -> None:  # pylint: disable=unused-variable
-                for index in range(0, foo.value):
+                Logger.info(f'OUTPUTS: {outputs()}')
+                Logger.info(f'OUTPUT: {output()}')
+                for minor in range(0, foo.value):
                     await done(asyncio.sleep(2))
-                    await shell('touch foo.{major}.{index}'.format(major=major, index=index))
+                    await shell(f'touch foo.{major}.{minor}')
 
         sys.argv += ['--jobs', '0', '--foo', '2']
 
@@ -217,6 +222,8 @@ class TestMain(TestWithFiles):
              'because missing the persistent actions: .dynamake/make_foos/major=1.actions.yaml'),
             ('dynamake', 'DEBUG',
              '#1.1 - make_foos/major=1 - Nonexistent required output(s): foo.{*major}.{*_minor}'),
+            ('dynamake', 'INFO', "#1.1 - make_foos/major=1 - OUTPUTS: ['foo.1.{*_minor}']"),
+            ('dynamake', 'INFO', '#1.1 - make_foos/major=1 - OUTPUT: foo.1.{*_minor}'),
             ('dynamake', 'DEBUG', '#1.1 - make_foos/major=1 - Synced'),
             ('dynamake', 'INFO', '#1.1 - make_foos/major=1 - Run: touch foo.1.0'),
             ('dynamake', 'TRACE', '#1.1 - make_foos/major=1 - Success: touch foo.1.0'),
@@ -271,6 +278,8 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG',
              '#1.1 - make_foos/major=1 - Existing output: foo.{*major}.{*_minor} -> foo.1.1'),
             ('dynamake', 'DEBUG', '#1.1 - make_foos/major=1 - Oldest output: foo.1.0 time: 1'),
+            ('dynamake', 'INFO', "#1.1 - make_foos/major=1 - OUTPUTS: ['foo.1.{*_minor}']"),
+            ('dynamake', 'INFO', '#1.1 - make_foos/major=1 - OUTPUT: foo.1.{*_minor}'),
             ('dynamake', 'DEBUG', '#1.1 - make_foos/major=1 - Synced'),
             ('dynamake', 'DEBUG', '#1.1 - make_foos/major=1 - No inputs'),
             ('dynamake', 'DEBUG',
@@ -328,6 +337,8 @@ class TestMain(TestWithFiles):
              '#1.1 - make_foos/major=1 - Existing output: foo.{*major}.{*_minor} -> foo.1.1'),
             ('dynamake', 'DEBUG',
              '#1.1 - make_foos/major=1 - Missing the old built output: foo.1.0'),
+            ('dynamake', 'INFO', "#1.1 - make_foos/major=1 - OUTPUTS: ['foo.1.{*_minor}']"),
+            ('dynamake', 'INFO', '#1.1 - make_foos/major=1 - OUTPUT: foo.1.{*_minor}'),
             ('dynamake', 'DEBUG', '#1.1 - make_foos/major=1 - Synced'),
             ('dynamake', 'WHY',
              '#1.1 - make_foos/major=1 - Must run actions to create '
@@ -382,6 +393,8 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG',
              '#1.1 - make_foos/major=1 - Existing output: foo.{*major}.{*_minor} -> foo.1.1'),
             ('dynamake', 'DEBUG', '#1.1 - make_foos/major=1 - Oldest output: foo.1.1 time: 4'),
+            ('dynamake', 'INFO', "#1.1 - make_foos/major=1 - OUTPUTS: ['foo.1.{*_minor}']"),
+            ('dynamake', 'INFO', '#1.1 - make_foos/major=1 - OUTPUT: foo.1.{*_minor}'),
             ('dynamake', 'DEBUG', '#1.1 - make_foos/major=1 - Synced'),
             ('dynamake', 'DEBUG', '#1.1 - make_foos/major=1 - No inputs'),
             ('dynamake', 'DEBUG',
@@ -430,6 +443,8 @@ class TestMain(TestWithFiles):
              '#1.1 - make_foos/major=1 - Existing output: foo.{*major}.{*_minor} -> foo.1.0'),
             ('dynamake', 'DEBUG',
              '#1.1 - make_foos/major=1 - Oldest output: foo.1.0 time: 5'),
+            ('dynamake', 'INFO', "#1.1 - make_foos/major=1 - OUTPUTS: ['foo.1.{*_minor}']"),
+            ('dynamake', 'INFO', '#1.1 - make_foos/major=1 - OUTPUT: foo.1.{*_minor}'),
             ('dynamake', 'DEBUG', '#1.1 - make_foos/major=1 - Synced'),
             ('dynamake', 'DEBUG', '#1.1 - make_foos/major=1 - No inputs'),
             ('dynamake', 'DEBUG',
