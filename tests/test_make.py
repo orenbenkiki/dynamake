@@ -424,6 +424,7 @@ class TestMain(TestWithFiles):
         # This can cause a build to fail:
 
         os.remove('foo.1.1')
+        sleep(2)
         write_file('foo.1.0', '!\n')
 
         self.check(_register, error='make_all - Failed to build the required target.s.', log=[
@@ -483,6 +484,7 @@ class TestMain(TestWithFiles):
         sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false', 'bar']
 
+        sleep(2)
         write_file('foo', '!\n')
 
         # Build due to missing output.
@@ -548,6 +550,7 @@ class TestMain(TestWithFiles):
 
         self.expect_file('bar', '!\n')
 
+        sleep(2)
         write_file('foo', '?\n')
 
         # Rebuild out-of-date output.
@@ -688,6 +691,7 @@ class TestMain(TestWithFiles):
                 await shell('touch foo/bar')
 
         os.makedirs('foo')
+        sleep(2)
         write_file('foo/baz', 'z')
 
         sys.argv += ['--jobs', '0']
@@ -878,6 +882,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#0 - make - Done')
         ])
 
+        sleep(2)
         write_file('bar', '0\n')
 
         self.check(_register, log=[
@@ -1130,6 +1135,7 @@ class TestMain(TestWithFiles):
 
         sys.argv += ['--remove_failed_outputs', 'false']
 
+        sleep(2)
         write_file('all', '?\n')
         sleep(2)
         write_file('foo', '!\n')
@@ -1928,7 +1934,6 @@ class TestMain(TestWithFiles):
                 await shell('touch all')
 
         write_file('foo', '!\n')
-        sleep(2)
 
         sys.argv += ['--jobs', '0']
 
@@ -2106,6 +2111,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#0 - make - Done'),
         ])
 
+        sleep(2)
         write_file('foo', '1\n')
 
         self.check(_register, log=[
