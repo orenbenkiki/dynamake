@@ -720,5 +720,4 @@ but haven't been worked on yet:
 * Allow using checksums instead of timestamps to determine if actions can be
   skipped, either by default or on a per-file basis.
 
-* Allow easy access to the expanded list of output files. For pattern outputs,
-  the captured names should remain as capture patterns.
+* Report list of goals leading to don't-know-how-to-make errors.

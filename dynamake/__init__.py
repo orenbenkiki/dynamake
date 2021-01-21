@@ -1611,14 +1611,14 @@ def _define_parameters() -> None:
     jobs = Parameter(  #
         name='jobs',
         short='j',
-        metavar='INT',
+        metavar='JOBS',
         default=-1,
-        parser=str2int(),
+        parser=str2float(),
         description="""
-            The number of jobs to run in parallel. Use 0 for unlimited
-            parallelism, 1 for serial jobs execution, and a negative number for
-            a fraction of the logical processors in the system (-1 for one per
-            logical processor, -2 for one per two logical processors, etc.).
+            The number of jobs to run in parallel. Use 0 for unlimited parallelism,
+            1 for serial jobs execution, 2 for two parallel jobs, etc. A negative
+            value specifies a fraction of the logical processors in the system
+            (using 1/-value, e.g. -2 for one per two logical processors).
         """)
 
     global log_level
@@ -2262,6 +2262,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
     #: A running counter of the skipped actions.
     skipped_count: int
 
+    #: Whether we aborted because of another failed invocation (do NOT delete outputs!)
+    aborted_due_to_other: bool
+
     @staticmethod
     def reset() -> None:
         """
@@ -2276,6 +2279,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Invocation.poisoned = set()
         Invocation.actions_count = 0
         Invocation.skipped_count = 0
+        Invocation.aborted_due_to_other = False
 
     def __init__(self,  # pylint: disable=too-many-statements
                  step: Optional[Step],  # pylint: disable=redefined-outer-name
@@ -2318,7 +2322,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         #: The full name used for logging.
         self.log = self.name
-        if Logger.isEnabledFor(Logger.TRACE):
+        if _is_test or jobs.value > 1:
             self.log = self.stack + ' - ' + self.name
 
         self._verify_no_loop()
@@ -2495,9 +2499,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         completing the current invocation.
         """
         self._become_current()
-
-        if Logger.errors and failure_aborts_build.value:
-            self.abort('Aborting due to previous error')
+        self.abort_due_to_other()
 
         path = clean_path(path)
 
@@ -2650,8 +2652,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     await self.done(self.async_actions.pop())
                 except StepException:
                     pass
-            self.poison_all_outputs()
-            self.remove_old_persistent_data()
+            if not self.aborted_due_to_other:
+                self.poison_all_outputs()
+                self.remove_old_persistent_data()
             Logger.trace('Fail')
 
         del Invocation.active[self.name]
@@ -2991,9 +2994,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Spawn a action to actually create some files.
         """
         self._become_current()
-
-        if Logger.errors and failure_aborts_build.value:
-            self.abort('Aborting due to previous error')
+        self.abort_due_to_other()
 
         await self.done(self.sync())
 
@@ -3104,7 +3105,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             if not line:
                 return
             message = line.decode('utf-8').rstrip('\n')
-            message = Invocation.current.stack + ' - ' + message
+            message = Invocation.current.log + ' - ' + message
             Logger._logger.log(level, message)  # pylint: disable=protected-access
 
     async def _use_resources(self, amounts: Dict[str, int]) -> None:
@@ -3135,9 +3136,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         This is implicitly called before running a action.
         """
         self._become_current()
-
-        if Logger.errors and failure_aborts_build.value:
-            self.abort('Aborting due to previous error')
+        self.abort_due_to_other()
 
         if self.async_actions:
             Logger.debug('Sync')
@@ -3211,12 +3210,18 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         Await some non-DynaMake function.
         """
-        if Logger.errors and failure_aborts_build.value:
-            self.abort('Aborting due to previous error')
-
+        self.abort_due_to_other()
         result = await awaitable
         self._become_current()
         return result
+
+    def abort_due_to_other(self) -> None:
+        """
+        If another invocation has failed, and failure aborts builds, abort this invocation as well.
+        """
+        if Logger.errors and failure_aborts_build.value:
+            self.aborted_due_to_other = True
+            self.abort('Aborting due to previous error')
 
     def _become_current(self) -> None:
         Invocation.current = self
@@ -3449,11 +3454,16 @@ def _load_modules() -> None:
 
 
 def _compute_jobs() -> None:
+    amount = int(jobs.value)
     if jobs.value < 0:
-        jobs.value = (os.cpu_count() or 1) // -jobs.value
-        if jobs.value < 1:
-            jobs.value = 1
-    Resources.available['jobs'] = Resources.total['jobs'] = jobs.value
+        cpu_count = os.cpu_count() or 1
+        amount = cpu_count // -jobs.value
+        if amount < 1:
+            amount = 1
+        if amount > cpu_count:
+            amount = cpu_count
+    jobs.value = amount
+    Resources.available['jobs'] = Resources.total['jobs'] = amount
 
 
 def _list_steps() -> None:
