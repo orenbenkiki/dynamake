@@ -5,10 +5,13 @@ DynaMake module.
 # pylint: disable=too-many-lines,redefined-builtin
 
 from .version import version as __version__  # pylint: disable=unused-import
+from aiorwlock import _ReaderLock
+from aiorwlock import _WriterLock
 from aiorwlock import RWLock
 from argparse import ArgumentParser
 from argparse import Namespace
 from contextlib import asynccontextmanager
+from copy import copy
 from curses.ascii import isalnum
 from datetime import datetime
 from glob import glob as glob_files
@@ -2089,6 +2092,127 @@ class LoggingFormatter(logging.Formatter):  # pragma: no cover
         return '%s.%03d' % (seconds, record.msecs)
 
 
+class RwLocks:
+    """
+    Maintain read-write lock to ensure actions that modify data do not step on each other.
+    """
+
+    #: Locks for for each named data.
+    by_name: Dict[str, RWLock] = {}
+
+    #: Read and modify lockers for each name data.
+    lockers: Dict[str, Tuple[Set[str], Set[str]]]
+
+    @staticmethod
+    def reset() -> None:
+        """
+        Reset all the current state, for tests.
+        """
+        RwLocks.by_name = {}
+        RwLocks.lockers = {}
+
+    @staticmethod
+    def get(name: str) -> RWLock:
+        """
+        Get the ``RWLock`` for a specific named data.
+        """
+        lock = RwLocks.by_name.get(name)
+        if lock is None:
+            lock = RwLocks.by_name[name] = RWLock()
+        return lock
+
+    @staticmethod
+    @asynccontextmanager
+    async def locks(items: List[Tuple[str, bool]]) -> AsyncGenerator:
+        """
+        Async context for actions that require some locked items.
+
+        Each item specifies the name and whether to lock it for reading or writing.
+        To avoid deadlocks, all invocations of this function must sort the items first.
+        """
+        if len(items) == 0:
+            yield
+            return
+
+        name, writer_lock = items[0]
+        lock: Union[Callable[[], _ReaderLock], Callable[[], _WriterLock]]
+        if writer_lock:
+            lock = RwLocks.get(name).writer_lock
+            index = 1
+        else:
+            lock = RwLocks.get(name).reader_lock
+            index = 0
+
+        async with context(lock):
+            RwLocks.become_locker(index, name)
+            try:
+                async with RwLocks.locks(items[1:]):
+                    action = ('read', 'write')[index]
+                    Logger.debug(f'Got {action} lock of: {name}')
+                    yield
+            finally:
+                RwLocks.become_nothing(index, name)
+
+    @staticmethod
+    def become_locker(index: int, name: str) -> None:
+        """
+        Record the fact we are actually are locking some data.
+        """
+        action = ('read', 'write')[index]
+
+        if Logger.isEnabledFor(logging.DEBUG):
+            Logger.debug(f'Want {action} lock of: {name}')
+            RwLocks.log_status(name)
+
+        lockers_status = RwLocks.lockers.get(name)
+        if lockers_status is None:
+            RwLocks.lockers[name] = lockers_status = (set(), set())
+        assert Invocation.current.log not in lockers_status[index]
+        lockers_status[index].add(Invocation.current.log)
+
+    @staticmethod
+    def become_nothing(index: int, name: str) -> None:
+        """
+        Record the fact we have released the lock.
+        """
+        action = ('read', 'write')[index]
+
+        if Logger.isEnabledFor(logging.DEBUG):
+            Logger.debug(f'Released {action} lock of: {name}')
+            RwLocks.log_status(name, am_locker=True)
+
+        lockers_status = RwLocks.lockers[name]
+        assert Invocation.current.log in lockers_status[index]
+        lockers_status[index].remove(Invocation.current.log)
+
+    @staticmethod
+    def log_status(name: str, am_locker: bool = False) -> None:
+        """
+        Log the state of locks for a specific data.
+        """
+        seen_locker = False
+
+        lockers = RwLocks.lockers.get(name)
+        if lockers is not None:
+            readers, modifiers = lockers
+
+            for reader in readers:
+                if reader == Invocation.current.log:
+                    assert not seen_locker
+                    seen_locker = True
+                else:
+                    Logger.debug(f'step: {reader} is reading data: {name}')
+
+            for modifier in modifiers:
+                if modifier == Invocation.current.log:
+                    assert not seen_locker
+                    seen_locker = True
+                else:
+                    Logger.debug(f'step: {modifier} is writing data: {name}')
+
+        assert seen_locker == am_locker
+
+
 class Logger:
     """
     Customized logging.
@@ -2262,9 +2386,6 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
     #: A running counter of the skipped actions.
     skipped_count: int
 
-    #: Whether we aborted because of another failed invocation (do NOT delete outputs!)
-    aborted_due_to_other: bool
-
     @staticmethod
     def reset() -> None:
         """
@@ -2279,7 +2400,6 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Invocation.poisoned = set()
         Invocation.actions_count = 0
         Invocation.skipped_count = 0
-        Invocation.aborted_due_to_other = False
 
     def __init__(self,  # pylint: disable=too-many-statements
                  step: Optional[Step],  # pylint: disable=redefined-outer-name
@@ -2332,6 +2452,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         #: The required input targets (phony or files) the invocations depends on.
         self.required: List[str] = []
+
+        #: The required locked names (and whether to lock them for read or write).
+        self.required_locks: Dict[str, bool] = {}
+
+        #: Whether the required locks have been obtained.
+        self.has_locks: bool = False
 
         #: The newest input file, if any.
         self.newest_input_path: Optional[str] = None
@@ -2652,7 +2778,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     await self.done(self.async_actions.pop())
                 except StepException:
                     pass
-            if not self.aborted_due_to_other:
+            if self.did_run_actions:
                 self.poison_all_outputs()
                 self.remove_old_persistent_data()
             Logger.trace('Fail')
@@ -3064,18 +3190,19 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
             self.oldest_output_path = None
 
-            if is_silent:
-                Logger.file(f'Run: {log_command}')
-            else:
-                Logger.info(f'Run: {log_command}')
+            async with locks():
+                if is_silent:
+                    Logger.file(f'Run: {log_command}')
+                else:
+                    Logger.info(f'Run: {log_command}')
 
-            sub_process = await self.done(runner(run_parts))
+                sub_process = await self.done(runner(run_parts))
 
-            read_stdout = self._read_pipe(sub_process.stdout, Logger.STDOUT)
-            read_stderr = self._read_pipe(sub_process.stderr, Logger.STDERR)
-            await self.done(asyncio.gather(read_stdout, read_stderr))
+                read_stdout = self._read_pipe(sub_process.stdout, Logger.STDOUT)
+                read_stderr = self._read_pipe(sub_process.stderr, Logger.STDERR)
+                await self.done(asyncio.gather(read_stdout, read_stderr))
 
-            exit_status = await self.done(sub_process.wait())
+                exit_status = await self.done(sub_process.wait())
 
             if self.new_persistent_actions:
                 persistent_action = self.new_persistent_actions[-1]
@@ -3220,7 +3347,6 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         If another invocation has failed, and failure aborts builds, abort this invocation as well.
         """
         if Logger.errors and failure_aborts_build.value:
-            self.aborted_due_to_other = True
             self.abort('Aborting due to previous error')
 
     def _become_current(self) -> None:
@@ -3528,213 +3654,76 @@ def _build_targets(targets: List[str]) -> None:
     Logger.trace(status)
 
 
-class RwLocks:
-    """
-    Maintain read-write lock to ensure actions that modify data do not step on each other.
-    """
-
-    #: Locks for for each named data.
-    by_name: Dict[str, RWLock] = {}
-
-    #: Read and modify lockers for each name data.
-    lockers: Dict[str, Tuple[Set[str], Set[str]]]
-
-    #: Read and modify waiters for each name data.
-    waiters: Dict[str, Tuple[Set[str], Set[str]]]
-
-    @staticmethod
-    def reset() -> None:
-        """
-        Reset all the current state, for tests.
-        """
-        RwLocks.by_name = {}
-        RwLocks.lockers = {}
-        RwLocks.waiters = {}
-
-    @staticmethod
-    def get(name: str) -> RWLock:
-        """
-        Get the ``RWLock`` for a specific named data.
-        """
-        lock = RwLocks.by_name.get(name)
-        if lock is None:
-            lock = RwLocks.by_name[name] = RWLock()
-        return lock
-
-    @staticmethod
-    @asynccontextmanager
-    async def reading(names: List[str]) -> AsyncGenerator:
-        """
-        Async context for actions that read some data which might be accessed by other actions.
-        """
-        assert len(names) > 0
-        name = names[0]
-        RwLocks.become_waiter(0, name)
-        async with context(RwLocks.get(name).reader_lock):
-            RwLocks.become_locker(0, name)
-            try:
-                if len(names) == 1:
-                    yield
-                else:
-                    async with RwLocks.reading(names[1:]):
-                        yield
-            finally:
-                RwLocks.become_nothing(0, name)
-
-    @staticmethod
-    @asynccontextmanager
-    async def modifying(names: List[str]) -> AsyncGenerator:
-        """
-        Async context for actions that modify some data which might be accessed by other actions.
-        """
-        assert len(names) > 0
-        name = names[0]
-        RwLocks.become_waiter(1, name)
-        async with context(RwLocks.get(name).writer_lock):
-            RwLocks.become_locker(1, name)
-            try:
-                if len(names) == 1:
-                    yield
-                else:
-                    async with RwLocks.modifying(names[1:]):
-                        yield
-            finally:
-                RwLocks.become_nothing(1, name)
-
-    @staticmethod
-    def become_waiter(index: int, name: str) -> None:
-        """
-        Record the fact we are waiting to lock some data.
-        """
-        action = ('read', 'modify')[index]
-
-        if Logger.isEnabledFor(logging.DEBUG):
-            Logger.debug(f'Will {action} data: {name}')
-            RwLocks.log_status(name)
-
-        lockers_status = RwLocks.lockers.get(name)
-        if lockers_status is not None and name in lockers_status[index]:
-            no_additional_complaints()
-            raise RuntimeError(f'{Invocation.current.log} has already locked {action} {name}')
-
-        waiters_status = RwLocks.waiters.get(name)
-        if waiters_status is None:
-            RwLocks.waiters[name] = waiters_status = (set(), set())
-        if Invocation.current.log in waiters_status[index]:
-            no_additional_complaints()
-            raise RuntimeError(f'{Invocation.current.log} is already waiting to {action} {name}')
-        waiters_status[index].add(Invocation.current.log)
-
-    @staticmethod
-    def become_locker(index: int, name: str) -> None:
-        """
-        Record the fact we are no longer waiting and actually are locking some data.
-        """
-        action = ('read', 'modify')[index]
-
-        if Logger.isEnabledFor(logging.DEBUG):
-            Logger.debug(f'Lock {action} data: {name}')
-            RwLocks.log_status(name, am_waiter=True)
-
-        waiters_status = RwLocks.waiters[name]
-        assert Invocation.current.log in waiters_status[index]
-        waiters_status[index].remove(Invocation.current.log)
-
-        lockers_status = RwLocks.lockers.get(name)
-        if lockers_status is None:
-            RwLocks.lockers[name] = lockers_status = (set(), set())
-        assert Invocation.current.log not in lockers_status[index]
-        lockers_status[index].add(Invocation.current.log)
-
-    @staticmethod
-    def become_nothing(index: int, name: str) -> None:
-        """
-        Record the fact we have released the lock.
-        """
-        action = ('read', 'modify')[index]
-
-        if Logger.isEnabledFor(logging.DEBUG):
-            Logger.debug(f'Unlock {action} data: {name}')
-            RwLocks.log_status(name, am_locker=True)
-
-        waiters_status = RwLocks.waiters[name]
-        assert Invocation.current.log not in waiters_status[index]
-
-        lockers_status = RwLocks.lockers[name]
-        assert Invocation.current.log in lockers_status[index]
-        lockers_status[index].remove(Invocation.current.log)
-
-    @staticmethod
-    def log_status(name: str, am_locker: bool = False,  # pylint: disable=too-many-branches
-                   am_waiter: bool = False) -> None:
-        """
-        Log the state of locks for a specific data.
-        """
-        seen_locker = False
-
-        lockers = RwLocks.lockers.get(name)
-        if lockers is not None:
-            readers, modifiers = lockers
-
-            for reader in readers:
-                if reader == Invocation.current.log:
-                    assert not seen_locker
-                    seen_locker = True
-                else:
-                    Logger.debug(f'step: {reader} is reading data: {name}')
-
-            for modifier in modifiers:
-                if modifier == Invocation.current.log:
-                    assert not seen_locker
-                    seen_locker = True
-                else:
-                    Logger.debug(f'step: {modifier} is modifying data: {name}')
-
-        assert seen_locker == am_locker
-
-        seen_waiter = False
-
-        waiters = RwLocks.waiters.get(name)
-        if waiters is not None:
-            readers, modifiers = waiters
-
-            for reader in sorted(readers):
-                if reader == Invocation.current.log:
-                    assert not seen_waiter
-                    seen_waiter = True
-                else:
-                    Logger.debug(f'step: {reader} is waiting to read data: {name}')
-
-            for modifier in sorted(modifiers):
-                if modifier == Invocation.current.log:
-                    assert not seen_waiter
-                    seen_waiter = True
-                else:
-                    Logger.debug(f'step: {modifier} is waiting to modify data: {name}')
-
-        assert seen_waiter == am_waiter
-
-
 @asynccontextmanager
 async def reading(*names: Strings) -> AsyncGenerator:
     """
     Async context for actions that reads some data which might be accessed by other actions.
+
+    The actual locks are only obtained when invoking the :py:func:`locks` function (which is
+    automatic for running actions). Otherwise, this just collects the required locks. Deferring the
+    actual locking allows us to avoid deadlocks.
     """
-    await sync()
-    async with RwLocks.reading(sorted(flatten(*names))):
+    invocation = Invocation.current
+    assert not invocation.has_locks
+    old_required_locks = invocation.required_locks
+    try:
+        invocation.required_locks = copy(old_required_locks)
+        for name in each_string(*names):
+            if name not in invocation.required_locks:
+                invocation.required_locks[name] = False
         yield
+    finally:
+        invocation._become_current()  # pylint: disable=protected-access
+        invocation.required_locks = old_required_locks
 
 
 @asynccontextmanager
-async def modifying(*names: Strings) -> AsyncGenerator:
+async def writing(*names: Strings) -> AsyncGenerator:
     """
     Async context for actions that modify some data which might be accessed by other actions.
 
-    This first :py:func:`sync`-s to ensure all required files exists.
+    The actual locks are only obtained when invoking the :py:func:`locks` function (which is
+    automatic for running actions). Otherwise, this just collects the required locks. Deferring the
+    actual locking allows us to avoid deadlocks.
     """
-    await sync()
-    async with RwLocks.modifying(sorted(flatten(*names))):
+    invocation = Invocation.current
+    assert not invocation.has_locks
+    old_required_locks = invocation.required_locks
+    try:
+        invocation.required_locks = copy(old_required_locks)
+        for name in each_string(*names):
+            invocation.required_locks[name] = True
         yield
+    finally:
+        invocation._become_current()  # pylint: disable=protected-access
+        invocation.required_locks = old_required_locks
+
+
+@asynccontextmanager
+async def locks() -> AsyncGenerator:
+    """
+    Async context for actually obtaining the locks collected by :py:func:`reading` and/or
+    :py:func:`writing`.
+
+    It is not allowed to invoke :py:func:`reading` and/or :py:func:`writing` inside the ``with``
+    statement, to avoid deadlocks. Nested `locks` are allowed, but the inner ones are no-ops.
+    """
+    invocation = Invocation.current
+    if invocation.has_locks:
+        yield
+        invocation._become_current()  # pylint: disable=protected-access
+        return
+
+    try:
+        invocation.has_locks = True
+        if len(invocation.required_locks) == 0:
+            yield
+        else:
+            async with RwLocks.locks(sorted(invocation.required_locks.items())):
+                yield
+    finally:
+        invocation._become_current()  # pylint: disable=protected-access
+        invocation.has_locks = False
 
 
 def reset(is_test: bool = False, reset_test_times: bool = False) -> None:

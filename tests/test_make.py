@@ -7,7 +7,6 @@ Test the make utilities.
 from dynamake import done
 from dynamake import Logger
 from dynamake import make
-from dynamake import modifying
 from dynamake import optional
 from dynamake import output
 from dynamake import outputs
@@ -22,6 +21,7 @@ from dynamake import spawn
 from dynamake import step
 from dynamake import StepException
 from dynamake import sync
+from dynamake import writing
 from testfixtures import LogCapture  # type: ignore
 from tests import TestWithFiles
 from tests import TestWithReset
@@ -183,7 +183,7 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#0 - make - Complete')
         ])
 
-    def test_aaa_generate_many(self) -> None:
+    def test_generate_many(self) -> None:
         def _register() -> None:
             foo = Parameter(name='foo', default=1, parser=int, description='foo')
 
@@ -467,8 +467,6 @@ class TestMain(TestWithFiles):
             ('dynamake', 'DEBUG', '#1 - make_all - Synced'),
             ('dynamake', 'ERROR',
              '#1 - make_all - The required: foo.1.1 has failed to build'),
-            ('dynamake', 'DEBUG', '#1 - make_all - Remove '
-             'the persistent actions: .dynamake/make_all.actions.yaml'),
             ('dynamake', 'TRACE', '#1 - make_all - Fail'),
             ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
@@ -2460,7 +2458,7 @@ class TestMain(TestWithFiles):
 
             @step(output='baz')
             async def make_baz() -> None:  # pylint: disable=unused-variable
-                async with modifying('db'):
+                async with writing('db'):
                     await shell('sleep 2; touch baz', jobs=0)
 
         sys.argv += ['--jobs', '0', '--rebuild_changed_actions', 'false']
@@ -2480,11 +2478,10 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#1.1 - make_foo - Call'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Nonexistent required output(s): foo'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
-            ('dynamake', 'DEBUG', '#1.1 - make_foo - Will read data: db'),
-            ('dynamake', 'DEBUG', '#1.1 - make_foo - Lock read data: db'),
-            ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
             ('dynamake', 'WHY',
              '#1.1 - make_foo - Must run actions to create the missing output(s): foo'),
+            ('dynamake', 'DEBUG', '#1.1 - make_foo - Want read lock of: db'),
+            ('dynamake', 'DEBUG', '#1.1 - make_foo - Got read lock of: db'),
             ('dynamake', 'INFO', '#1.1 - make_foo - Run: sleep 4; touch foo'),
             ('dynamake', 'DEBUG', '#1 - make_all - Build the required: bar'),
             ('dynamake', 'DEBUG',
@@ -2498,49 +2495,35 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#1.2 - make_bar - Call'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Nonexistent required output(s): bar'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
-            ('dynamake', 'DEBUG', '#1.2 - make_bar - Will read data: db'),
-            ('dynamake', 'DEBUG',
-             '#1.2 - make_bar - step: #1.1 - make_foo is reading data: db'),
+            ('dynamake', 'WHY',
+             '#1.2 - make_bar - Must run actions to create the missing output(s): bar'),
             ('dynamake', 'TRACE', '#1.3 - make_baz - Call'),
             ('dynamake', 'DEBUG', '#1.3 - make_baz - Nonexistent required output(s): baz'),
             ('dynamake', 'DEBUG', '#1.3 - make_baz - Synced'),
-            ('dynamake', 'DEBUG', '#1.3 - make_baz - Will modify data: db'),
-            ('dynamake', 'DEBUG',
-             '#1.3 - make_baz - step: #1.1 - make_foo is reading data: db'),
-            ('dynamake', 'DEBUG',
-             '#1.3 - make_baz - step: #1.2 - make_bar is waiting to read data: db'),
-            ('dynamake', 'DEBUG', '#1.2 - make_bar - Lock read data: db'),
-            ('dynamake', 'DEBUG',
-             '#1.2 - make_bar - step: #1.1 - make_foo is reading data: db'),
-            ('dynamake', 'DEBUG',
-             '#1.2 - make_bar - step: #1.3 - make_baz is waiting to modify data: db'),
-            ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
             ('dynamake', 'WHY',
-             '#1.2 - make_bar - Must run actions to create the missing output(s): bar'),
-            ('dynamake', 'INFO', '#1.2 - make_bar - Run: touch bar'),
-            ('dynamake', 'TRACE', '#1.2 - make_bar - Success: touch bar'),
-            ('dynamake', 'DEBUG', '#1.2 - make_bar - Unlock read data: db'),
+             '#1.3 - make_baz - Must run actions to create the missing output(s): baz'),
+            ('dynamake', 'DEBUG', '#1.2 - make_bar - Want read lock of: db'),
             ('dynamake', 'DEBUG',
              '#1.2 - make_bar - step: #1.1 - make_foo is reading data: db'),
+            ('dynamake', 'DEBUG', '#1.2 - make_bar - Got read lock of: db'),
+            ('dynamake', 'INFO', '#1.2 - make_bar - Run: touch bar'),
+            ('dynamake', 'DEBUG', '#1.2 - make_bar - Released read lock of: db'),
             ('dynamake', 'DEBUG',
-             '#1.2 - make_bar - step: #1.3 - make_baz is waiting to modify data: db'),
+             '#1.2 - make_bar - step: #1.1 - make_foo is reading data: db'),
+            ('dynamake', 'TRACE', '#1.2 - make_bar - Success: touch bar'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Synced'),
             ('dynamake', 'DEBUG', '#1.2 - make_bar - Has the output: bar time: 1'),
             ('dynamake', 'TRACE', '#1.2 - make_bar - Done'),
+            ('dynamake', 'DEBUG', '#1.1 - make_foo - Released read lock of: db'),
             ('dynamake', 'TRACE', '#1.1 - make_foo - Success: sleep 4; touch foo'),
-            ('dynamake', 'DEBUG', '#1.1 - make_foo - Unlock read data: db'),
-            ('dynamake', 'DEBUG',
-             '#1.1 - make_foo - step: #1.3 - make_baz is waiting to modify data: db'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Synced'),
             ('dynamake', 'DEBUG', '#1.1 - make_foo - Has the output: foo time: 2'),
             ('dynamake', 'TRACE', '#1.1 - make_foo - Done'),
-            ('dynamake', 'DEBUG', '#1.3 - make_baz - Lock modify data: db'),
-            ('dynamake', 'DEBUG', '#1.3 - make_baz - Synced'),
-            ('dynamake', 'WHY',
-             '#1.3 - make_baz - Must run actions to create the missing output(s): baz'),
+            ('dynamake', 'DEBUG', '#1.3 - make_baz - Want write lock of: db'),
+            ('dynamake', 'DEBUG', '#1.3 - make_baz - Got write lock of: db'),
             ('dynamake', 'INFO', '#1.3 - make_baz - Run: sleep 2; touch baz'),
+            ('dynamake', 'DEBUG', '#1.3 - make_baz - Released write lock of: db'),
             ('dynamake', 'TRACE', '#1.3 - make_baz - Success: sleep 2; touch baz'),
-            ('dynamake', 'DEBUG', '#1.3 - make_baz - Unlock modify data: db'),
             ('dynamake', 'DEBUG', '#1.3 - make_baz - Synced'),
             ('dynamake', 'DEBUG', '#1.3 - make_baz - Has the output: baz time: 3'),
             ('dynamake', 'TRACE', '#1.3 - make_baz - Done'),
