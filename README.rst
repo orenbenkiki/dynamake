@@ -486,6 +486,22 @@ The behavior of DynaMake can be tweaked by modifying the built-in global
 parameter values. This is typically done by specifying the appropriate command
 line option, which is then handled by the provided ``make`` main function.
 
+* ``--no_actions`` (or ``-n``) instructs DynaMake to not actually execute any actions.
+  When an action is specified and needs to be run, DynaMake logs it (in the ``INFO`` or ``FILE`` log
+  level) but then stops processing the build step (and any step depending on it). That is, ``-n``
+  will only log the first action (or parallel actions) as opposed to the full list of actions needed
+  for the build.
+
+  This restriction is because further build code might attempt to directly examine the output from
+  the action (e.g., look inside a C file for the list of included headers, look at the list of files
+  actually created for a step with dynamic list of outputs, etc.). While this isn't as comprehensive
+  as ``make -n`` it still provides some (most?) of its value.
+
+  To make ``-n`` more useful, DynaMake will continue building past "silent" actions, under the
+  assumption that such actions perform "insignificant" operations (e.g., creating directories for
+  output files) and that subsequent build code does not depend on their results. If this assumption
+  fails, the build may fail in strange ways when ``-n`` is specified.
+
 * ``--rebuild_changed_actions`` controls whether DynaMake uses the persistent
   state to track the list of outputs, inputs, invoked sub-steps, and actions
   with their command line options. This ensures that builds are repeatable
@@ -691,14 +707,6 @@ but haven't been worked on yet:
   documentation, and deserves a better description.
 
 * Allow forcing rebuilding (some) targets.
-
-* Dry run. While it is impossible in general to print an accurate full set of
-  dry run actions, if should be easy to just print the 1st action(s) that need
-  to be executed. This should provide most of the value. It should also be
-  possible to provide a longer list of actions assuming that any steps with
-  dynamic outputs generate only the same set of outputs as before (persistent
-  data is available) or just a single output with a synthetic name (otherwise),
-  which might provide addititional value.
 
 * Allow automated clean actions based on the collected step outputs. If there's
   nothing to be done when building some target(s), then all generated output

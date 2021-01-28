@@ -4,6 +4,7 @@ Test the make utilities.
 
 # pylint: disable=too-many-lines
 
+from dynamake import above
 from dynamake import done
 from dynamake import Logger
 from dynamake import make
@@ -152,12 +153,12 @@ class TestMain(TestWithFiles):
 
     def test_multiple_producers_priorities(self) -> None:
         def _register() -> None:
-            @step(output=phony('all'), priority=1)
-            async def foo() -> None:  # pylint: disable=unused-variable
-                pass
-
             @step(output=phony('all'))
             async def bar() -> None:  # pylint: disable=unused-variable
+                pass
+
+            @step(output=phony('all'), priority=above('bar'))
+            async def foo() -> None:  # pylint: disable=unused-variable
                 pass
 
         sys.argv += ['--jobs', '0']
