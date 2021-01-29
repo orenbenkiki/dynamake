@@ -199,5 +199,3 @@ worked on yet:
 
 * Allow using checksums instead of timestamps to determine if actions can be skipped, either by
   default or on a per-file basis.
-
-* Report list of goals leading to don't-know-how-to-make errors.

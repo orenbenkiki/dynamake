@@ -2257,7 +2257,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         Invocation.active = {}
         Invocation.current = None  # type: ignore
-        Invocation.top = Invocation(None)
+        Invocation.top = Invocation(None, None)
         Invocation.top._become_current()  # pylint: disable=protected-access
         Invocation.up_to_date = {}
         Invocation.phony = set()
@@ -2267,6 +2267,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
     def __init__(self,  # pylint: disable=too-many-statements
                  step: Optional[Step],  # pylint: disable=redefined-outer-name
+                 goal: Optional[str],
                  **kwargs: Any) -> None:
         """
         Track the invocation of an async step.
@@ -2276,6 +2277,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         #: The step being invoked.
         self.step = step
+
+        #: The goal being built.
+        self.goal = goal
 
         #: The arguments to the invocation.
         self.kwargs = kwargs
@@ -2465,25 +2469,25 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                         outputs=self.built_outputs)
             file.write(yaml.dump(data))
 
-    def log_and_abort(self, message: str, *args: Any) -> None:
+    def log_and_abort(self, *messages: str) -> None:
         """
         Abort the invocation for some reason.
         """
-        Logger.error(message, *args)
-        return self.abort(message, *args)
+        for message in messages:
+            Logger.error(message)
+        return self.abort(messages[0])
 
-    def abort(self, message: str, *args: Any) -> None:
+    def abort(self, message: str) -> None:
         """
         Abort the invocation for some reason.
         """
-        message = message % args
         message = f'{Invocation.current.log} - {message}'
         self.exception = StepException(message)
         if failure_aborts_build.value and not no_actions.value:
             no_additional_complaints()
             raise self.exception
 
-    def require(self, path: str) -> None:
+    def require(self, path: str) -> None:  # pylint: disable=too-many-branches
         """
         Require a file to be up-to-date before executing any actions or
         completing the current invocation.
@@ -2521,7 +2525,15 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     Logger.debug(f'The optional required: {path} '
                                  f"does not exist and can't be built")
                 else:
-                    self.log_and_abort(f"Don't know how to make the required: {path}")
+                    messages = [f"Don't know how to make the target: {path}",
+                                f'invoked to produce the target: {Invocation.current.goal}']
+                    parent = Invocation.current.parent
+                    while parent is not None:
+                        if parent.goal is not None:
+                            messages.append(f'required by the step: {parent.log}')
+                            messages.append(f'invoked to produce the target: {parent.goal}')
+                        parent = parent.parent
+                    self.log_and_abort(*messages)
                 return
             Logger.debug(f'The required: {path} is a source file')
             up_to_date = UpToDate('', stat.st_mtime_ns)
@@ -2530,7 +2542,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 self.new_persistent_actions[-1].require(path, up_to_date)
             return
 
-        invocation = Invocation(step, **kwargs)
+        invocation = Invocation(step, path, **kwargs)
         if self.new_persistent_actions:
             self.new_persistent_actions[-1].require(path, UpToDate(invocation.name))
         Logger.debug(f'The required: {path} '

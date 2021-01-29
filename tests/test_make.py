@@ -1275,6 +1275,10 @@ class TestMain(TestWithFiles):
             async def make_all() -> None:  # pylint: disable=unused-variable
                 require('foo')
 
+            @step(output='foo')
+            async def make_foo() -> None:  # pylint: disable=unused-variable
+                require('bar')
+
         sys.argv += ['--jobs', '0']
         sys.argv += ['--rebuild_changed_actions', 'false']
 
@@ -1286,18 +1290,37 @@ class TestMain(TestWithFiles):
             ('dynamake', 'TRACE', '#1 - make_all - Call'),
             ('dynamake', 'DEBUG', '#1 - make_all - Nonexistent required output(s): all'),
             ('dynamake', 'DEBUG', '#1 - make_all - Build the required: foo'),
-            ('dynamake', 'ERROR',
-             "#1 - make_all - Don't know how to make the required: foo"),
+            ('dynamake', 'DEBUG',
+             '#1 - make_all - The required: foo will be produced by the spawned: '
+             '#1.1 - make_foo'),
+            ('dynamake', 'DEBUG', '#1 - make_all - Sync'),
+            ('dynamake', 'DEBUG', '#0 - make - Sync'),
+            ('dynamake', 'TRACE', '#1.1 - make_foo - Call'),
+            ('dynamake', 'DEBUG', '#1.1 - make_foo - Nonexistent required output(s): foo'),
+            ('dynamake', 'DEBUG', '#1.1 - make_foo - Build the required: bar'),
+            ('dynamake', 'ERROR', "#1.1 - make_foo - Don't know how to make the target: bar"),
+            ('dynamake', 'ERROR', '#1.1 - make_foo - invoked to produce the target: foo'),
+            ('dynamake', 'ERROR', '#1.1 - make_foo - required by the step: #1 - make_all'),
+            ('dynamake', 'ERROR', '#1.1 - make_foo - invoked to produce the target: all'),
+            ('dynamake', 'TRACE', '#1.1 - make_foo - Fail'),
             ('dynamake', 'TRACE', '#1 - make_all - Fail'),
             ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
         sys.argv += ['foo']
 
-        self.check(_register, error="Don't know how to make the required: foo", log=[
+        self.check(_register, error='Aborting due to previous error', log=[
             ('dynamake', 'TRACE', '#0 - make - Targets: foo'),
             ('dynamake', 'DEBUG', '#0 - make - Build the required: foo'),
-            ('dynamake', 'ERROR', "#0 - make - Don't know how to make the required: foo"),
+            ('dynamake', 'DEBUG',
+             '#0 - make - The required: foo will be produced by the spawned: '
+             '#1 - make_foo'),
+            ('dynamake', 'TRACE', '#1 - make_foo - Call'),
+            ('dynamake', 'DEBUG', '#1 - make_foo - Nonexistent required output(s): foo'),
+            ('dynamake', 'DEBUG', '#1 - make_foo - Build the required: bar'),
+            ('dynamake', 'ERROR', "#1 - make_foo - Don't know how to make the target: bar"),
+            ('dynamake', 'ERROR', '#1 - make_foo - invoked to produce the target: foo'),
+            ('dynamake', 'TRACE', '#1 - make_foo - Fail'),
             ('dynamake', 'ERROR', '#0 - make - Fail'),
         ])
 
