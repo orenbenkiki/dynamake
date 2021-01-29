@@ -36,7 +36,7 @@ Which is equivalent to the ``Makefile``:
 The Python version is more verbose, so if this was all there was to it, ``make`` would have been
 preferable. However, DynaMake allows one to specify scripts that are impossible in ``make``,
 justifying the additional syntax. See the `tutorial
-<https://dynamake.readthedocs.io/en/latest/README.html>`_ for the details.
+<https://dynamake.readthedocs.io/en/latest/TUTORIAL.html>`_ for the details.
 
 WHY
 ---
