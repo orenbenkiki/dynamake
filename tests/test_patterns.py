@@ -6,23 +6,17 @@ Test the pattern matching.
 from dynamake import capture2glob
 from dynamake import capture2re
 from dynamake import copy_annotations
-from dynamake import emphasized
 from dynamake import exists
 from dynamake import expand
 from dynamake import flatten
-from dynamake import fmt
 from dynamake import fmt_capture
-from dynamake import fmts
 from dynamake import glob2re
 from dynamake import glob_capture
 from dynamake import glob_extract
 from dynamake import glob_fmt
 from dynamake import glob_paths
-from dynamake import is_emphasized
 from dynamake import is_exists
 from dynamake import is_optional
-from dynamake import match_extract
-from dynamake import match_fmt
 from dynamake import NonOptionalException
 from dynamake import optional
 from dynamake import precious
@@ -52,20 +46,15 @@ class TestAnnotations(TestWithReset):
     def test_annotations(self) -> None:
         self.assertFalse(is_optional('x'))
         self.assertFalse(is_exists('x'))
-        self.assertFalse(is_emphasized('x'))
 
         self.assertEqual(optional(['x']), ['x'])
         self.assertTrue(is_optional(optional('x')))
         self.assertFalse(is_exists(optional('x')))
-        self.assertFalse(is_emphasized(optional('x')))
 
         self.assertEqual(exists(['x']), ['x'])
         self.assertFalse(is_optional(exists('x')))
         self.assertTrue(is_exists(exists('x')))
-        self.assertFalse(is_emphasized(exists('x')))
 
-        self.assertEqual(emphasized(['x']), ['x'])
-        self.assertTrue(is_emphasized(exists(emphasized('x'))))
         self.assertTrue(is_exists(optional(exists('x'))))
 
         self.assertEqual(precious(['x']), ['x'])
@@ -103,14 +92,6 @@ class TestConversions(TestWithReset):
     def test_load_glob(self) -> None:
         pattern = yaml.full_load('!g a*b')
         self.assertEqual(str(pattern), "re.compile('a[^/]*b')")
-
-    def test_fmt(self) -> None:
-        self.assertEqual(fmt({'a': 1}, ['{a}.foo', '{a}.bar']), ['1.foo', '1.bar'])
-        self.assertEqual(fmt({'a': 1}, '{a}.foo'), '1.foo')
-
-    def test_fmts(self) -> None:
-        self.assertEqual(fmts([{'a': 1}, {'a': 2}], '{a}.txt', '{a}.csv'),
-                         ['1.txt', '1.csv', '2.txt', '2.csv'])
 
     def test_glob2re(self) -> None:
         self.check_2re(glob2re, string='', compiled='', match=[''], not_match=['a'])
@@ -328,16 +309,3 @@ class TestGlob(TestWithFiles):
     def test_expand(self) -> None:
         actual = expand('x.{a}.{b}', 'y.{a}.{b}', a='A', b=['B', 'b'])
         self.assertEqual(sorted(actual), sorted(['x.A.b', 'y.A.b', 'x.A.B', 'y.A.B']))
-
-
-class TestMatch(TestWithReset):
-
-    def test_no_match(self) -> None:
-        self.assertRaisesRegex(RuntimeError,
-                               'The string: bar.txt .* not match .* pattern: foo.txt',
-                               match_extract, 'foo.txt', 'bar.txt')
-
-    def test_match_fmt(self) -> None:
-        self.assertEqual(match_fmt('{*foo}.txt', '{foo}.csv', 'x.txt'), 'x.csv')
-        self.assertEqual(match_fmt('{*foo}.txt', '{foo}.csv', 'x.txt', 'y.txt'),
-                         ['x.csv', 'y.csv'])

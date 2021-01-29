@@ -21,7 +21,6 @@ from inspect import getsourcelines
 from inspect import iscoroutinefunction
 from sortedcontainers import SortedDict  # type: ignore
 from stat import S_ISDIR
-from termcolor import colored
 from textwrap import dedent
 from threading import current_thread
 from typing import Any
@@ -450,9 +449,6 @@ class AnnotatedStr(str):
     #: Whether this was annotated by :py:func:`dynamake.precious`.
     precious = False
 
-    #: Whether this was annotated by :py:func:`dynamake.emphasized`.
-    emphasized = False
-
 
 def _dump_str(dumper: Dumper, data: AnnotatedStr) -> Node:
     return dumper.represent_scalar('tag:yaml.org,2002:str', data)
@@ -474,7 +470,6 @@ def copy_annotations(source: str, target: str) -> str:
         target.exists = source.exists
         target.phony = source.phony
         target.precious = source.precious
-        target.emphasized = source.emphasized
     return target
 
 
@@ -504,46 +499,6 @@ def is_precious(string: str) -> bool:
     Whether a string has been annotated as :py:func:`dynamake.precious`.
     """
     return isinstance(string, AnnotatedStr) and string.precious
-
-
-def is_emphasized(string: str) -> bool:
-    """
-    Whether a string has been annotated as :py:func:`dynamake.emphasized`.
-    """
-    return isinstance(string, AnnotatedStr) and string.emphasized
-
-
-# pylint: disable=function-redefined
-# pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
-
-@overload
-def fmt(wildcards: Dict[str, Any], template: str) -> str: ...
-
-
-@overload
-def fmt(wildcards: Dict[str, Any], not_template: NotString) -> List[str]: ...
-
-
-@overload
-def fmt(wildcards: Dict[str, Any],
-        first: Strings, second: Strings, *templates: Strings) -> List[str]: ...
-
-
-# pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
-
-def fmt(wildcards: Any, *templates: Any) -> Any:  # type: ignore
-    """
-    Similar to ``str.format``, but will format any number of templates in one call.
-
-    In addition, this will preserve the annotations of the templates, if any.
-    """
-    results = \
-        [copy_annotations(template, template.format(**wildcards))
-         for template in each_string(*templates)]
-    if len(templates) == 1 and isinstance(templates[0], str):
-        assert len(results) == 1
-        return results[0]
-    return results
 
 
 # pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
@@ -580,18 +535,6 @@ def fmt_capture(kwargs: Any, *patterns: Any) -> Any:  # type: ignore
 
 
 # pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
-
-
-def fmts(wildcards_list: List[Dict[str, Any]], *templates: Strings) -> List[str]:
-    """
-    Similar to :py:func:`dynamake.fmt`, except expands the ``templates`` for each of the provided
-    ``wildcards``.
-    """
-    results: List[Strings] = []
-    assert results is not None
-    for wildcards in wildcards_list:
-        results.append(fmt(wildcards, *templates))
-    return list(each_string(*results))
 
 
 @overload
@@ -741,109 +684,6 @@ def precious(*patterns: Any) -> Any:  # type: ignore
     return strings
 
 
-# pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
-
-@overload
-def emphasized(pattern: str) -> str: ...
-
-
-@overload
-def emphasized(not_string: NotString) -> List[str]: ...
-
-
-@overload
-def emphasized(first: Strings, second: Strings, *patterns: Strings) -> List[str]: ...
-
-
-# pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
-
-def emphasized(*patterns: Any) -> Any:  # type: ignore
-    """
-    Annotate patterns as emphasized (impacts logging command lines).
-
-    Emphasized text in a command line is printed in color when logged. Strategic use of this makes
-    it easier to figure out the actual actions in the text soup of all the command line flags.
-    """
-    strings: List[str] = []
-    for pattern in each_string(*patterns):
-        if not isinstance(pattern, AnnotatedStr):
-            pattern = AnnotatedStr(pattern)
-        pattern.emphasized = True
-        strings.append(pattern)
-    if len(patterns) == 1 and isinstance(patterns[0], str):
-        assert len(strings) == 1
-        return strings[0]
-    return strings
-
-# pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
-
-
-@overload
-def color(string: str) -> str: ...
-
-
-@overload
-def color(not_string: NotString) -> List[str]: ...
-
-
-@overload
-def color(first: Strings, second: Strings, *strings: Strings) -> List[str]: ...
-
-# pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
-
-
-def color(*strings: Any) -> Any:  # type: ignore
-    """
-    Return the strings, replacing any that were :py:func:`dynamake.emphasized` by a colored version.
-    """
-    results: List[str] = []
-    for string in each_string(*strings):
-        if is_emphasized(string):
-            results.append(copy_annotations(string, colored(string, attrs=['bold'])))
-        else:
-            results.append(string)
-    if len(strings) == 1 and isinstance(strings[0], str):
-        assert len(results) == 1
-        return results[0]
-    return results
-
-
-# pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
-
-
-@overload
-def match_fmt(pattern: str, template: str, string: str) -> str: ...
-
-
-@overload
-def match_fmt(pattern: str, template: str, not_string: NotString) -> List[str]: ...
-
-
-@overload
-def match_fmt(pattern: str, template: str,
-              first: Strings, second: Strings, *strings: Strings) -> List[str]: ...
-
-# pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
-
-
-def match_fmt(pattern: Any, template: Any, *strings: Any) -> Any:  # type: ignore
-    """
-    for each of the ``strings``, capture it using the ``pattern`` and use the extracted values to
-    format the ``template``.
-    """
-    results: List[str] = []
-    for string in each_string(strings):
-        wildcards = match_extract(pattern, string)
-        results.append(copy_annotations(string, template.format(**wildcards[0])))
-    if len(strings) == 1 and isinstance(strings[0], str):
-        assert len(results) == 1
-        return results[0]
-    return results
-
-
-# pylint: enable=function-redefined
-
-
 class Captured:
     """
     The results of operations using a capture pattern.
@@ -981,15 +821,6 @@ def glob_extract(*patterns: Strings) -> List[Dict[str, Any]]:
     dictionaries, ignoring the matching paths.
     """
     return glob_capture(*patterns).wildcards
-
-
-def match_extract(pattern: str, *strings: Strings) -> List[Dict[str, Any]]:
-    """
-    Similar to :py:func:`dynamake.glob_extract`, except that it uses just one capture pattern and
-    apply it to some string(s).
-    """
-    regexp = capture2re(pattern)
-    return [_capture_string(pattern, regexp, string) for string in each_string(*strings)]
 
 
 def _capture_string(pattern: str, regexp: Pattern, string: str) -> Dict[str, Any]:
@@ -3180,7 +3011,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
             if kind != 'shell':
                 part = copy_annotations(part, shlex.quote(part))
-            log_parts.append(color(part))
+            log_parts.append(part)
 
         log_command = ' '.join(log_parts)
 
@@ -3825,6 +3656,20 @@ def output(index: int = 0) -> str:
     Return a specific expanded output.
     """
     return outputs()[index]
+
+
+def inputs() -> List[str]:
+    """
+    Return the list of required dependencies of the current step.
+    """
+    return Invocation.current.required
+
+
+def input(index: int = 0) -> str:
+    """
+    Return the specified required dependency.
+    """
+    return inputs()[index]
 
 
 async def done(awaitable: Awaitable) -> Any:

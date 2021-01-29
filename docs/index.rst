@@ -6,6 +6,7 @@ DynaMake - Dynamic Make in Python
    :caption: Contents:
 
    Readme <README>
+   Tutorial <TUTORIAL>
    License (MIT) <LICENSE>
 
 .. toctree::
