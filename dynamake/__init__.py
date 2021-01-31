@@ -57,6 +57,98 @@ import yaml
 _REGEXP_ERROR_POSITION = re.compile(r'(.*) at position (\d+)')
 
 
+__all__ = [
+    # Step decorator
+    'step',
+    'above',
+    'outputs',
+    'output',
+    'inputs',
+    'input',
+
+    # Build operations
+    'require',
+    'try_require',
+    'sync',
+    'spawn',
+    'shell',
+    'can_make',
+
+    # Glob operations
+    'Captured',
+    'NonOptionalException',
+    'glob_capture',
+    'glob_paths',
+    'glob_extract',
+    'glob_fmt',
+
+    # File system operations
+    'Stat',
+
+    # Collections of strings
+    'each_string',
+    'flatten',
+
+    # Annotated strings
+    'AnnotatedStr',
+    'copy_annotations',
+    'optional',
+    'is_optional',
+    'exists',
+    'is_exists',
+    'phony',
+    'is_phony',
+    'precious',
+    'is_precious',
+
+    # Custom command line arguments.
+    'Parameter',
+    'str2bool',
+    'str2enum',
+    'str2float',
+    'str2int',
+    'str2choice',
+    'str2list',
+    'str2optional',
+
+    # Builtin command line arguments.
+    'shell_executable',
+    'jobs',
+    'log_level',
+    'log_skipped_actions',
+    'no_actions',
+    'rebuild_changed_actions',
+    'persistent_directory',
+    'failure_aborts_build',
+    'remove_stale_outputs',
+    'touch_success_outputs',
+    'remove_failed_outputs',
+    'remove_empty_directories',
+    'default_shell_prefix',
+    'resource_parameters',
+
+    # Logging.
+    'Logger',
+
+    # Main function.
+    'make',
+
+    # Misceleneous utilities.
+    'expand',
+    'clean_path',
+    'exec_file',
+
+    # Async wrappers.
+    'done',
+    'context',
+
+    # Read/write lock wrappers.
+    'reading',
+    'writing',
+    'locks',
+]
+
+
 def no_additional_complaints() -> None:
     '''
     Disable all warnings when aborting execution.
@@ -985,8 +1077,7 @@ def str2float(min: Optional[float] = None,
               include_min: bool = True,
               include_max: bool = True) -> Callable[[str], float]:
     """
-    Return a parser that accepts a float argument in the specified
-    :py:func:`dynamake.pattern.RangeParam`.
+    Return a parser that accepts a float argument in the specified range.
     """
     def _parse(string: str) -> float:
         return _str2range(string, float,
@@ -1002,8 +1093,7 @@ def str2int(min: Optional[int] = None,
             include_min: bool = True,
             include_max: bool = True) -> Callable[[str], int]:
     """
-    Return a parser that accepts an int argument in the specified
-    :py:func:`dynamake.pattern.RangeParam`.
+    Return a parser that accepts an int argument in the specified range.
     """
     def _parse(string: str) -> int:
         return _str2range(string, int,  # type: ignore
@@ -1049,8 +1139,8 @@ def clean_path(path: str) -> str:
     """
     Return a clean and hopefully "canonical" path.
 
-    We do not use absolute paths everywhere (as that would mess up the match patterns).
-    Instead we just convert each `//` to a single `/`. Perhaps more is needed.
+    We do not use absolute paths everywhere (as that would mess up the match patterns). Instead we
+    just convert each ``//`` to a single ``/`` and remove any final ``/``. Perhaps more is needed.
     """
     previous_path = ''
     next_path = path
@@ -1231,9 +1321,9 @@ def exec_file(path: str, global_vars: Dict[str, Any]) -> None:
     """
     Execute the code in the specified ``path``.
 
-    This is intended so that one ``DynaMake.py`` file can include steps from other files without
-    going through the trouble of setting up importable Python modules. To do so transparently, you
-    must pass ``globals()`` as the value of ``global_vars``.
+    This allows one ``DynaMake.py`` file to include steps from another file without going through
+    the trouble of setting up importable Python modules. To do so transparently, you must pass
+    ``globals()`` as the value of ``global_vars``.
 
     "With great power comes great responsibility", etc.
     """
@@ -3402,13 +3492,6 @@ async def spawn(*command: Strings, **resources: int) -> None:
     await current.done(current.run_action('spawn', _run_exec, *command, **resources))
 
 
-def log_prefix() -> str:
-    """
-    A prefix for log messages.
-    """
-    return Invocation.current.log
-
-
 def make(parser: ArgumentParser, *,
          default_targets: Strings = 'all',
          logger_name: str = 'dynamake',
@@ -3641,16 +3724,6 @@ def reset(is_test: bool = False, reset_test_times: bool = False) -> None:
 
 
 reset()
-
-
-def step_kwargs() -> Dict[str, Any]:
-    """
-    Return the named arguments of the current step.
-
-    These are the captured names extracted from the output file(s) that the current
-    step was invoked to build.
-    """
-    return Invocation.current.kwargs
 
 
 def outputs() -> List[str]:

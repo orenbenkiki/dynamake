@@ -12,6 +12,8 @@
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
+from sphinx.ext.autodoc import Documenter
+
 import os
 import subprocess
 import sys
@@ -45,6 +47,9 @@ extensions = [
 ]
 
 autodoc_default_flags=['autoattribute']
+
+# Use the source order of documented entities.
+autodoc_member_order = 'bysource'
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['templates']
