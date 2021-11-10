@@ -12,7 +12,6 @@ from argparse import ArgumentParser
 from argparse import Namespace
 from contextlib import asynccontextmanager
 from copy import copy
-from curses.ascii import isalnum
 from datetime import datetime
 from glob import glob as glob_files
 from importlib import import_module
@@ -184,7 +183,7 @@ def capture2re(capture: str) -> str:  # pylint: disable=too-many-statements
         nonlocal capture, index, size
         start_index = index
         while index < size and capture[index] not in terminators:
-            if capture[index] != '_' and not isalnum(capture[index]):
+            if capture[index] != '_' and not capture[index].isalnum():
                 _invalid('invalid captured name character')
             index += 1
         if index == start_index:
@@ -356,7 +355,7 @@ def _fmt_capture(kwargs: Dict[str, Any], capture: str) -> str:  # pylint: disabl
         nonlocal capture, index, size
         start_index = index
         while index < size and capture[index] not in terminators:
-            if capture[index] != '_' and not isalnum(capture[index]):
+            if capture[index] != '_' and not capture[index].isalnum():
                 _invalid('invalid captured name character')
             index += 1
         if index == start_index:

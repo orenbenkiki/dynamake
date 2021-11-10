@@ -11,7 +11,7 @@ import subprocess
 SETUP_REQUIRES = ['setuptools_scm']
 INSTALL_REQUIRES = ['pyyaml', 'sortedcontainers', 'termcolor', 'aiorwlock']
 DEVELOP_REQUIRES = ['autopep8', 'isort', 'mypy', 'pylint', 'sphinx', 'sphinx_rtd_theme', 'tox']
-TESTS_REQUIRE = ['pytest', 'testfixtures', 'coverage']  # TODO: Replicated in tox.ini
+TESTS_REQUIRE = ['pytest', 'pytest-cov', 'testfixtures']  # TODO: Replicated in tox.ini
 
 
 def readme():
