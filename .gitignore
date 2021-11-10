@@ -1,11 +1,11 @@
 build
-cover
 .coverage
 dist
 dynamake/version.py
 *.egg-info
 .eggs
 html
+htmlcov
 junk*
 metacell/version.py
 .mypy_cache

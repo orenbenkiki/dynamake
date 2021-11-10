@@ -12,7 +12,7 @@ import shutil
 import sys
 import tempfile
 
-# pylint: disable=missing-docstring
+# pylint: disable=missing-docstring,unspecified-encoding
 
 
 def undent(content: str) -> str:
@@ -28,7 +28,7 @@ def write_file(path: str, content: str = '') -> None:
 
 
 def _exit(status: int) -> None:
-    raise RuntimeError('System exit status: %s' % status)
+    raise RuntimeError(f'System exit status: {status}')
 
 
 class TestWithReset(TestCase):

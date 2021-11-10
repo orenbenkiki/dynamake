@@ -2,7 +2,7 @@
 DynaMake module.
 """
 
-# pylint: disable=too-many-lines,redefined-builtin
+# pylint: disable=too-many-lines,redefined-builtin,unspecified-encoding
 
 from .version import version as __version__  # pylint: disable=unused-import
 from aiorwlock import _ReaderLock
@@ -39,7 +39,7 @@ from typing import Tuple
 from typing import Union
 from typing.re import Pattern  # type: ignore # pylint: disable=import-error
 from urllib.parse import quote_plus
-from yaml import Dumper
+from yaml import Dumper  # type: ignore
 from yaml import Loader
 from yaml import Node
 
@@ -2043,7 +2043,7 @@ class LoggingFormatter(logging.Formatter):  # pragma: no cover
             return record_datetime.strftime(datefmt)
 
         seconds = record_datetime.strftime('%Y-%m-%d %H:%M:%S')
-        return '%s.%03d' % (seconds, record.msecs)
+        return '%s.%03d' % (seconds, record.msecs)  # pylint: disable=consider-using-f-string
 
 
 class RwLocks:
@@ -3346,10 +3346,9 @@ def _datetime_from_nanoseconds(nanoseconds: int) -> str:
     if not _is_test:  # pylint: disable=protected-access
         # pragma: no cover
         seconds = datetime.fromtimestamp(nanoseconds // 1_000_000_000).strftime('%Y-%m-%d %H:%M:%S')
-        fraction = '%09d' % (nanoseconds % 1_000_000_000)
+        fraction = '%09d' % (nanoseconds % 1_000_000_000)  # pylint: disable=consider-using-f-string
         return seconds + '.' + fraction
 
-    global _QUANTIZED_OF_NANOSECONDS
     quantized = _QUANTIZED_OF_NANOSECONDS.get(nanoseconds, None)
     if quantized is not None:
         return str(quantized)
@@ -3557,10 +3556,8 @@ def _compute_jobs() -> None:
     if jobs.value < 0:
         cpu_count = os.cpu_count() or 1
         amount = cpu_count // -jobs.value
-        if amount < 1:
-            amount = 1
-        if amount > cpu_count:
-            amount = cpu_count
+        amount = max(amount, 1)
+        amount = min(amount, cpu_count)
     jobs.value = amount
     Resources.available['jobs'] = Resources.total['jobs'] = amount
 

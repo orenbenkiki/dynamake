@@ -36,7 +36,7 @@ from typing import List
 
 import argparse
 import re
-import yaml
+import yaml  # type: ignore
 
 # pylint: disable=missing-docstring
 

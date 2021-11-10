@@ -11,7 +11,7 @@ import subprocess
 SETUP_REQUIRES = ['setuptools_scm']
 INSTALL_REQUIRES = ['pyyaml', 'sortedcontainers', 'termcolor', 'aiorwlock']
 DEVELOP_REQUIRES = ['autopep8', 'isort', 'mypy', 'pylint', 'sphinx', 'sphinx_rtd_theme', 'tox']
-TESTS_REQUIRE = ['nose', 'testfixtures', 'coverage']  # TODO: Replicated in tox.ini
+TESTS_REQUIRE = ['pytest', 'testfixtures', 'coverage']  # TODO: Replicated in tox.ini
 
 
 def readme():
@@ -44,7 +44,7 @@ class AllCommand(SimpleCommand):
         self.run_command('mypy')
         self.run_command('check')
         self.run_command('build')
-        self.run_command('nose')
+        self.run_command('pytest')
         self.run_command('tox')
         self.run_command('html')
 
@@ -76,14 +76,13 @@ class MypyCommand(SimpleCommand):
                *glob('bin/**/*.py', recursive=True)]
 
 
-class NoseCommand(SimpleCommand):
-    description = 'run nosetests and generate coverage reports'
-    command = ['nosetests',
-               '--stop',
-               '--with-coverage',
-               '--cover-package=dynamake',
-               '--cover-branches',
-               '--cover-html']
+class PyTestCommand(SimpleCommand):
+    description = 'run pytest and generate coverage reports'
+    command = ['pytest',
+               '--cov=dynamake',
+               '--cov-report=html',
+               '--cov-report=term',
+               '--no-cov-on-fail']
 
     def run(self):
         if os.path.exists('.coverage'):
@@ -163,7 +162,6 @@ setup(name='dynamake',
       setup_requires=SETUP_REQUIRES,
       install_requires=INSTALL_REQUIRES,
       tests_require=TESTS_REQUIRE,
-      test_suite='nose.collector',
       extras_require={  # TODO: Is this the proper way of expressing these dependencies?
           'develop': INSTALL_REQUIRES + TESTS_REQUIRE + DEVELOP_REQUIRES
       },
@@ -174,7 +172,7 @@ setup(name='dynamake',
           'html': HtmlCommand,
           'is_formatted': IsformattedCommand,
           'mypy': MypyCommand,
-          'nose': NoseCommand,
+          'pytest': PyTestCommand,
           'pylint': PylintCommand,
           'reformat': ReformatCommand,
           'no_todo' + 'x': NoTodo_xCommand,
