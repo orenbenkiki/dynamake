@@ -1,25 +1,18 @@
-DynaMake - Dynamic Make in Python
-=================================
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Contents:
-
-   Readme <README>
-   Tutorial <TUTORIAL>
-   License (MIT) <LICENSE>
+DynaMake's Documentation
+========================
 
 .. toctree::
    :maxdepth: 1
-   :caption: Code:
+   :caption: Contents:
 
-   package <modules>
-   coverage <cover/index.html#http://>
+   readme
+   tutorial
+   modules
+   history
+   todo
 
-
-Indices and tables:
-===================
-
+Indices and tables
+==================
 * :ref:`genindex`
 * :ref:`modindex`
 * :ref:`search`

@@ -2,19 +2,20 @@
 Main Program
 """
 
-from dynamake import make
-
 import argparse
+import os
 import sys
+
+from dynamake import make
 
 
 def main() -> None:
     """
     Universal main function for invoking DynaMake steps.
     """
-    make(argparse.ArgumentParser(description='Build some target(s) using DynaMake.'),
-         logger_name=sys.argv[0])
+    sys.path.append(os.getcwd())
+    make(argparse.ArgumentParser(description="Build some target(s) using DynaMake."), logger_name=sys.argv[0])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

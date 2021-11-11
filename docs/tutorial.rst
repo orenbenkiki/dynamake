@@ -239,15 +239,15 @@ and will only re-scan source files which actually changed.
 Collections of Strings
 ----------------------
 
-The previous example demonstrates the use of the :py:const:`Strings` type. Many DynaMake functions
-take one or more "strings or list of (strings or list of (strings or ...))" - a type which is
-impossible to express in Python's ``mypy`` type system, but is very useful. This makes it possible
-for :py:func:`dynamake.require` to accept a single string argument, multiple string arguments, a
-list of string arguments (returned by ``read_depends`` above), etc.
+The previous example demonstrates the use of the :py:const:`dynamake.Strings` type. Many DynaMake
+functions take one or more "strings or list of (strings or list of (strings or ...))" - a type which
+is impossible to express in Python's ``mypy`` type system, so is only approximated here. This makes
+it possible for :py:func:`dynamake.require` to accept a single string argument, multiple string
+arguments, a list of string arguments (returned by ``read_depends`` above), etc.
 
-To help deal with this type, DynaMake provides the :py:func:`each_string` and :py:func:`flatten`
-functions, which allow iteration on arbitrary ``Strings`` and converting them to a simple flat list
-of strings for further processing.
+To help deal with this type, DynaMake provides the :py:func:`dynamake.each_string` and
+:py:func:`dynamake.flatten` functions, which allow iteration on arbitrary ``Strings`` and converting
+them to a simple flat list of strings for further processing.
 
 Annotated Strings
 -----------------
@@ -312,8 +312,8 @@ Phony Action Parameters
 -----------------------
 
 If using persistent state to track actions (see below), this state will ignore any parts of invoked
-commands that are marked as :py:func:`phony`. This prevents changes to irrelevant command line
-options from triggering a rebuild. For example, the following:
+commands that are marked as :py:func:`dynamake.phony`. This prevents changes to irrelevant command
+line options from triggering a rebuild. For example, the following:
 
 .. code-block:: python
 
@@ -330,11 +330,11 @@ Will not trigger a rebuild of ``foo`` if running on a machine with a different n
 Optional Outputs and Dependencies
 ---------------------------------
 
-If an output is annotated as :py:func:`optional`, then DynaMake will not complain if it doesn't
-exist when the step's actions complete. If, in addition, the step requiring the dependencies also
-annotated it as ``optional``, then DynaMake will allow it to proceed even if the dependency was not
-created. If either the producer or the consumer of the file does not annotate it as ``optional``,
-then the build will fail.
+If an output is annotated as :py:func:`dynamake.optional`, then DynaMake will not complain if it
+doesn't exist when the step's actions complete. If, in addition, the step requiring the dependencies
+also annotated it as ``optional``, then DynaMake will allow it to proceed even if the dependency was
+not created. If either the producer or the consumer of the file does not annotate it as
+``optional``, then the build will fail.
 
 For example:
 
@@ -360,8 +360,8 @@ For example:
 Exists Outputs and Inputs
 -------------------------
 
-If an output or a dependency is annotated as :py:func:`exists`, then DynaMake will ignore its
-modification time and only considers whether the file exists or not. That is,
+If an output or a dependency is annotated as :py:func:`dynamake.exists`, then DynaMake will ignore
+its modification time and only considers whether the file exists or not. That is,
 ``require(exists(dependency))`` will trigger rebuilding the dependency if it does not exist, but
 will not rebuild it if it exists regardless of the modification time of its dependencies. Specifying
 ``output=exists(target)`` instructs DynaMake to skip updating the modification time of the target to
@@ -388,8 +388,8 @@ For example:
 Precious Outputs
 ----------------
 
-If an output is annotated as :py:func:`previous`, then DynaMake will never remove it, even if
-rebuilding it or if the step rebuilding it fails, regardless of the setting of
+If an output is annotated as :py:func:`dynamake.precious`, then DynaMake will never remove it, even
+if rebuilding it or if the step rebuilding it fails, regardless of the setting of
 ``--remove_stale_outputs`` and ``--remove_failed_outputs`` (see below).
 
 Multiple Outputs
@@ -470,10 +470,11 @@ There is no simple equivalent for this in ``make`` (or similar tools).
 Globbing and Formatting
 -----------------------
 
-The :py:func:`glob_fmt` function used above performs a ``glob`` of the specified pattern, captures
-any ``{*parameters}`` and then uses them to format some templates. This is very useful when dealing
-with a dynamic set of files. DynaMake provides other functions to help with ``glob`` of patterns,
-such as :py:func:`glob_capture`, :py:func:`glob_extract` and :py:func:`glob_paths`.
+The :py:func:`dynamake.glob_fmt` function used above performs a ``glob`` of the specified pattern,
+captures any ``{*parameters}`` and then uses them to format some templates. This is very useful when
+dealing with a dynamic set of files. DynaMake provides other functions to help with ``glob`` of
+patterns, such as :py:func:`dynamake.glob_capture`, :py:func:`dynamake.glob_extract` and
+:py:func:`dynamake.glob_paths`.
 
 Universal Main Program
 ----------------------
@@ -508,7 +509,7 @@ Control Flags
 
 The behavior of DynaMake can be tweaked by modifying the built-in global parameter values. This is
 typically done by specifying the appropriate command line option, which is then handled by the
-provided :py:func:`make` main function.
+provided :py:func:`dynamake.make` main function.
 
 * ``--no_actions`` (or ``-n``) instructs DynaMake to not actually execute any actions.
   When an action is specified and needs to be run, DynaMake logs it (in the ``INFO`` or ``FILE`` log
@@ -621,10 +622,10 @@ You can add your own custom configuration parameters. For example:
         require(f'src/{name}.c')
         await spawn('cc', '-o', output(), MODE_FLAGS[mode.value], input())
 
-That is, constructing a new :py:class:`dynamake.application.Parameter` specifies the name, default
-value and command line option(s) for the parameter. The :py:func:`dynamake.Parameter.value` property
-is set to the effective value of the parameter and can be used to modify some step's behavior in
-arbitrary ways. This value is either the parameter's default, or the value loaded from the default
+That is, constructing a new :py:class:`dynamake.Parameter` specifies the name, default value and
+command line option(s) for the parameter. The :py:func:`dynamake.Parameter.value` property is set to
+the effective value of the parameter and can be used to modify some step's behavior in arbitrary
+ways. This value is either the parameter's default, or the value loaded from the default
 ``DynaMake.yaml`` configuration file, or the value loaded from another configurtaion file by using
 the ``--config``, or the value specified in an explicit command line option for the parameter, in
 ascending priority order.
@@ -637,8 +638,8 @@ As mentioned above, DynaMake will perform all ``require`` operations concurrentl
 a result, by default DynaMake will execute several actions in parallel, subject to the setting of
 ``--jobs``.
 
-It is possible to define some additional resources using :py:func:`dynamake.resources` to restrict
-parallel execution. For example:
+It is possible to define some additional resources using :py:func:`dynamake.resource_parameters` to
+restrict parallel execution. For example:
 
 .. code-block:: python
 

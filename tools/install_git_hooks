@@ -1,9 +1,0 @@
-#!/bin/bash
-
-if ! test -e .git/hooks/pre-commit
-then
-    echo "Installing pre-commit hooks into .git/hooks"
-    echo '#!/bin/sh' > .git/hooks/pre-commit
-    echo 'python setup.py all' >> .git/hooks/pre-commit
-    chmod +x .git/hooks/pre-commit
-fi

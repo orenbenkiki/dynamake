@@ -4,10 +4,15 @@ DynaMake module.
 
 # pylint: disable=too-many-lines,redefined-builtin,unspecified-encoding
 
-from .version import version as __version__  # pylint: disable=unused-import
-from aiorwlock import _ReaderLock
-from aiorwlock import _WriterLock
-from aiorwlock import RWLock
+import argparse
+import asyncio
+import logging
+import os
+import re
+import shlex
+import shutil
+import sys
+import warnings
 from argparse import ArgumentParser
 from argparse import Namespace
 from contextlib import asynccontextmanager
@@ -18,7 +23,6 @@ from importlib import import_module
 from inspect import getsourcefile
 from inspect import getsourcelines
 from inspect import iscoroutinefunction
-from sortedcontainers import SortedDict  # type: ignore
 from stat import S_ISDIR
 from textwrap import dedent
 from threading import current_thread
@@ -31,129 +35,116 @@ from typing import Dict
 from typing import Iterator
 from typing import List
 from typing import Optional
-from typing import overload
 from typing import Sequence
 from typing import Set
 from typing import Tuple
 from typing import Union
+from typing import overload
 from typing.re import Pattern  # type: ignore # pylint: disable=import-error
 from urllib.parse import quote_plus
+
+import yaml  # type: ignore
+from aiorwlock import RWLock
+from aiorwlock import _ReaderLock
+from aiorwlock import _WriterLock
+from sortedcontainers import SortedDict  # type: ignore
 from yaml import Dumper  # type: ignore
 from yaml import Loader
 from yaml import Node
 
-import argparse
-import asyncio
-import logging
-import os
-import re
-import shlex
-import shutil
-import sys
-import warnings
-import yaml
+__author__ = "Oren Ben-Kiki"
+__email__ = "oren@ben-kiki.org"
+__version__ = "0.5.0"
 
-_REGEXP_ERROR_POSITION = re.compile(r'(.*) at position (\d+)')
+_REGEXP_ERROR_POSITION = re.compile(r"(.*) at position (\d+)")
 
 
 __all__ = [
     # Step decorator
-    'step',
-    'above',
-    'outputs',
-    'output',
-    'inputs',
-    'input',
-
+    "step",
+    "above",
+    "outputs",
+    "output",
+    "inputs",
+    "input",
     # Build operations
-    'require',
-    'try_require',
-    'sync',
-    'spawn',
-    'shell',
-    'can_make',
-
+    "require",
+    "try_require",
+    "sync",
+    "spawn",
+    "shell",
+    "can_make",
     # Glob operations
-    'Captured',
-    'NonOptionalException',
-    'glob_capture',
-    'glob_paths',
-    'glob_extract',
-    'glob_fmt',
-
+    "Captured",
+    "NonOptionalException",
+    "glob_capture",
+    "glob_paths",
+    "glob_extract",
+    "glob_fmt",
     # File system operations
-    'Stat',
-
+    "Stat",
     # Collections of strings
-    'each_string',
-    'flatten',
-
+    "each_string",
+    "flatten",
     # Annotated strings
-    'AnnotatedStr',
-    'copy_annotations',
-    'optional',
-    'is_optional',
-    'exists',
-    'is_exists',
-    'phony',
-    'is_phony',
-    'precious',
-    'is_precious',
-
+    "AnnotatedStr",
+    "copy_annotations",
+    "optional",
+    "is_optional",
+    "exists",
+    "is_exists",
+    "phony",
+    "is_phony",
+    "precious",
+    "is_precious",
     # Custom command line arguments.
-    'Parameter',
-    'str2bool',
-    'str2enum',
-    'str2float',
-    'str2int',
-    'str2choice',
-    'str2list',
-    'str2optional',
-
+    "Parameter",
+    "str2bool",
+    "str2enum",
+    "str2float",
+    "str2int",
+    "str2choice",
+    "str2list",
+    "str2optional",
     # Builtin command line arguments.
-    'shell_executable',
-    'jobs',
-    'log_level',
-    'log_skipped_actions',
-    'no_actions',
-    'rebuild_changed_actions',
-    'persistent_directory',
-    'failure_aborts_build',
-    'remove_stale_outputs',
-    'touch_success_outputs',
-    'remove_failed_outputs',
-    'remove_empty_directories',
-    'default_shell_prefix',
-    'resource_parameters',
-
+    "shell_executable",
+    "jobs",
+    "log_level",
+    "log_skipped_actions",
+    "no_actions",
+    "rebuild_changed_actions",
+    "persistent_directory",
+    "failure_aborts_build",
+    "remove_stale_outputs",
+    "touch_success_outputs",
+    "remove_failed_outputs",
+    "remove_empty_directories",
+    "default_shell_prefix",
+    "resource_parameters",
     # Logging.
-    'Logger',
-
+    "Logger",
     # Main function.
-    'make',
-
+    "make",
     # Misceleneous utilities.
-    'expand',
-    'clean_path',
-    'exec_file',
-
+    "expand",
+    "clean_path",
+    "exec_file",
     # Async wrappers.
-    'done',
-    'context',
-
+    "done",
+    "context",
     # Read/write lock wrappers.
-    'reading',
-    'writing',
-    'locks',
+    "reading",
+    "writing",
+    "locks",
 ]
 
 
 def no_additional_complaints() -> None:
-    '''
+    """
     Disable all warnings when aborting execution.
-    '''
-    logging.getLogger('asyncio').setLevel('CRITICAL')
-    warnings.simplefilter('ignore')
+    """
+    logging.getLogger("asyncio").setLevel("CRITICAL")
+    warnings.simplefilter("ignore")
 
 
 def capture2re(capture: str) -> str:  # pylint: disable=too-many-statements
@@ -168,14 +159,14 @@ def capture2re(capture: str) -> str:  # pylint: disable=too-many-statements
         nonlocal capture, index, size
         return index < size and capture[index] == expected
 
-    def _invalid(reason: str = '') -> None:
+    def _invalid(reason: str = "") -> None:
         nonlocal capture, index
         no_additional_complaints()
         raise RuntimeError(f'Invalid capture pattern:\n{capture}\n{index * " "}^ {reason}')
 
     def _expect_close() -> None:
-        if not _is_next('}'):
-            _invalid('missing }')
+        if not _is_next("}"):
+            _invalid("missing }")
         nonlocal index
         index += 1
 
@@ -183,94 +174,93 @@ def capture2re(capture: str) -> str:  # pylint: disable=too-many-statements
         nonlocal capture, index, size
         start_index = index
         while index < size and capture[index] not in terminators:
-            if capture[index] != '_' and not capture[index].isalnum():
-                _invalid('invalid captured name character')
+            if capture[index] != "_" and not capture[index].isalnum():
+                _invalid("invalid captured name character")
             index += 1
         if index == start_index:
-            _invalid('empty captured name')
+            _invalid("empty captured name")
         return capture[start_index:index]
 
     def _parse_regexp() -> str:
         nonlocal capture, index, size
 
-        if not _is_next(':'):
-            return ''
+        if not _is_next(":"):
+            return ""
         index += 1
 
         start_index = index
-        while index < size and capture[index] != '}':
+        while index < size and capture[index] != "}":
             index += 1
 
         if index == start_index:
-            _invalid('empty captured regexp')
+            _invalid("empty captured regexp")
 
         return glob2re(capture[start_index:index])
 
     def _parse_two_stars() -> None:
-        name = _parse_name('}')
-        regexp = _parse_regexp() or '.*'
+        name = _parse_name("}")
+        regexp = _parse_regexp() or ".*"
         _expect_close()
 
         nonlocal capture, index, size, results
-        if results and results[-1] == '/' and index < size and capture[index] == '/':
+        if results and results[-1] == "/" and index < size and capture[index] == "/":
             index += 1
-            _append_regexp(name, regexp, '(?:', '/)?')
+            _append_regexp(name, regexp, "(?:", "/)?")
         else:
             _append_regexp(name, regexp)
 
     def _parse_one_star() -> None:
-        name = _parse_name(':}')
-        regexp = _parse_regexp() or '[^/]*'
+        name = _parse_name(":}")
+        regexp = _parse_regexp() or "[^/]*"
         _expect_close()
         _append_regexp(name, regexp)
 
     def _parse_no_star() -> None:
-        results.append('{')
-        results.append(_parse_name(':}'))
-        _regexp = _parse_regexp() or '[^/]*'
+        results.append("{")
+        results.append(_parse_name(":}"))
         _expect_close()
-        results.append('}')
+        results.append("}")
 
-    def _append_regexp(name: str, regexp: str, prefix: str = '', suffix: str = '') -> None:
+    def _append_regexp(name: str, regexp: str, prefix: str = "", suffix: str = "") -> None:
         nonlocal results
         results.append(prefix)
-        results.append('(?P<')
+        results.append("(?P<")
         results.append(name)
-        results.append('>')
+        results.append(">")
         results.append(regexp)
-        results.append(')')
+        results.append(")")
         results.append(suffix)
 
     while index < size:
         char = capture[index]
         index += 1
 
-        if char == '}' and _is_next('}'):
-            results.append('}}')
+        if char == "}" and _is_next("}"):
+            results.append("}}")
             index += 1
 
-        elif char == '{' and _is_next('{'):
-            results.append('{{')
+        elif char == "{" and _is_next("{"):
+            results.append("{{")
             index += 1
 
-        elif char == '{' and _is_next('*'):
+        elif char == "{" and _is_next("*"):
             index += 1
-            if _is_next('*'):
+            if _is_next("*"):
                 index += 1
                 _parse_two_stars()
             else:
                 _parse_one_star()
 
-        elif char == '{':
+        elif char == "{":
             _parse_no_star()
 
-        elif char in '{}/':
+        elif char in "{}/":
             results.append(char)
 
         else:
             results.append(re.escape(char))
 
-    return ''.join(results)
+    return "".join(results)
 
 
 def capture2glob(capture: str) -> str:  # pylint: disable=too-many-statements
@@ -285,7 +275,7 @@ def capture2glob(capture: str) -> str:  # pylint: disable=too-many-statements
         nonlocal capture, index, size
         return index < size and capture[index] == expected
 
-    def _invalid(reason: str = '') -> None:
+    def _invalid(reason: str = "") -> None:
         nonlocal capture, index
         no_additional_complaints()
         raise RuntimeError(f'Invalid capture pattern:\n{capture}\n{index * " "}^ {reason}')
@@ -294,14 +284,14 @@ def capture2glob(capture: str) -> str:  # pylint: disable=too-many-statements
         nonlocal capture, index, size
         while index < size and capture[index] not in terminators:
             index += 1
-        if index < size and capture[index] == ':':
+        if index < size and capture[index] == ":":
             index += 1
             start_index = index
-            while index < size and capture[index] != '}':
+            while index < size and capture[index] != "}":
                 index += 1
             glob = capture[start_index:index]
-        if not _is_next('}'):
-            _invalid('missing }')
+        if not _is_next("}"):
+            _invalid("missing }")
         index += 1
         results.append(glob)
 
@@ -309,26 +299,26 @@ def capture2glob(capture: str) -> str:  # pylint: disable=too-many-statements
         char = capture[index]
         index += 1
 
-        if char == '}' and _is_next('}'):
-            results.append('}')
+        if char == "}" and _is_next("}"):
+            results.append("}")
             index += 1
 
-        elif char == '{' and _is_next('{'):
-            results.append('{')
+        elif char == "{" and _is_next("{"):
+            results.append("{")
             index += 1
 
-        elif char == '{' and _is_next('*'):
+        elif char == "{" and _is_next("*"):
             index += 1
-            if _is_next('*'):
+            if _is_next("*"):
                 index += 1
-                _parse_glob('**', '}')
+                _parse_glob("**", "}")
             else:
-                _parse_glob('*', ':}')
+                _parse_glob("*", ":}")
 
         else:
             results.append(char)
 
-    return ''.join(results)
+    return "".join(results)
 
 
 def _fmt_capture(kwargs: Dict[str, Any], capture: str) -> str:  # pylint: disable=too-many-statements
@@ -340,14 +330,14 @@ def _fmt_capture(kwargs: Dict[str, Any], capture: str) -> str:  # pylint: disabl
         nonlocal capture, index, size
         return index < size and capture[index] == expected
 
-    def _invalid(reason: str = '') -> None:
+    def _invalid(reason: str = "") -> None:
         nonlocal capture, index
         no_additional_complaints()
         raise RuntimeError(f'Invalid capture pattern:\n{capture}\n{index * " "}^ {reason}')
 
     def _expect_close() -> None:
-        if not _is_next('}'):
-            _invalid('missing }')
+        if not _is_next("}"):
+            _invalid("missing }")
         nonlocal index
         index += 1
 
@@ -355,18 +345,18 @@ def _fmt_capture(kwargs: Dict[str, Any], capture: str) -> str:  # pylint: disabl
         nonlocal capture, index, size
         start_index = index
         while index < size and capture[index] not in terminators:
-            if capture[index] != '_' and not capture[index].isalnum():
-                _invalid('invalid captured name character')
+            if capture[index] != "_" and not capture[index].isalnum():
+                _invalid("invalid captured name character")
             index += 1
         if index == start_index:
-            _invalid('empty captured name')
+            _invalid("empty captured name")
         return capture[start_index:index]
 
     def _parse_regexp(to_copy: bool) -> None:
         nonlocal capture, index, size
 
         start_index = index
-        while index < size and capture[index] != '}':
+        while index < size and capture[index] != "}":
             index += 1
 
         if to_copy:
@@ -376,36 +366,36 @@ def _fmt_capture(kwargs: Dict[str, Any], capture: str) -> str:  # pylint: disabl
         char = capture[index]
         index += 1
 
-        if char == '}' and _is_next('}'):
-            results.append('}}')
+        if char == "}" and _is_next("}"):
+            results.append("}}")
             index += 1
 
-        elif char == '{' and _is_next('{'):
-            results.append('{{')
+        elif char == "{" and _is_next("{"):
+            results.append("{{")
             index += 1
 
-        elif char == '{':
+        elif char == "{":
             stars = 0
-            while _is_next('*'):
+            while _is_next("*"):
                 index += 1
                 stars += 1
-            name = _parse_name(':}')
+            name = _parse_name(":}")
             if name in kwargs:
-                results.append(kwargs[name].replace('{', '{{').replace('}', '}}'))
+                results.append(kwargs[name].replace("{", "{{").replace("}", "}}"))
                 _parse_regexp(False)
                 _expect_close()
             else:
-                results.append('{')
-                results.append(stars * '*')
+                results.append("{")
+                results.append(stars * "*")
                 results.append(name)
                 _parse_regexp(True)
                 _expect_close()
-                results.append('}')
+                results.append("}")
 
         else:
             results.append(char)
 
-    return ''.join(results)
+    return "".join(results)
 
 
 def glob2re(glob: str) -> str:  # pylint: disable=too-many-branches
@@ -423,64 +413,64 @@ def glob2re(glob: str) -> str:  # pylint: disable=too-many-branches
         char = glob[index]
         index += 1
 
-        if char == '*':
-            if index < size and glob[index] == '*':
+        if char == "*":
+            if index < size and glob[index] == "*":
                 index += 1
-                if results and results[-1] == '/' and index < size and glob[index] == '/':
-                    results.append('(.*/)?')
+                if results and results[-1] == "/" and index < size and glob[index] == "/":
+                    results.append("(.*/)?")
                     index += 1
                 else:
-                    results.append('.*')
+                    results.append(".*")
             else:
-                results.append('[^/]*')
+                results.append("[^/]*")
 
-        elif char == '?':
-            results.append('[^/]')
+        elif char == "?":
+            results.append("[^/]")
 
-        elif char == '[':
+        elif char == "[":
             end_index = index
-            while end_index < size and glob[end_index] != ']':
+            while end_index < size and glob[end_index] != "]":
                 end_index += 1
 
             if end_index >= size:
-                results.append('\\[')
+                results.append("\\[")
 
             else:
-                characters = glob[index:end_index].replace('\\', '\\\\')
+                characters = glob[index:end_index].replace("\\", "\\\\")
                 index = end_index + 1
 
-                results.append('[')
+                results.append("[")
 
-                if characters[0] == '!':
-                    results.append('^/')
+                if characters[0] == "!":
+                    results.append("^/")
                     characters = characters[1:]
-                elif characters[0] == '^':
-                    results.append('\\')
+                elif characters[0] == "^":
+                    results.append("\\")
 
                 results.append(characters)
-                results.append(']')
+                results.append("]")
 
-        elif char in '{}/':
+        elif char in "{}/":
             results.append(char)
 
         else:
             results.append(re.escape(char))
 
-    return ''.join(results)
+    return "".join(results)
 
 
 def _load_glob(loader: Loader, node: Node) -> Pattern:
     return re.compile(glob2re(loader.construct_scalar(node)))
 
 
-yaml.add_constructor('!g', _load_glob, Loader=yaml.FullLoader)
+yaml.add_constructor("!g", _load_glob, Loader=yaml.FullLoader)
 
 
 def _load_regexp(loader: Loader, node: Node) -> Pattern:
     return re.compile(loader.construct_scalar(node))
 
 
-yaml.add_constructor('!r', _load_regexp, Loader=yaml.FullLoader)
+yaml.add_constructor("!r", _load_regexp, Loader=yaml.FullLoader)
 
 #: An arbitrarily nested list of strings.
 #:
@@ -489,20 +479,24 @@ yaml.add_constructor('!r', _load_regexp, Loader=yaml.FullLoader)
 #: concrete type (``str``, ``List[str]``, etc.). Instead use ``Strings`` as an argument type, for
 #: functions that :py:func:`dynamake.flatten` their arguments. This will allow the callers to easily
 #: nest lists without worrying about flattening themselves.
-Strings = Union[None,
-                str,
-                Sequence[str],
-                Sequence[Sequence[str]],
-                Sequence[Sequence[Sequence[str]]],
-                Sequence[Sequence[Sequence[Sequence[str]]]]]
+Strings = Union[
+    None,
+    str,
+    Sequence[str],
+    Sequence[Sequence[str]],
+    Sequence[Sequence[Sequence[str]]],
+    Sequence[Sequence[Sequence[Sequence[str]]]],
+]
 
 
 #: Same as ``Strings`` but without the actual ``str`` type, for ``overload`` specifications.
-NotString = Union[None,
-                  Sequence[str],
-                  Sequence[Sequence[str]],
-                  Sequence[Sequence[Sequence[str]]],
-                  Sequence[Sequence[Sequence[Sequence[str]]]]]
+NotString = Union[
+    None,
+    Sequence[str],
+    Sequence[Sequence[str]],
+    Sequence[Sequence[Sequence[str]]],
+    Sequence[Sequence[Sequence[Sequence[str]]]],
+]
 
 
 def each_string(*args: Strings) -> Iterator[str]:
@@ -542,7 +536,7 @@ class AnnotatedStr(str):
 
 
 def _dump_str(dumper: Dumper, data: AnnotatedStr) -> Node:
-    return dumper.represent_scalar('tag:yaml.org,2002:str', data)
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
 
 
 yaml.add_representer(AnnotatedStr, _dump_str)
@@ -594,20 +588,24 @@ def is_precious(string: str) -> bool:
 
 # pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
 
-@overload
-def fmt_capture(wildcards: Dict[str, Any], pattern: str) -> str: ...
-
 
 @overload
-def fmt_capture(wildcards: Dict[str, Any], not_pattern: NotString) -> List[str]: ...
+def fmt_capture(wildcards: Dict[str, Any], pattern: str) -> str:
+    ...
 
 
 @overload
-def fmt_capture(wildcards: Dict[str, Any],
-                first: Strings, second: Strings, *patterns: Strings) -> List[str]: ...
+def fmt_capture(wildcards: Dict[str, Any], not_pattern: NotString) -> List[str]:
+    ...
+
+
+@overload
+def fmt_capture(wildcards: Dict[str, Any], first: Strings, second: Strings, *patterns: Strings) -> List[str]:
+    ...
 
 
 # pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
 
 def fmt_capture(kwargs: Any, *patterns: Any) -> Any:  # type: ignore
     """
@@ -617,8 +615,7 @@ def fmt_capture(kwargs: Any, *patterns: Any) -> Any:  # type: ignore
     would be confused by the ``{*name}`` captures in the pattern(s). In contrast, ``fmt_capture``
     will expand such directives, as long as the ``name`` does not start with ``_``.
     """
-    results = [copy_annotations(pattern, _fmt_capture(kwargs, pattern))
-               for pattern in each_string(*patterns)]
+    results = [copy_annotations(pattern, _fmt_capture(kwargs, pattern)) for pattern in each_string(*patterns)]
     if len(patterns) == 1 and isinstance(patterns[0], str):
         assert len(results) == 1
         return results[0]
@@ -629,15 +626,19 @@ def fmt_capture(kwargs: Any, *patterns: Any) -> Any:  # type: ignore
 
 
 @overload
-def optional(pattern: str) -> str: ...
+def optional(pattern: str) -> str:
+    ...
 
 
 @overload
-def optional(not_string: NotString) -> List[str]: ...
+def optional(not_string: NotString) -> List[str]:
+    ...
 
 
 @overload
-def optional(first: Strings, second: Strings, *patterns: Strings) -> List[str]: ...
+def optional(first: Strings, second: Strings, *patterns: Strings) -> List[str]:
+    ...
+
 
 # pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
 
@@ -664,19 +665,23 @@ def optional(*patterns: Any) -> Any:  # type: ignore
         return strings[0]
     return strings
 
+
 # pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
 
 
 @overload
-def exists(pattern: str) -> str: ...
+def exists(pattern: str) -> str:
+    ...
 
 
 @overload
-def exists(not_string: NotString) -> List[str]: ...
+def exists(not_string: NotString) -> List[str]:
+    ...
 
 
 @overload
-def exists(first: Strings, second: Strings, *patterns: Strings) -> List[str]: ...
+def exists(first: Strings, second: Strings, *patterns: Strings) -> List[str]:
+    ...
 
 
 # pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
@@ -707,19 +712,24 @@ def exists(*patterns: Any) -> Any:  # type: ignore
 
 # pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
 
-@overload
-def phony(pattern: str) -> str: ...
-
 
 @overload
-def phony(not_string: NotString) -> List[str]: ...
+def phony(pattern: str) -> str:
+    ...
 
 
 @overload
-def phony(first: Strings, second: Strings, *patterns: Strings) -> List[str]: ...
+def phony(not_string: NotString) -> List[str]:
+    ...
+
+
+@overload
+def phony(first: Strings, second: Strings, *patterns: Strings) -> List[str]:
+    ...
 
 
 # pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
+
 
 def phony(*patterns: Any) -> Any:  # type: ignore
     """
@@ -742,16 +752,21 @@ def phony(*patterns: Any) -> Any:  # type: ignore
 
 # pylint: disable=missing-docstring,pointless-statement,multiple-statements,unused-argument
 
-@overload
-def precious(pattern: str) -> str: ...
-
 
 @overload
-def precious(not_string: NotString) -> List[str]: ...
+def precious(pattern: str) -> str:
+    ...
 
 
 @overload
-def precious(first: Strings, second: Strings, *patterns: Strings) -> List[str]: ...
+def precious(not_string: NotString) -> List[str]:
+    ...
+
+
+@overload
+def precious(first: Strings, second: Strings, *patterns: Strings) -> List[str]:
+    ...
+
 
 # pylint: enable=missing-docstring,pointless-statement,multiple-statements,unused-argument
 
@@ -819,9 +834,9 @@ class NonOptionalException(Exception):
         Create a new exception when no disk files matched the pattern.
         """
         if capture == glob:
-            super().__init__(f'No files matched the non-optional glob pattern: {glob}')
+            super().__init__(f"No files matched the non-optional glob pattern: {glob}")
         else:
-            super().__init__(f'No files matched the non-optional glob: {glob} pattern: {capture}')
+            super().__init__(f"No files matched the non-optional glob: {glob} pattern: {capture}")
 
         #: The glob pattern that failed to match.
         self.glob = glob
@@ -829,11 +844,11 @@ class NonOptionalException(Exception):
 
 def glob_capture(*patterns: Strings) -> Captured:
     """
-    Given capture pattern, return the :py:class:`dynamake.pattern.Captured` information (paths and
-    captured values).
+    Given capture pattern, return the :py:class:`dynamake.Captured` information (paths and captured
+    values).
 
-    Parameters
-    ----------
+    **Parameters**
+
     capture
         The pattern may contain ``...{*captured_name}...``, as well as normal
         ``glob`` patterns (``*``, ``**``). The ``...{name}..`` is expanded using the provided
@@ -861,8 +876,8 @@ def glob_capture(*patterns: Strings) -> Captured:
         If a pattern is not annotated with :py:func:`dynamake.optional` and it matches no existing
         files, an error is raised.
 
-    Returns
-    -------
+    **Returns**
+
     Captured
         The list of existing file paths that match the patterns, and the list of dictionaries with
         the captured values for each such path. The annotations (:py:class:`dynamake.AnnotatedStr`)
@@ -918,12 +933,12 @@ def _capture_string(pattern: str, regexp: Pattern, string: str) -> Dict[str, Any
     match = re.fullmatch(regexp, string)
     if not match:
         no_additional_complaints()
-        raise RuntimeError(f'The string: {string} does not match the capture pattern: {pattern}')
+        raise RuntimeError(f"The string: {string} does not match the capture pattern: {pattern}")
 
     values = match.groupdict()
     for name, value in values.items():
-        if name and name[0] != '_':
-            values[name] = str(value or '')
+        if name and name[0] != "_":
+            values[name] = str(value or "")
     return values
 
 
@@ -943,24 +958,26 @@ def str2bool(string: str) -> bool:
     """
     Parse a boolean command line argument.
     """
-    if string.lower() in ['yes', 'true', 't', 'y', '1']:
+    if string.lower() in ["yes", "true", "t", "y", "1"]:
         return True
-    if string.lower() in ['no', 'false', 'f', 'n', '0']:
+    if string.lower() in ["no", "false", "f", "n", "0"]:
         return False
-    raise argparse.ArgumentTypeError('Boolean value expected.')
+    raise argparse.ArgumentTypeError("Boolean value expected.")
 
 
 def str2enum(enum: type) -> Callable[[str], Any]:
     """
     Return a parser for an enum command line argument.
     """
+
     def _parse(string: str) -> Any:
         try:
             return enum[string.lower()]  # type: ignore
         except BaseException:
             raise argparse.ArgumentTypeError(  # pylint: disable=raise-missing-from
-                'Expected one of: '
-                + ' '.join([value.name for value in enum]))  # type: ignore
+                "Expected one of: " + " ".join([value.name for value in enum])  # type: ignore
+            )
+
     return _parse
 
 
@@ -969,12 +986,14 @@ class RangeParam:
     A range for a numeric argument.
     """
 
-    def __init__(self,  # pylint: disable=too-many-arguments
-                 min: Optional[float] = None,
-                 max: Optional[float] = None,
-                 step: Optional[int] = None,  # pylint: disable=redefined-outer-name
-                 include_min: bool = True,
-                 include_max: bool = True) -> None:
+    def __init__(  # pylint: disable=too-many-arguments
+        self,
+        min: Optional[float] = None,
+        max: Optional[float] = None,
+        step: Optional[int] = None,  # pylint: disable=redefined-outer-name
+        include_min: bool = True,
+        include_max: bool = True,
+    ) -> None:
         """
         Create a range for numeric arguments.
         """
@@ -1029,76 +1048,81 @@ class RangeParam:
         if self.min is not None:
             text.append(str(self.min))
             if self.include_min:
-                text.append('<=')
+                text.append("<=")
             else:
-                text.append('<')
+                text.append("<")
 
         if self.min is not None or self.max is not None:
-            text.append('value')
+            text.append("value")
 
         if self.max is not None:
             if self.include_max:
-                text.append('<=')
+                text.append("<=")
             else:
-                text.append('<')
+                text.append("<")
             text.append(str(self.max))
 
         if self.step is not None:
             if self.min is not None or self.max is not None:
-                text.append('and')
-            text.extend(['value %', str(self.step), '=='])
+                text.append("and")
+            text.extend(["value %", str(self.step), "=="])
             if self.min is None:
-                text.append('0')
+                text.append("0")
             else:
                 text.append(str(self.min % self.step))
 
-        return ' '.join(text)
+        return " ".join(text)
 
 
-def _str2range(string: str, parser: Callable[[str], Union[int, float]], range: RangeParam) \
-        -> Union[int, float]:
+def _str2range(string: str, parser: Callable[[str], Union[int, float]], range: RangeParam) -> Union[int, float]:
     try:
         value = parser(string)
     except BaseException:
-        raise argparse.ArgumentTypeError(  # pylint: disable=raise-missing-from
-            f'Expected {parser.__name__} value')
+        raise argparse.ArgumentTypeError(f"Expected {parser.__name__} value")  # pylint: disable=raise-missing-from
 
     if not range.is_valid(value):
-        raise argparse.ArgumentTypeError(f'Expected {parser.__name__} value, '
-                                         f'where {range.text()}')
+        raise argparse.ArgumentTypeError(f"Expected {parser.__name__} value, " f"where {range.text()}")
 
     return value
 
 
-def str2float(min: Optional[float] = None,
-              max: Optional[float] = None,
-              step: Optional[int] = None,  # pylint: disable=redefined-outer-name
-              include_min: bool = True,
-              include_max: bool = True) -> Callable[[str], float]:
+def str2float(
+    min: Optional[float] = None,
+    max: Optional[float] = None,
+    step: Optional[int] = None,  # pylint: disable=redefined-outer-name
+    include_min: bool = True,
+    include_max: bool = True,
+) -> Callable[[str], float]:
     """
     Return a parser that accepts a float argument in the specified range.
     """
+
     def _parse(string: str) -> float:
-        return _str2range(string, float,
-                          RangeParam(min=min, max=max, step=step,
-                                     include_min=include_min,
-                                     include_max=include_max))
+        return _str2range(
+            string, float, RangeParam(min=min, max=max, step=step, include_min=include_min, include_max=include_max)
+        )
+
     return _parse
 
 
-def str2int(min: Optional[int] = None,
-            max: Optional[int] = None,
-            step: Optional[int] = None,  # pylint: disable=redefined-outer-name
-            include_min: bool = True,
-            include_max: bool = True) -> Callable[[str], int]:
+def str2int(
+    min: Optional[int] = None,
+    max: Optional[int] = None,
+    step: Optional[int] = None,  # pylint: disable=redefined-outer-name
+    include_min: bool = True,
+    include_max: bool = True,
+) -> Callable[[str], int]:
     """
     Return a parser that accepts an int argument in the specified range.
     """
+
     def _parse(string: str) -> int:
-        return _str2range(string, int,  # type: ignore
-                          RangeParam(min=min, max=max, step=step,
-                                     include_min=include_min,
-                                     include_max=include_max))
+        return _str2range(  # type: ignore
+            string,
+            int,
+            RangeParam(min=min, max=max, step=step, include_min=include_min, include_max=include_max),
+        )
+
     return _parse
 
 
@@ -1106,9 +1130,10 @@ def str2choice(options: List[str]) -> Callable[[str], str]:
     """
     Return a parser that accepts a string argument which is one of the options.
     """
+
     def _parse(string: str) -> str:
         if string not in options:
-            raise argparse.ArgumentTypeError('Expected one of: ' + ' '.join(options))
+            raise argparse.ArgumentTypeError("Expected one of: " + " ".join(options))
         return string
 
     return _parse
@@ -1118,8 +1143,10 @@ def str2list(parser: Callable[[str], Any]) -> Callable[[str], List[Any]]:
     """
     Parse an argument which is a list of strings, where each must be parsed on its own.
     """
+
     def _parse(string: str) -> List[Any]:
         return [parser(entry) for entry in string.split()]
+
     return _parse
 
 
@@ -1127,10 +1154,12 @@ def str2optional(parser: Callable[[str], Any]) -> Callable[[str], Optional[Any]]
     """
     Parse an argument which also takes the special value ``None``.
     """
+
     def _parse(string: str) -> Optional[Any]:
-        if string.lower() == 'none':
+        if string.lower() == "none":
             return None
         return parser(string)
+
     return _parse
 
 
@@ -1141,12 +1170,12 @@ def clean_path(path: str) -> str:
     We do not use absolute paths everywhere (as that would mess up the match patterns). Instead we
     just convert each ``//`` to a single ``/`` and remove any final ``/``. Perhaps more is needed.
     """
-    previous_path = ''
+    previous_path = ""
     next_path = path
     while next_path != previous_path:
         previous_path = next_path
-        next_path = copy_annotations(path, next_path.replace('//', '/'))
-    while next_path.endswith('/'):
+        next_path = copy_annotations(path, next_path.replace("//", "/"))
+    while next_path.endswith("/"):
         next_path = next_path[:-1]
     return next_path
 
@@ -1295,25 +1324,24 @@ class Stat:
 
 
 #: The default module to load for steps and parameter definitions.
-DEFAULT_MODULE = 'DynaMake'
+DEFAULT_MODULE = "DynaMake"
 
 #: The default parameter configuration YAML file to load.
-DEFAULT_CONFIG = 'DynaMake.yaml'
+DEFAULT_CONFIG = "DynaMake.yaml"
 
 _is_test: bool = False
 
 
 def _dict_to_str(values: Dict[str, Any]) -> str:
-    return ','.join([f'{quote_plus(name)}={quote_plus(str(value))}'
-                     for name, value in sorted(values.items())])
+    return ",".join([f"{quote_plus(name)}={quote_plus(str(value))}" for name, value in sorted(values.items())])
 
 
 def _location(function: Any) -> str:
     if _is_test:
-        return f'{function.__module__}.{function.__qualname__}'
-    return (f'{getsourcefile(function)}:'  # pragma: no cover
-            f'{getsourcelines(function)[1]}:'
-            f'{function.__qualname__}')
+        return f"{function.__module__}.{function.__qualname__}"
+    return (
+        f"{getsourcefile(function)}:" f"{getsourcelines(function)[1]}:" f"{function.__qualname__}"  # pragma: no cover
+    )
 
 
 def exec_file(path: str, global_vars: Dict[str, Any]) -> None:
@@ -1327,7 +1355,7 @@ def exec_file(path: str, global_vars: Dict[str, Any]) -> None:
     "With great power comes great responsibility", etc.
     """
     with open(path) as file:
-        exec(compile(file.read(), path, 'exec'), global_vars)  # pylint: disable=exec-used
+        exec(compile(file.read(), path, "exec"), global_vars)  # pylint: disable=exec-used
 
 
 class Parameter:  # pylint: disable=too-many-instance-attributes
@@ -1336,7 +1364,7 @@ class Parameter:  # pylint: disable=too-many-instance-attributes
     """
 
     #: The current known parameters.
-    by_name: Dict[str, 'Parameter']
+    by_name: Dict[str, "Parameter"]
 
     @staticmethod
     def reset() -> None:
@@ -1345,9 +1373,17 @@ class Parameter:  # pylint: disable=too-many-instance-attributes
         """
         Parameter.by_name = {}
 
-    def __init__(self, *, name: str, default: Any, parser: Optional[Callable[[str], Any]] = None,
-                 description: str, short: Optional[str] = None, order: Optional[int] = None,
-                 metavar: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        *,
+        name: str,
+        default: Any,
+        parser: Optional[Callable[[str], Any]] = None,
+        description: str,
+        short: Optional[str] = None,
+        order: Optional[int] = None,
+        metavar: Optional[str] = None,
+    ) -> None:
         """
         Create and register a parameter description.
         """
@@ -1377,7 +1413,7 @@ class Parameter:  # pylint: disable=too-many-instance-attributes
         self.value = default
 
         if name in Parameter.by_name:
-            raise RuntimeError(f'Multiple definitions for the parameter: {name}')
+            raise RuntimeError(f"Multiple definitions for the parameter: {name}")
         Parameter.by_name[name] = self
 
     @staticmethod
@@ -1386,24 +1422,24 @@ class Parameter:  # pylint: disable=too-many-instance-attributes
         Add a command line flag for each parameter to the parser to allow
         overriding parameter values directly from the command line.
         """
-        parser.add_argument('--config', '-c', metavar='FILE', action='append',
-                            help='Load a parameters configuration YAML file')
-        parameters = [(parameter.order, parameter.name, parameter)
-                      for parameter in Parameter.by_name.values()]
+        parser.add_argument(
+            "--config", "-c", metavar="FILE", action="append", help="Load a parameters configuration YAML file"
+        )
+        parameters = [(parameter.order, parameter.name, parameter) for parameter in Parameter.by_name.values()]
         for _, _, parameter in sorted(parameters):
-            text = parameter.description.replace('%', '%%') + f' (default: {parameter.default})'
+            text = parameter.description.replace("%", "%%") + f" (default: {parameter.default})"
             if parameter.parser is None:
                 if parameter.short:
-                    parser.add_argument('--' + parameter.name, '-' + parameter.short,
-                                        help=text, action='store_true')
+                    parser.add_argument("--" + parameter.name, "-" + parameter.short, help=text, action="store_true")
                 else:
-                    parser.add_argument('--' + parameter.name, help=text, action='store_true')
+                    parser.add_argument("--" + parameter.name, help=text, action="store_true")
             else:
                 if parameter.short:
-                    parser.add_argument('--' + parameter.name, '-' + parameter.short,
-                                        help=text, metavar=parameter.metavar)
+                    parser.add_argument(
+                        "--" + parameter.name, "-" + parameter.short, help=text, metavar=parameter.metavar
+                    )
                 else:
-                    parser.add_argument('--' + parameter.name, help=text, metavar=parameter.metavar)
+                    parser.add_argument("--" + parameter.name, help=text, metavar=parameter.metavar)
 
     @staticmethod
     def parse_args(args: Namespace) -> None:
@@ -1413,7 +1449,7 @@ class Parameter:  # pylint: disable=too-many-instance-attributes
         """
         if os.path.exists(DEFAULT_CONFIG):
             Parameter.load_config(DEFAULT_CONFIG)
-        for path in (args.config or []):
+        for path in args.config or []:
             Parameter.load_config(path)
 
         for name, parameter in Parameter.by_name.items():
@@ -1427,30 +1463,29 @@ class Parameter:  # pylint: disable=too-many-instance-attributes
                         parameter.value = parameter.parser(value)
                     except BaseException:
                         raise RuntimeError(  # pylint: disable=raise-missing-from
-                            f'Invalid value: {vars(args)[name]} for the parameter: {name}')
+                            f"Invalid value: {vars(args)[name]} for the parameter: {name}"
+                        )
 
-        name = sys.argv[0].split('/')[-1]
+        name = sys.argv[0].split("/")[-1]
 
     @staticmethod
     def load_config(path: str) -> None:
         """
         Load a configuration file.
         """
-        with open(path, 'r') as file:
+        with open(path, "r") as file:
             data = yaml.safe_load(file.read())
 
         if data is None:
             data = {}
 
         if not isinstance(data, dict):
-            raise RuntimeError(f'The configuration file: {path} '
-                               f'does not contain a top-level mapping')
+            raise RuntimeError(f"The configuration file: {path} " f"does not contain a top-level mapping")
 
         for name, value in data.items():
             parameter = Parameter.by_name.get(name)
             if parameter is None:
-                raise RuntimeError(f'Unknown parameter: {name} '
-                                   f'specified in the configuration file: {path}')
+                raise RuntimeError(f"Unknown parameter: {name} " f"specified in the configuration file: {path}")
 
             if isinstance(value, str):
                 assert parameter.parser is not None
@@ -1458,9 +1493,10 @@ class Parameter:  # pylint: disable=too-many-instance-attributes
                     value = parameter.parser(value)
                 except BaseException:
                     raise RuntimeError(  # pylint: disable=raise-missing-from
-                        f'Invalid value: {value} '
-                        f'for the parameter: {name} '
-                        f'specified in the configuration file: {path}')
+                        f"Invalid value: {value} "
+                        f"for the parameter: {name} "
+                        f"specified in the configuration file: {path}"
+                    )
 
             parameter.value = value
 
@@ -1534,11 +1570,11 @@ default_shell_prefix: Parameter
 def _define_parameters() -> None:
     # pylint: disable=invalid-name
 
-    global jobs
+    global jobs  # pylint: disable=invalid-name
     jobs = Parameter(  #
-        name='jobs',
-        short='j',
-        metavar='JOBS',
+        name="jobs",
+        short="j",
+        metavar="JOBS",
         default=-1,
         parser=str2float(),
         description="""
@@ -1546,120 +1582,128 @@ def _define_parameters() -> None:
             1 for serial jobs execution, 2 for two parallel jobs, etc. A negative
             value specifies a fraction of the logical processors in the system
             (using 1/-value, e.g. -2 for one per two logical processors).
-        """)
+        """,
+    )
 
-    global log_level
+    global log_level  # pylint: disable=invalid-name
     log_level = Parameter(  #
-        name='log_level',
-        short='ll',
-        metavar='STR',
-        default='STDOUT',
-        parser=str,
-        description='The log level to use')
+        name="log_level", short="ll", metavar="STR", default="STDOUT", parser=str, description="The log level to use"
+    )
 
-    global log_skipped_actions
+    global log_skipped_actions  # pylint: disable=invalid-name
     log_skipped_actions = Parameter(  #
-        name='log_skipped_actions',
-        short='lsa',
-        metavar='BOOL',
+        name="log_skipped_actions",
+        short="lsa",
+        metavar="BOOL",
         default=False,
         parser=str2bool,
-        description='Whether to log (level INFO) skipped actions')
+        description="Whether to log (level INFO) skipped actions",
+    )
 
-    global no_actions
+    global no_actions  # pylint: disable=invalid-name
     no_actions = Parameter(  #
-        name='no_actions',
-        short='n',
+        name="no_actions",
+        short="n",
         default=False,
         parser=None,
-        description='Whether to dry-run, that is not actually execute actions')
+        description="Whether to dry-run, that is not actually execute actions",
+    )
 
-    global rebuild_changed_actions
+    global rebuild_changed_actions  # pylint: disable=invalid-name
     rebuild_changed_actions = Parameter(  #
-        name='rebuild_changed_actions',
-        short='rca',
-        metavar='BOOL',
+        name="rebuild_changed_actions",
+        short="rca",
+        metavar="BOOL",
         default=True,
         parser=str2bool,
-        description='Whether to rebuild outputs if the actions have changed')
+        description="Whether to rebuild outputs if the actions have changed",
+    )
 
-    global persistent_directory
+    global persistent_directory  # pylint: disable=invalid-name
     persistent_directory = Parameter(  #
-        name='persistent_directory',
-        short='pp',
-        metavar='STR',
-        default='.dynamake',
+        name="persistent_directory",
+        short="pp",
+        metavar="STR",
+        default=".dynamake",
         parser=str,
         description="""
             The directory to keep persistent data in, if
             rebuild_changed_actions is  True.
-        """)
+        """,
+    )
 
-    global failure_aborts_build
+    global failure_aborts_build  # pylint: disable=invalid-name
     failure_aborts_build = Parameter(  #
-        name='failure_aborts_build',
-        short='fab',
-        metavar='BOOL',
+        name="failure_aborts_build",
+        short="fab",
+        metavar="BOOL",
         default=True,
         parser=str2bool,
-        description='Whether to stop the script if any action fails')
+        description="Whether to stop the script if any action fails",
+    )
 
-    global remove_stale_outputs
+    global remove_stale_outputs  # pylint: disable=invalid-name
     remove_stale_outputs = Parameter(  #
-        name='remove_stale_outputs',
-        short='dso',
-        metavar='BOOL',
+        name="remove_stale_outputs",
+        short="dso",
+        metavar="BOOL",
         default=True,
         parser=str2bool,
-        description='Whether to remove old output files before executing an action')
+        description="Whether to remove old output files before executing an action",
+    )
 
-    global touch_success_outputs
+    global touch_success_outputs  # pylint: disable=invalid-name
     touch_success_outputs = Parameter(  #
-        name='touch_success_outputs',
-        short='tso',
-        metavar='BOOL',
+        name="touch_success_outputs",
+        short="tso",
+        metavar="BOOL",
         default=False,
         parser=str2bool,
         description="""
             Whether to touch output files on a successful action to ensure they
             are newer than the input file(s)
-        """)
+        """,
+    )
 
-    global remove_failed_outputs
+    global remove_failed_outputs  # pylint: disable=invalid-name
     remove_failed_outputs = Parameter(  #
-        name='remove_failed_outputs',
-        short='dfo',
-        metavar='BOOL',
+        name="remove_failed_outputs",
+        short="dfo",
+        metavar="BOOL",
         default=True,
         parser=str2bool,
-        description='Whether to remove output files on a failing action')
+        description="Whether to remove output files on a failing action",
+    )
 
-    global remove_empty_directories
+    global remove_empty_directories  # pylint: disable=invalid-name
     remove_empty_directories = Parameter(  #
-        name='remove_empty_directories',
-        short='ded',
-        metavar='BOOL',
+        name="remove_empty_directories",
+        short="ded",
+        metavar="BOOL",
         default=False,
         parser=str2bool,
-        description='Whether to remove empty directories when deleting the last file in them')
+        description="Whether to remove empty directories when deleting the last file in them",
+    )
 
-    global shell_executable
+    global shell_executable  # pylint: disable=invalid-name
     shell_executable = Parameter(  #
-        name='shell',
-        short='s',
-        metavar='STR',
-        default='/bin/bash',
+        name="shell",
+        short="s",
+        metavar="STR",
+        default="/bin/bash",
         parser=str,
-        description='The shell to use to execute commands.')
+        description="The shell to use to execute commands.",
+    )
 
-    global default_shell_prefix
+    global default_shell_prefix  # pylint: disable=invalid-name
     default_shell_prefix = Parameter(  #
-        name='default_shell_prefix',
-        short='dsp',
-        metavar='STR',
-        default='set -eou pipefail;',
+        name="default_shell_prefix",
+        short="dsp",
+        metavar="STR",
+        default="set -eou pipefail;",
         parser=str,
-        description='Default prefix to add to shell actions')
+        description="Default prefix to add to shell actions",
+    )
     # pylint: enable=invalid-name
 
 
@@ -1705,14 +1749,15 @@ class Resources:
             total = Resources.total.get(name)
             if total is None:
                 no_additional_complaints()
-                raise RuntimeError(f'Requested the unknown resource: {name}')
+                raise RuntimeError(f"Requested the unknown resource: {name}")
             if amount == 0 or total <= 0:
                 continue
             if amount < 0:
                 amount = max(total // -amount, 1)
             if amount > total:
-                raise RuntimeError(f'The requested resource: {name} amount: {amount} '
-                                   f'is greater than the total amount: {total}')
+                raise RuntimeError(
+                    f"The requested resource: {name} amount: {amount} " f"is greater than the total amount: {total}"
+                )
             amounts[name] = amount
 
         for name, total in Resources.total.items():
@@ -1768,15 +1813,17 @@ def resource_parameters(**default_amounts: int) -> None:
         if total is None:
             parameter = Parameter.by_name.get(name)
             if parameter is None:
-                raise RuntimeError(f'Unknown resource parameter: {name}')
+                raise RuntimeError(f"Unknown resource parameter: {name}")
             total = int(parameter.value)
             Resources.total[name] = total
             Resources.available[name] = total
 
         if amount > total:
-            raise RuntimeError(f'The default amount: {amount} '
-                               f'of the resource: {name} '
-                               f'is greater than the total amount: {total}')
+            raise RuntimeError(
+                f"The default amount: {amount} "
+                f"of the resource: {name} "
+                f"is greater than the total amount: {total}"
+            )
 
         Resources.default[name] = amount
 
@@ -1795,7 +1842,7 @@ class DryRunException(StepException):
     """
 
     def __init__(self) -> None:
-        super().__init__(self, 'DryRun')
+        super().__init__(self, "DryRun")
 
 
 class RestartException(Exception):
@@ -1810,10 +1857,10 @@ class Step:
     """
 
     #: The current known steps.
-    by_name: Dict[str, 'Step']
+    by_name: Dict[str, "Step"]
 
     #: The step for building any output capture pattern.
-    by_regexp: List[Tuple[Pattern, 'Step']]
+    by_regexp: List[Tuple[Pattern, "Step"]]
 
     _is_finalized: bool
 
@@ -1826,25 +1873,24 @@ class Step:
         Step.by_regexp = []
         Step._is_finalized = False
 
-    def __init__(self, function: Callable,
-                 output: Strings,  # pylint: disable=redefined-outer-name
-                 priority: float) -> None:
+    def __init__(
+        self, function: Callable, output: Strings, priority: float  # pylint: disable=redefined-outer-name
+    ) -> None:
         """
         Register a build step function.
         """
         #: The wrapped function that implements the step.
         self.function = function
 
-        while hasattr(function, '__func__'):
-            function = getattr(function, '__func__')
+        while hasattr(function, "__func__"):
+            function = getattr(function, "__func__")
 
         if Step._is_finalized:
             no_additional_complaints()
-            raise RuntimeError(f'Late registration of the step: {_location(function)}')
+            raise RuntimeError(f"Late registration of the step: {_location(function)}")
 
         if not iscoroutinefunction(function):
-            raise RuntimeError(f'The step function: {_location(function)}'
-                               f' is not a coroutine')
+            raise RuntimeError(f"The step function: {_location(function)}" f" is not a coroutine")
 
         #: The name of the step.
         self.name = function.__name__
@@ -1861,25 +1907,26 @@ class Step:
             Step.by_regexp.append((capture2re(capture), self))
 
         if not self.output:
-            raise RuntimeError(f'The step function: {_location(function)}'
-                               f' specifies no output')
+            raise RuntimeError(f"The step function: {_location(function)}" f" specifies no output")
 
         if self.name in Step.by_name:
             conflicting = Step.by_name[self.name].function
-            raise RuntimeError(f'Conflicting definitions for the step: {self.name} '
-                               f'in both: {_location(conflicting)}'
-                               f' and: {_location(function)}')
+            raise RuntimeError(
+                f"Conflicting definitions for the step: {self.name} "
+                f"in both: {_location(conflicting)}"
+                f" and: {_location(function)}"
+            )
         Step.by_name[self.name] = self
 
 
 def above(name: str, by: float = 1) -> float:  # pylint: disable=invalid-name
-    '''
+    """
     Return a priority which is higher than the priority of the specified step.
-    '''
+    """
     assert by > 0
     step = Step.by_name.get(name)  # pylint: disable=redefined-outer-name
     if step is None:
-        raise RuntimeError(f'Unknown step: {name}')
+        raise RuntimeError(f"Unknown step: {name}")
     return step.priority + by
 
 
@@ -1906,16 +1953,16 @@ class UpToDate:
         """
         data = dict(producer=self.producer)
         if self.mtime_ns > 0:
-            data['mtime'] = str(_datetime_from_nanoseconds(self.mtime_ns))
+            data["mtime"] = str(_datetime_from_nanoseconds(self.mtime_ns))
         return data
 
     @staticmethod
-    def from_data(data: Dict[str, str]) -> 'UpToDate':
+    def from_data(data: Dict[str, str]) -> "UpToDate":
         """
         Load from YAML data.
         """
-        producer = data['producer']
-        mtime_str = data.get('mtime')
+        producer = data["producer"]
+        mtime_str = data.get("mtime")
         if mtime_str is None:
             mtime_ns = 0
         else:
@@ -1931,7 +1978,7 @@ class PersistentAction:
     identical, to trigger rebuild if the list of actions changes.
     """
 
-    def __init__(self, previous: Optional['PersistentAction'] = None) -> None:
+    def __init__(self, previous: Optional["PersistentAction"] = None) -> None:
         #: The executed command.
         self.command: Optional[List[str]] = None
 
@@ -1982,8 +2029,9 @@ class PersistentAction:
         else:
             data = []
 
-        datum: Dict[str, Any] = dict(required={name: up_to_date.into_data()
-                                               for name, up_to_date in self.required.items()})
+        datum: Dict[str, Any] = dict(
+            required={name: up_to_date.into_data() for name, up_to_date in self.required.items()}
+        )
 
         if self.command is None:
             assert self.start is None
@@ -1991,15 +2039,15 @@ class PersistentAction:
         else:
             assert self.start is not None
             assert self.end is not None
-            datum['command'] = self.command
-            datum['start'] = str(self.start)
-            datum['end'] = str(self.end)
+            datum["command"] = self.command
+            datum["start"] = str(self.start)
+            datum["end"] = str(self.end)
 
         data.append(datum)
         return data
 
     @staticmethod
-    def from_data(data: List[Dict[str, Any]]) -> List['PersistentAction']:
+    def from_data(data: List[Dict[str, Any]]) -> List["PersistentAction"]:
         """
         Construct the data from loaded YAML.
         """
@@ -2017,13 +2065,12 @@ class PersistentAction:
             action = PersistentAction()
             actions = [action]
 
-        action.required = {name: UpToDate.from_data(up_to_date)
-                           for name, up_to_date in datum['required'].items()}
+        action.required = {name: UpToDate.from_data(up_to_date) for name, up_to_date in datum["required"].items()}
 
-        if 'command' in datum:
-            action.command = datum['command']
-            action.start = _datetime_from_str(datum['start'])
-            action.end = _datetime_from_str(datum['end'])
+        if "command" in datum:
+            action.command = datum["command"]
+            action.start = _datetime_from_str(datum["start"])
+            action.end = _datetime_from_str(datum["end"])
 
         return actions
 
@@ -2041,8 +2088,8 @@ class LoggingFormatter(logging.Formatter):  # pragma: no cover
         if datefmt is not None:
             return record_datetime.strftime(datefmt)
 
-        seconds = record_datetime.strftime('%Y-%m-%d %H:%M:%S')
-        return '%s.%03d' % (seconds, record.msecs)  # pylint: disable=consider-using-f-string
+        seconds = record_datetime.strftime("%Y-%m-%d %H:%M:%S")
+        return "%s.%03d" % (seconds, record.msecs)  # pylint: disable=consider-using-f-string
 
 
 class RwLocks:
@@ -2100,8 +2147,8 @@ class RwLocks:
             RwLocks.become_locker(index, name)
             try:
                 async with RwLocks.locks(items[1:]):
-                    action = ('read', 'write')[index]
-                    Logger.debug(f'Got {action} lock of: {name}')
+                    action = ("read", "write")[index]
+                    Logger.debug(f"Got {action} lock of: {name}")
                     yield
             finally:
                 RwLocks.become_nothing(index, name)
@@ -2111,10 +2158,10 @@ class RwLocks:
         """
         Record the fact we are actually are locking some data.
         """
-        action = ('read', 'write')[index]
+        action = ("read", "write")[index]
 
         if Logger.isEnabledFor(logging.DEBUG):
-            Logger.debug(f'Want {action} lock of: {name}')
+            Logger.debug(f"Want {action} lock of: {name}")
             RwLocks.log_status(name)
 
         lockers_status = RwLocks.lockers.get(name)
@@ -2128,10 +2175,10 @@ class RwLocks:
         """
         Record the fact we have released the lock.
         """
-        action = ('read', 'write')[index]
+        action = ("read", "write")[index]
 
         if Logger.isEnabledFor(logging.DEBUG):
-            Logger.debug(f'Released {action} lock of: {name}')
+            Logger.debug(f"Released {action} lock of: {name}")
             RwLocks.log_status(name, am_locker=True)
 
         lockers_status = RwLocks.lockers[name]
@@ -2154,14 +2201,14 @@ class RwLocks:
                     assert not seen_locker
                     seen_locker = True
                 else:
-                    Logger.debug(f'step: {reader} is reading data: {name}')
+                    Logger.debug(f"step: {reader} is reading data: {name}")
 
             for modifier in modifiers:
                 if modifier == Invocation.current.log:
                     assert not seen_locker
                     seen_locker = True
                 else:
-                    Logger.debug(f'step: {modifier} is writing data: {name}')
+                    Logger.debug(f"step: {modifier} is writing data: {name}")
 
         assert seen_locker == am_locker
 
@@ -2196,27 +2243,28 @@ class Logger:
         """
         Reset all the current state, for tests.
         """
-        Logger._logger = logging.getLogger('dynamake')
-        Logger._logger.setLevel('DEBUG')
+        Logger._logger = logging.getLogger("dynamake")
+        Logger._logger.setLevel("DEBUG")
         Logger.errors = False
-        logging.getLogger('asyncio').setLevel('WARN')
+        logging.getLogger("asyncio").setLevel("WARN")
 
     @staticmethod
     def setup(logger_name: str) -> None:
         """
-        Set up the global logger.
+        Set up the global logger.  # pylint: disable=invalid-name
         """
         Logger._logger = logging.getLogger(logger_name)
         Logger.errors = False
-        logging.getLogger('asyncio').setLevel('WARN')
+        logging.getLogger("asyncio").setLevel("WARN")
 
         if not _is_test:
             # pragma: no cover
             handler = logging.StreamHandler(sys.stderr)
-            log_format = '%(asctime)s - dynamake - %(levelname)s - %(message)s'
+            log_format = "%(asctime)s - dynamake - %(levelname)s - %(message)s"
             handler.setFormatter(LoggingFormatter(log_format))
             Logger._logger.addHandler(handler)
 
+        global log_level  # pylint: disable=invalid-name  # pylint: disable=invalid-name
         Logger._logger.setLevel(log_level.value)
 
     @staticmethod
@@ -2240,10 +2288,10 @@ class Logger:
             except TypeError:
                 no_additional_complaints()
                 raise RuntimeError(  # pylint: disable=raise-missing-from
-                    f'mismatch between format: {message} '
-                    f'and args: {args}')
+                    f"mismatch between format: {message} " f"and args: {args}"
+                )
 
-        message = f'{Invocation.current.log} - {message}'
+        message = f"{Invocation.current.log} - {message}"
         Logger._logger.log(level, message)
 
     @staticmethod
@@ -2303,11 +2351,11 @@ class Logger:
         Logger.log(logging.CRITICAL, message, *args)
 
 
-logging.addLevelName(Logger.STDOUT, 'STDOUT')
-logging.addLevelName(Logger.STDERR, 'STDERR')
-logging.addLevelName(Logger.FILE, 'FILE')
-logging.addLevelName(Logger.WHY, 'WHY')
-logging.addLevelName(Logger.TRACE, 'TRACE')
+logging.addLevelName(Logger.STDOUT, "STDOUT")
+logging.addLevelName(Logger.STDERR, "STDERR")
+logging.addLevelName(Logger.FILE, "FILE")
+logging.addLevelName(Logger.WHY, "WHY")
+logging.addLevelName(Logger.TRACE, "TRACE")
 
 
 class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
@@ -2316,13 +2364,13 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
     """
 
     #: The active invocations.
-    active: Dict[str, 'Invocation']
+    active: Dict[str, "Invocation"]
 
     #: The current invocation.
-    current: 'Invocation'
+    current: "Invocation"
 
     #: The top-level invocation.
-    top: 'Invocation'
+    top: "Invocation"
 
     #: The paths for phony targets.
     phony: Set[str]
@@ -2354,10 +2402,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         Invocation.actions_count = 0
         Invocation.skipped_count = 0
 
-    def __init__(self,  # pylint: disable=too-many-statements
-                 step: Optional[Step],  # pylint: disable=redefined-outer-name
-                 goal: Optional[str],
-                 **kwargs: Any) -> None:
+    def __init__(  # pylint: disable=too-many-statements
+        self,
+        step: Optional[Step],  # pylint: disable=redefined-outer-name
+        goal: Optional[str],
+        **kwargs: Any,
+    ) -> None:
         """
         Track the invocation of an async step.
         """
@@ -2374,12 +2424,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         self.kwargs = kwargs
 
         #: The full name (including parameters) of the invocation.
-        self.name = 'make'
+        self.name = "make"
         if self.step is not None:
             self.name = self.step.name
         args_string = _dict_to_str(kwargs)
         if args_string:
-            self.name += '/'
+            self.name += "/"
             self.name += args_string
 
         assert (self.parent is None) == (step is None)
@@ -2389,18 +2439,19 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if self.parent is None:
             #: A short unique stack to identify invocations in the log.
-            self.stack: str = '#0'
+            self.stack: str = "#0"
         else:
             self.parent.sub_count += 1
-            if self.parent.stack == '#0':
-                self.stack = '#' + str(self.parent.sub_count)
+            if self.parent.stack == "#0":
+                self.stack = "#" + str(self.parent.sub_count)
             else:
-                self.stack = self.parent.stack + '.' + str(self.parent.sub_count)
+                self.stack = self.parent.stack + "." + str(self.parent.sub_count)
 
         #: The full name used for logging.
         self.log = self.name
+        global jobs  # pylint: disable=invalid-name
         if _is_test or jobs.value > 1:
-            self.log = self.stack + ' - ' + self.name
+            self.log = self.stack + " - " + self.name
 
         self._verify_no_loop()
 
@@ -2471,6 +2522,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         self.did_run_actions = False
 
         #: Whether we should remove stale outputs before running the next action.
+        global remove_stale_outputs  # pylint: disable=invalid-name
         self.should_remove_stale_outputs = remove_stale_outputs.value
 
     def _restart(self) -> None:
@@ -2490,6 +2542,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         self.must_run_action = True
         self.did_skip_actions = False
+        global remove_stale_outputs  # pylint: disable=invalid-name
         assert self.should_remove_stale_outputs == remove_stale_outputs.value
 
     def _verify_no_loop(self) -> None:
@@ -2499,7 +2552,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             call_chain.append(parent.name)
             if self.name == parent.name:
                 no_additional_complaints()
-                raise RuntimeError('step invokes itself: ' + ' -> '.join(reversed(call_chain)))
+                raise RuntimeError("step invokes itself: " + " -> ".join(reversed(call_chain)))
             parent = parent.parent
 
     def read_old_persistent_actions(self) -> None:
@@ -2508,34 +2561,35 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         These describe the last successful build of the outputs.
         """
-        path = os.path.join(persistent_directory.value, self.name + '.actions.yaml')
+        global persistent_directory  # pylint: disable=invalid-name
+        path = os.path.join(persistent_directory.value, self.name + ".actions.yaml")
         if not os.path.exists(path):
-            Logger.why(f'Must run actions because missing the persistent actions: {path}')
+            Logger.why(f"Must run actions because missing the persistent actions: {path}")
             self.must_run_action = True
             return
 
         try:
-            with open(path, 'r') as file:
+            with open(path, "r") as file:
                 data = yaml.full_load(file.read())
-            self.old_persistent_actions = PersistentAction.from_data(data['actions'])
-            self.old_persistent_outputs = data['outputs']
-            Logger.debug(f'Read the persistent actions: {path}')
+            self.old_persistent_actions = PersistentAction.from_data(data["actions"])
+            self.old_persistent_outputs = data["outputs"]
+            Logger.debug(f"Read the persistent actions: {path}")
 
         except BaseException:  # pylint: disable=broad-except
-            Logger.warning(f'Must run actions '
-                           f'because read the invalid persistent actions: {path}')
+            Logger.warning(f"Must run actions " f"because read the invalid persistent actions: {path}")
             self.must_run_action = True
 
     def remove_old_persistent_data(self) -> None:
         """
         Remove the persistent data from the disk in case the build failed.
         """
-        path = os.path.join(persistent_directory.value, self.name + '.actions.yaml')
+        global persistent_directory  # pylint: disable=invalid-name
+        path = os.path.join(persistent_directory.value, self.name + ".actions.yaml")
         if os.path.exists(path):
-            Logger.debug(f'Remove the persistent actions: {path}')
+            Logger.debug(f"Remove the persistent actions: {path}")
             os.remove(path)
 
-        if '/' not in self.name:
+        if "/" not in self.name:
             return
         try:
             os.rmdir(os.path.dirname(path))
@@ -2548,14 +2602,14 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         This is only done on a successful build.
         """
-        path = os.path.join(persistent_directory.value, self.name + '.actions.yaml')
-        Logger.debug(f'Write the persistent actions: {path}')
+        global persistent_directory  # pylint: disable=invalid-name
+        path = os.path.join(persistent_directory.value, self.name + ".actions.yaml")
+        Logger.debug(f"Write the persistent actions: {path}")
 
         os.makedirs(os.path.dirname(path), exist_ok=True)
 
-        with open(path, 'w') as file:
-            data = dict(actions=self.new_persistent_actions[-1].into_data(),
-                        outputs=self.built_outputs)
+        with open(path, "w") as file:
+            data = dict(actions=self.new_persistent_actions[-1].into_data(), outputs=self.built_outputs)
             file.write(yaml.dump(data))
 
     def log_and_abort(self, *messages: str) -> None:
@@ -2570,8 +2624,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         Abort the invocation for some reason.
         """
-        message = f'{Invocation.current.log} - {message}'
+        message = f"{Invocation.current.log} - {message}"
         self.exception = StepException(message)
+        global failure_aborts_build  # pylint: disable=invalid-name
+        global no_actions  # pylint: disable=invalid-name
         if failure_aborts_build.value and not no_actions.value:
             no_additional_complaints()
             raise self.exception
@@ -2586,19 +2642,20 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         path = clean_path(path)
 
-        Logger.debug(f'Build the required: {path}')
+        Logger.debug(f"Build the required: {path}")
 
         self.required.append(path)
 
         if path in Invocation.poisoned:
+            global no_actions  # pylint: disable=invalid-name
             if no_actions.value:
                 raise DryRunException()
-            self.abort(f'The required: {path} has failed to build')
+            self.abort(f"The required: {path} has failed to build")
             return
 
         up_to_date = Invocation.up_to_date.get(path)
         if up_to_date is not None:
-            Logger.debug(f'The required: {path} was built')
+            Logger.debug(f"The required: {path} was built")
             if self.new_persistent_actions:
                 self.new_persistent_actions[-1].require(path, UpToDate(up_to_date.producer))
             return
@@ -2611,21 +2668,22 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             stat = Stat.try_stat(path)
             if stat is None:
                 if is_optional(path):
-                    Logger.debug(f'The optional required: {path} '
-                                 f"does not exist and can't be built")
+                    Logger.debug(f"The optional required: {path} " f"does not exist and can't be built")
                 else:
-                    messages = [f"Don't know how to make the target: {path}",
-                                f'invoked to produce the target: {Invocation.current.goal}']
+                    messages = [
+                        f"Don't know how to make the target: {path}",
+                        f"invoked to produce the target: {Invocation.current.goal}",
+                    ]
                     parent = Invocation.current.parent
                     while parent is not None:
                         if parent.goal is not None:
-                            messages.append(f'required by the step: {parent.log}')
-                            messages.append(f'invoked to produce the target: {parent.goal}')
+                            messages.append(f"required by the step: {parent.log}")
+                            messages.append(f"invoked to produce the target: {parent.goal}")
                         parent = parent.parent
                     self.log_and_abort(*messages)
                 return
-            Logger.debug(f'The required: {path} is a source file')
-            up_to_date = UpToDate('', stat.st_mtime_ns)
+            Logger.debug(f"The required: {path} is a source file")
+            up_to_date = UpToDate("", stat.st_mtime_ns)
             Invocation.up_to_date[path] = up_to_date
             if self.new_persistent_actions:
                 self.new_persistent_actions[-1].require(path, up_to_date)
@@ -2634,12 +2692,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         invocation = Invocation(step, path, **kwargs)
         if self.new_persistent_actions:
             self.new_persistent_actions[-1].require(path, UpToDate(invocation.name))
-        Logger.debug(f'The required: {path} '
-                     f'will be produced by the spawned: {invocation.log}')
+        Logger.debug(f"The required: {path} " f"will be produced by the spawned: {invocation.log}")
         self.async_actions.append(asyncio.Task(invocation.run()))  # type: ignore
 
-    def producer_of(self,  # pylint: disable=too-many-locals
-                    path: str) -> Tuple[Optional[Step], Optional[Dict[str, Any]]]:
+    def producer_of(  # pylint: disable=too-many-locals
+        self, path: str
+    ) -> Tuple[Optional[Step], Optional[Dict[str, Any]]]:
         """
         Find the unique step, if any, that produces the file.
 
@@ -2662,25 +2720,26 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if Logger.isEnabledFor(logging.DEBUG) and len(producers) > 1:
             for _, _, _, candidate in producers:
-                Logger.debug(f'candidate producer: {candidate.name} '
-                             f'priority: {candidate.priority}')
+                Logger.debug(f"candidate producer: {candidate.name} " f"priority: {candidate.priority}")
 
         if len(producers) > 1:
             first_priority, first_name, _, _ = producers[0]
             second_priority, second_name, _, _ = producers[1]
 
             if second_priority == first_priority:
-                self.log_and_abort(f'The output: {path} '
-                                   f'may be created by both the step: {first_name} '
-                                   f'and the step: {second_name} '
-                                   f'at the same priority: {first_priority}')
+                self.log_and_abort(
+                    f"The output: {path} "
+                    f"may be created by both the step: {first_name} "
+                    f"and the step: {second_name} "
+                    f"at the same priority: {first_priority}"
+                )
                 return None, None
 
         if len(producers) > 0:
             _, _, match, producer = producers[0]
             for name, value in match.groupdict().items():
-                if name[0] != '_':
-                    kwargs[name] = str(value or '')
+                if name[0] != "_":
+                    kwargs[name] = str(value or "")
 
         return producer, kwargs
 
@@ -2693,8 +2752,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             return await self.done(self.wait_for(active))
 
         self._become_current()
-        Logger.trace('Call')
+        Logger.trace("Call")
 
+        global rebuild_changed_actions  # pylint: disable=invalid-name
         if rebuild_changed_actions.value:
             self.new_persistent_actions.append(PersistentAction())
             self.read_old_persistent_actions()
@@ -2722,22 +2782,20 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         if self.exception is None:
             assert not self.async_actions
             if self.new_persistent_actions:
-                if len(self.new_persistent_actions) > 1 \
-                        and self.new_persistent_actions[-1].is_empty():
+                if len(self.new_persistent_actions) > 1 and self.new_persistent_actions[-1].is_empty():
                     self.new_persistent_actions.pop()
 
                 if not self.did_skip_actions:
                     self.write_new_persistent_actions()
                 elif len(self.new_persistent_actions) < len(self.old_persistent_actions):
-                    Logger.warning('Skipped some action(s) '
-                                   'even though changed to remove some final action(s)')
+                    Logger.warning("Skipped some action(s) " "even though changed to remove some final action(s)")
 
             if self.did_run_actions:
-                Logger.trace('Done')
+                Logger.trace("Done")
             elif self.did_skip_actions:
-                Logger.trace('Skipped')
+                Logger.trace("Skipped")
             else:
-                Logger.trace('Complete')
+                Logger.trace("Complete")
 
         else:
             while self.async_actions:
@@ -2749,7 +2807,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 self.poison_all_outputs()
                 self.remove_old_persistent_data()
             if not isinstance(self.exception, DryRunException):
-                Logger.trace('Fail')
+                Logger.trace("Fail")
 
         del Invocation.active[self.name]
         if self.condition is not None:
@@ -2757,13 +2815,14 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             self.condition.notify_all()
             self.condition.release()
 
+        global failure_aborts_build  # pylint: disable=invalid-name
         if self.exception is not None and failure_aborts_build.value:
             no_additional_complaints()
             raise self.exception
 
         return self.exception
 
-    async def wait_for(self, active: 'Invocation') -> Optional[BaseException]:
+    async def wait_for(self, active: "Invocation") -> Optional[BaseException]:
         """
         Wait until the invocation is done.
 
@@ -2772,7 +2831,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         self._become_current()
 
-        Logger.debug(f'Paused by waiting for: {active.log}')
+        Logger.debug(f"Paused by waiting for: {active.log}")
 
         if active.condition is None:
             active.condition = asyncio.Condition()
@@ -2781,7 +2840,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         await self.done(active.condition.wait())
         active.condition.release()
 
-        Logger.debug(f'Resumed by completion of: {active.log}')
+        Logger.debug(f"Resumed by completion of: {active.log}")
 
         return active.exception
 
@@ -2805,16 +2864,16 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             try:
                 paths = glob_paths(formatted_pattern)
                 if not paths:
-                    Logger.debug(f'Nonexistent optional output(s): {pattern}')
+                    Logger.debug(f"Nonexistent optional output(s): {pattern}")
                 else:
                     for path in paths:
                         self.initial_outputs.append(path)
                         if path == pattern:
-                            Logger.debug(f'Existing output: {path}')
+                            Logger.debug(f"Existing output: {path}")
                         else:
-                            Logger.debug(f'Existing output: {pattern} -> {path}')
+                            Logger.debug(f"Existing output: {pattern} -> {path}")
             except NonOptionalException:
-                Logger.debug(f'Nonexistent required output(s): {pattern}')
+                Logger.debug(f"Nonexistent required output(s): {pattern}")
                 self.missing_output = formatted_pattern
                 missing_outputs.append(capture2re(formatted_pattern))
 
@@ -2833,18 +2892,20 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                     continue
 
                 if Stat.exists(path):
-                    Logger.debug(f'Changed to abandon the output: {path}')
+                    Logger.debug(f"Changed to abandon the output: {path}")
                     self.abandoned_output = path
                 else:
-                    Logger.debug(f'Missing the old built output: {path}')
+                    Logger.debug(f"Missing the old built output: {path}")
                     self.missing_output = path
 
                 Stat.forget(path)
 
-        if self.must_run_action \
-                or self.phony_outputs \
-                or self.missing_output is not None \
-                or self.abandoned_output is not None:
+        if (
+            self.must_run_action
+            or self.phony_outputs
+            or self.missing_output is not None
+            or self.abandoned_output is not None
+        ):
             return
 
         for output_path in sorted(self.initial_outputs):
@@ -2856,8 +2917,10 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 self.oldest_output_mtime_ns = output_mtime_ns
 
         if Logger.isEnabledFor(logging.DEBUG) and self.oldest_output_path is not None:
-            Logger.debug(f'Oldest output: {self.oldest_output_path} '
-                         f'time: {_datetime_from_nanoseconds(self.oldest_output_mtime_ns)}')
+            Logger.debug(
+                f"Oldest output: {self.oldest_output_path} "
+                f"time: {_datetime_from_nanoseconds(self.oldest_output_mtime_ns)}"
+            )
 
     async def collect_final_outputs(self) -> None:  # pylint: disable=too-many-branches
         """
@@ -2877,23 +2940,23 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         for pattern in sorted(self.step.output):  # pylint: disable=too-many-nested-blocks
             formatted_pattern = fmt_capture(self.kwargs, pattern)
             if is_phony(pattern):
-                Invocation.up_to_date[formatted_pattern] = \
-                    UpToDate(self.name, self.newest_input_mtime_ns + 1)
+                Invocation.up_to_date[formatted_pattern] = UpToDate(self.name, self.newest_input_mtime_ns + 1)
                 continue
 
             try:
                 paths = glob_paths(formatted_pattern)
                 if not paths:
-                    Logger.debug(f'Did not make the optional output(s): {pattern}')
+                    Logger.debug(f"Did not make the optional output(s): {pattern}")
                 else:
                     for path in paths:
                         self.built_outputs.append(path)
 
+                        global touch_success_outputs  # pylint: disable=invalid-name
                         if touch_success_outputs.value:
                             if not did_sleep:
                                 await self.done(asyncio.sleep(1.0))
                                 did_sleep = True
-                            Logger.file(f'Touch the output: {path}')
+                            Logger.file(f"Touch the output: {path}")
                             Stat.touch(path)
 
                         mtime_ns = Stat.stat(path).st_mtime_ns
@@ -2901,20 +2964,21 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
                         if Logger.isEnabledFor(logging.DEBUG):
                             if path == formatted_pattern:
-                                Logger.debug(f'Has the output: {path} '
-                                             f'time: {_datetime_from_nanoseconds(mtime_ns)}')
+                                Logger.debug(f"Has the output: {path} " f"time: {_datetime_from_nanoseconds(mtime_ns)}")
                             else:
-                                Logger.debug(f'Has the output: {pattern} -> {path} '
-                                             f'time: {_datetime_from_nanoseconds(mtime_ns)}')
+                                Logger.debug(
+                                    f"Has the output: {pattern} -> {path} "
+                                    f"time: {_datetime_from_nanoseconds(mtime_ns)}"
+                                )
 
             except NonOptionalException:
                 self._become_current()
-                Logger.error(f'Missing the output(s): {pattern}')
+                Logger.error(f"Missing the output(s): {pattern}")
                 missing_outputs = True
                 break
 
         if missing_outputs:
-            self.abort('Missing some output(s)')
+            self.abort("Missing some output(s)")
 
     def remove_stale_outputs(self) -> None:
         """
@@ -2924,7 +2988,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         for path in sorted(self.initial_outputs):
             if self.should_remove_stale_outputs and not is_precious(path):
-                Logger.file(f'Remove the stale output: {path}')
+                Logger.file(f"Remove the stale output: {path}")
                 Invocation.remove_output(path)
             else:
                 Stat.forget(path)
@@ -2939,10 +3003,11 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         try:
             Stat.remove(path)
+            global remove_empty_directories  # pylint: disable=invalid-name
             while remove_empty_directories.value:
                 path = os.path.dirname(path)
                 Stat.rmdir(path)
-                Logger.file(f'Remove the empty directory: {path}')
+                Logger.file(f"Remove the empty directory: {path}")
         except OSError:
             pass
 
@@ -2961,8 +3026,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 continue
             for path in glob_paths(optional(formatted_pattern)):
                 Invocation.poisoned.add(path)
+                global remove_failed_outputs  # pylint: disable=invalid-name
                 if remove_failed_outputs.value and not is_precious(path):
-                    Logger.file(f'Remove the failed output: {path}')
+                    Logger.file(f"Remove the failed output: {path}")
                     Invocation.remove_output(path)
 
     def should_run_action(self) -> bool:  # pylint: disable=too-many-return-statements
@@ -2975,23 +3041,22 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if self.phony_outputs:
             # Either no output files (pure action) or missing output files.
-            Logger.why(f'Must run actions to satisfy the phony output: {self.phony_outputs[0]}')
+            Logger.why(f"Must run actions to satisfy the phony output: {self.phony_outputs[0]}")
             return True
 
         if self.missing_output is not None:
-            Logger.why(f'Must run actions to create the missing output(s): {self.missing_output}')
+            Logger.why(f"Must run actions to create the missing output(s): {self.missing_output}")
             return True
 
         if self.abandoned_output is not None:
-            Logger.why(f'Must run actions '
-                       f'because changed to abandon the output: {self.abandoned_output}')
+            Logger.why(f"Must run actions " f"because changed to abandon the output: {self.abandoned_output}")
             return True
 
         if self.new_persistent_actions:
             # Compare with last successful build action.
             index = len(self.new_persistent_actions) - 1
             if index >= len(self.old_persistent_actions):
-                Logger.why('Must run actions because changed to add action(s)')
+                Logger.why("Must run actions because changed to add action(s)")
                 return True
             new_action = self.new_persistent_actions[index]
             old_action = self.old_persistent_actions[index]
@@ -3002,22 +3067,21 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if self.newest_input_path is None:
             # No input files (pure computation).
-            Logger.debug('Can skip actions '
-                         'because all the outputs exist and there are no newer inputs')
+            Logger.debug("Can skip actions " "because all the outputs exist and there are no newer inputs")
             return False
 
         # There are input files:
 
-        if self.oldest_output_path is not None \
-                and self.oldest_output_mtime_ns <= self.newest_input_mtime_ns:
+        if self.oldest_output_path is not None and self.oldest_output_mtime_ns <= self.newest_input_mtime_ns:
             # Some output file is not newer than some input file.
-            Logger.why(f'Must run actions because the output: {self.oldest_output_path} '
-                       f'is not newer than the input: {self.newest_input_path}')
+            Logger.why(
+                f"Must run actions because the output: {self.oldest_output_path} "
+                f"is not newer than the input: {self.newest_input_path}"
+            )
             return True
 
         # All output files are newer than all input files.
-        Logger.debug('Can skip actions '
-                     'because all the outputs exist and are newer than all the inputs')
+        Logger.debug("Can skip actions " "because all the outputs exist and are newer than all the inputs")
         return False
 
     @staticmethod
@@ -3030,60 +3094,66 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if old_action.command != new_action.command:
             if old_action.command is None:
-                old_action_kind = 'a phony command'
+                old_action_kind = "a phony command"
             else:
-                old_action_kind = 'the command: ' + ' '.join(old_action.command)
+                old_action_kind = "the command: " + " ".join(old_action.command)
 
             if new_action.command is None:
-                new_action_kind = 'a phony command'
+                new_action_kind = "a phony command"
             else:
-                new_action_kind = 'the command: ' + ' '.join(new_action.command)
+                new_action_kind = "the command: " + " ".join(new_action.command)
 
-            Logger.why(f'Must run actions because changed {old_action_kind} '
-                       f'into {new_action_kind}')
+            Logger.why(f"Must run actions because changed {old_action_kind} " f"into {new_action_kind}")
             return True
 
         return False
 
     @staticmethod
-    def different_required(old_required: Dict[str, UpToDate],
-                           new_required: Dict[str, UpToDate]) -> bool:
+    def different_required(old_required: Dict[str, UpToDate], new_required: Dict[str, UpToDate]) -> bool:
         """
         Check whether the required inputs of the new action are different from
         the required inputs of the last build action.
         """
         for new_path in sorted(new_required.keys()):
             if new_path not in old_required:
-                Logger.why(f'Must run actions because changed to require: {new_path}')
+                Logger.why(f"Must run actions because changed to require: {new_path}")
                 return True
 
         for old_path in sorted(old_required.keys()):
             if old_path not in new_required:
-                Logger.why(f'Must run actions because changed to not require: {old_path}')
+                Logger.why(f"Must run actions because changed to not require: {old_path}")
                 return True
 
         for path in sorted(new_required.keys()):
             old_up_to_date = old_required[path]
             new_up_to_date = new_required[path]
             if old_up_to_date.producer != new_up_to_date.producer:
-                Logger.why(f'Must run actions because the producer of the required: {path} '
-                           f'has changed from: {old_up_to_date.producer or "source file"} '
-                           f'into: {new_up_to_date.producer or "source file"}')
+                Logger.why(
+                    f"Must run actions because the producer of the required: {path} "
+                    f'has changed from: {old_up_to_date.producer or "source file"} '
+                    f'into: {new_up_to_date.producer or "source file"}'
+                )
                 return True
             if not is_exists(path) and old_up_to_date.mtime_ns != new_up_to_date.mtime_ns:
-                Logger.why(f'Must run actions '
-                           f'because the modification time of the required: {path} '
-                           f'has changed from: '
-                           f'{_datetime_from_nanoseconds(old_up_to_date.mtime_ns)} '
-                           f'into: '
-                           f'{_datetime_from_nanoseconds(new_up_to_date.mtime_ns)}')
+                Logger.why(
+                    f"Must run actions "
+                    f"because the modification time of the required: {path} "
+                    f"has changed from: "
+                    f"{_datetime_from_nanoseconds(old_up_to_date.mtime_ns)} "
+                    f"into: "
+                    f"{_datetime_from_nanoseconds(new_up_to_date.mtime_ns)}"
+                )
                 return True
 
         return False
 
-    async def run_action(self,  # pylint: disable=too-many-branches,too-many-statements,too-many-locals
-                         kind: str, runner: Callable[[List[str]], Awaitable],
-                         *command: Strings, **resources: int) -> None:
+    async def run_action(  # pylint: disable=too-many-branches,too-many-statements,too-many-locals
+        self,
+        kind: str,
+        runner: Callable[[List[str]], Awaitable],
+        *command: Strings,
+        **resources: int,
+    ) -> None:
         """
         Spawn a action to actually create some files.
         """
@@ -3098,9 +3168,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         is_silent = None
         for part in each_string(*command):
             if is_silent is None:
-                if part.startswith('@'):
+                if part.startswith("@"):
                     is_silent = True
-                    if part == '@':
+                    if part == "@":
                         continue
                     part = part[1:]
                 else:
@@ -3110,11 +3180,11 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             if not is_phony(part):
                 persistent_parts.append(part)
 
-            if kind != 'shell':
+            if kind != "shell":
                 part = copy_annotations(part, shlex.quote(part))
             log_parts.append(part)
 
-        log_command = ' '.join(log_parts)
+        log_command = " ".join(log_parts)
 
         if self.exception is not None:
             Logger.debug(f"Can't run: {log_command}")
@@ -3125,24 +3195,24 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             self.new_persistent_actions[-1].run_action(persistent_parts)
 
         if not self.should_run_action():
+            global log_skipped_actions  # pylint: disable=invalid-name
             if not log_skipped_actions.value:
                 level = logging.DEBUG
             elif is_silent:
                 level = Logger.FILE
             else:
                 level = logging.INFO
-            Logger.log(level, f'Skip: {log_command}')
+            Logger.log(level, f"Skip: {log_command}")
             self.did_skip_actions = True
             if self.new_persistent_actions:
-                self.new_persistent_actions.append(  #
-                    PersistentAction(self.new_persistent_actions[-1]))
+                self.new_persistent_actions.append(PersistentAction(self.new_persistent_actions[-1]))  #
             Invocation.skipped_count += 1
             return
 
         if self.did_skip_actions:
             self.must_run_action = True
-            Logger.debug('Must restart step to run skipped action(s)')
-            raise RestartException('To run skipped action(s)')
+            Logger.debug("Must restart step to run skipped action(s)")
+            raise RestartException("To run skipped action(s)")
 
         self.must_run_action = True
         self.did_run_actions = True
@@ -3158,11 +3228,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
             self.oldest_output_path = None
 
+            global no_actions  # pylint: disable=invalid-name
             async with locks():
                 if is_silent:
-                    Logger.file(f'Run: {log_command}')
+                    Logger.file(f"Run: {log_command}")
                 else:
-                    Logger.info(f'Run: {log_command}')
+                    Logger.info(f"Run: {log_command}")
                     if no_actions.value:
                         raise DryRunException()
 
@@ -3183,19 +3254,19 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 self.new_persistent_actions.append(PersistentAction(persistent_action))
 
             if exit_status != 0:
-                self.log_and_abort(f'Failure: {log_command}')
+                self.log_and_abort(f"Failure: {log_command}")
                 return
 
             if not no_actions.value:
-                Logger.trace(f'Success: {log_command}')
+                Logger.trace(f"Success: {log_command}")
         finally:
             self._become_current()
             if resources:
                 if Logger.isEnabledFor(logging.DEBUG):
-                    Logger.debug('Free resources: ' + _dict_to_str(resources))
+                    Logger.debug("Free resources: " + _dict_to_str(resources))
                 Resources.free(resources)
                 if Logger.isEnabledFor(logging.DEBUG):
-                    Logger.debug('Available resources: ' + _dict_to_str(Resources.available))
+                    Logger.debug("Available resources: " + _dict_to_str(Resources.available))
                 await self.done(Resources.condition.acquire())
                 Resources.condition.notify_all()
                 Resources.condition.release()
@@ -3205,8 +3276,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
             line = await self.done(pipe.readline())
             if not line:
                 return
-            message = line.decode('utf-8').rstrip('\n')
-            message = Invocation.current.log + ' - ' + message
+            message = line.decode("utf-8").rstrip("\n")
+            message = Invocation.current.log + " - " + message
             Logger._logger.log(level, message)  # pylint: disable=protected-access
 
     async def _use_resources(self, amounts: Dict[str, int]) -> None:
@@ -3215,15 +3286,15 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         while True:
             if Resources.have(amounts):
                 if Logger.isEnabledFor(logging.DEBUG):
-                    Logger.debug('Grab resources: ' + _dict_to_str(amounts))
+                    Logger.debug("Grab resources: " + _dict_to_str(amounts))
                 Resources.grab(amounts)
                 if Logger.isEnabledFor(logging.DEBUG):
-                    Logger.debug('Available resources: ' + _dict_to_str(Resources.available))
+                    Logger.debug("Available resources: " + _dict_to_str(Resources.available))
                 return
 
             if Logger.isEnabledFor(logging.DEBUG):
-                Logger.debug('Available resources: ' + _dict_to_str(Resources.available))
-                Logger.debug('Paused by waiting for resources: ' + _dict_to_str(amounts))
+                Logger.debug("Available resources: " + _dict_to_str(Resources.available))
+                Logger.debug("Paused by waiting for resources: " + _dict_to_str(amounts))
 
             await self.done(Resources.condition.acquire())
             await self.done(Resources.condition.wait())
@@ -3240,9 +3311,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         self.abort_due_to_other()
 
         if self.async_actions:
-            Logger.debug('Sync')
-            results: List[Optional[StepException]] = \
-                await self.done(asyncio.gather(*self.async_actions))
+            Logger.debug("Sync")
+            results: List[Optional[StepException]] = await self.done(asyncio.gather(*self.async_actions))
             if self.exception is None:
                 for exception in results:
                     if exception is not None:
@@ -3250,20 +3320,20 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                         break
             self.async_actions = []
 
-        Logger.debug('Synced')
+        Logger.debug("Synced")
 
         failed_inputs = False
+        global no_actions  # pylint: disable=invalid-name
         for path in sorted(self.required):
-            if path in Invocation.poisoned \
-                    or (not is_optional(path) and path not in Invocation.up_to_date):
+            if path in Invocation.poisoned or (not is_optional(path) and path not in Invocation.up_to_date):
                 if self.exception is None and not isinstance(self.exception, DryRunException):
                     level = logging.ERROR
                 else:
                     level = logging.DEBUG
                 if no_actions.value:
-                    Logger.log(level, f'Did not run actions for the required: {path}')
+                    Logger.log(level, f"Did not run actions for the required: {path}")
                 else:
-                    Logger.log(level, f'The required: {path} has failed to build')
+                    Logger.log(level, f"The required: {path} has failed to build")
                 Invocation.poisoned.add(path)
                 failed_inputs = True
                 continue
@@ -3272,7 +3342,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
                 assert is_optional(path)
                 continue
 
-            Logger.debug(f'Has the required: {path}')
+            Logger.debug(f"Has the required: {path}")
 
             if is_exists(path):
                 continue
@@ -3289,7 +3359,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         if failed_inputs:
             if no_actions.value:
                 raise DryRunException()
-            self.abort('Failed to build the required target(s)')
+            self.abort("Failed to build the required target(s)")
 
         if self.exception is not None:
             return self.exception
@@ -3305,10 +3375,12 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
         if Logger.isEnabledFor(logging.DEBUG) and self.oldest_output_path is not None:
             if self.newest_input_path is None:
-                Logger.debug('No inputs')
+                Logger.debug("No inputs")
             else:
-                Logger.debug(f'Newest input: {self.newest_input_path} '
-                             f'time: {_datetime_from_nanoseconds(self.newest_input_mtime_ns)}')
+                Logger.debug(
+                    f"Newest input: {self.newest_input_path} "
+                    f"time: {_datetime_from_nanoseconds(self.newest_input_mtime_ns)}"
+                )
 
         return None
 
@@ -3325,8 +3397,9 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         If another invocation has failed, and failure aborts builds, abort this invocation as well.
         """
+        global failure_aborts_build  # pylint: disable=invalid-name
         if Logger.errors and failure_aborts_build.value:
-            self.abort('Aborting due to previous error')
+            self.abort("Aborting due to previous error")
 
     def _become_current(self) -> None:
         Invocation.current = self
@@ -3338,15 +3411,15 @@ _NANOSECONDS_OF_QUANTIZED: Dict[str, int] = {}
 
 
 def _datetime_from_str(string: str) -> datetime:
-    return datetime.strptime(string, '%Y-%m-%d %H:%M:%S.%f')
+    return datetime.strptime(string, "%Y-%m-%d %H:%M:%S.%f")
 
 
 def _datetime_from_nanoseconds(nanoseconds: int) -> str:
     if not _is_test:  # pylint: disable=protected-access
         # pragma: no cover
-        seconds = datetime.fromtimestamp(nanoseconds // 1_000_000_000).strftime('%Y-%m-%d %H:%M:%S')
-        fraction = '%09d' % (nanoseconds % 1_000_000_000)  # pylint: disable=consider-using-f-string
-        return seconds + '.' + fraction
+        seconds = datetime.fromtimestamp(nanoseconds // 1_000_000_000).strftime("%Y-%m-%d %H:%M:%S")
+        fraction = "%09d" % (nanoseconds % 1_000_000_000)  # pylint: disable=consider-using-f-string
+        return seconds + "." + fraction
 
     quantized = _QUANTIZED_OF_NANOSECONDS.get(nanoseconds, None)
     if quantized is not None:
@@ -3386,12 +3459,12 @@ def _datetime_from_nanoseconds(nanoseconds: int) -> str:
 def _nanoseconds_from_datetime_str(string: str) -> int:
     if _is_test:  # pylint: disable=protected-access
         return _NANOSECONDS_OF_QUANTIZED[string]
-    seconds_string, nanoseconds_string = string.split('.')
+    seconds_string, nanoseconds_string = string.split(".")
 
-    seconds_datetime = _datetime_from_str(seconds_string + '.0')
+    seconds_datetime = _datetime_from_str(seconds_string + ".0")
     seconds = int(seconds_datetime.timestamp())
 
-    nanoseconds_string = (nanoseconds_string + 9 * '0')[:9]
+    nanoseconds_string = (nanoseconds_string + 9 * "0")[:9]
     nanoseconds = int(nanoseconds_string)
 
     return seconds * 1_000_000_000 + nanoseconds
@@ -3404,8 +3477,9 @@ def _reset_test_dates() -> None:
     _NANOSECONDS_OF_QUANTIZED = {}
 
 
-def step(output: Strings,  # pylint: disable=redefined-outer-name
-         priority: float = 0) -> Callable[[Callable], Callable]:
+def step(
+    output: Strings, priority: float = 0  # pylint: disable=redefined-outer-name
+) -> Callable[[Callable], Callable]:
     """
     Decorate a build step functions.
 
@@ -3414,9 +3488,11 @@ def step(output: Strings,  # pylint: disable=redefined-outer-name
     steps with pattern outputs and high-priority steps which override them for
     specific output(s).
     """
+
     def _wrap(wrapped: Callable) -> Callable:
         Step(wrapped, output, priority)
         return wrapped
+
     return _wrap
 
 
@@ -3441,8 +3517,7 @@ async def sync() -> Optional[BaseException]:
     return await current.done(current.sync())
 
 
-async def shell(*command: Strings, prefix: Optional[Strings] = None,
-                **resources: int) -> None:
+async def shell(*command: Strings, prefix: Optional[Strings] = None, **resources: int) -> None:
     """
     Execute a shell command.
 
@@ -3461,15 +3536,20 @@ async def shell(*command: Strings, prefix: Optional[Strings] = None,
     """
     current = Invocation.current
     if prefix is None:
+        global default_shell_prefix  # pylint: disable=invalid-name
         prefix = default_shell_prefix.value
 
     def _run_shell(parts: List[str]) -> Awaitable:
         assert prefix is not None
-        return asyncio.create_subprocess_shell(' '.join(flatten(prefix, parts)),
-                                               executable=shell_executable.value,
-                                               stdout=asyncio.subprocess.PIPE,
-                                               stderr=asyncio.subprocess.PIPE)
-    await current.done(current.run_action('shell', _run_shell, *command, **resources))
+        global shell_executable  # pylint: disable=invalid-name
+        return asyncio.create_subprocess_shell(
+            " ".join(flatten(prefix, parts)),
+            executable=shell_executable.value,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+    await current.done(current.run_action("shell", _run_shell, *command, **resources))
 
 
 async def spawn(*command: Strings, **resources: int) -> None:
@@ -3484,16 +3564,18 @@ async def spawn(*command: Strings, **resources: int) -> None:
     current = Invocation.current
 
     def _run_exec(parts: List[str]) -> Awaitable:
-        return asyncio.create_subprocess_exec(*parts,
-                                              stdout=asyncio.subprocess.PIPE,
-                                              stderr=asyncio.subprocess.PIPE)
-    await current.done(current.run_action('spawn', _run_exec, *command, **resources))
+        return asyncio.create_subprocess_exec(*parts, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+
+    await current.done(current.run_action("spawn", _run_exec, *command, **resources))
 
 
-def make(parser: ArgumentParser, *,
-         default_targets: Strings = 'all',
-         logger_name: str = 'dynamake',
-         adapter: Optional[Callable[[Namespace], None]] = None) -> None:
+def make(
+    parser: ArgumentParser,
+    *,
+    default_targets: Strings = "all",
+    logger_name: str = "dynamake",
+    adapter: Optional[Callable[[Namespace], None]] = None,
+) -> None:
     """
     A generic ``main`` function for ``DynaMake``.
 
@@ -3509,16 +3591,25 @@ def make(parser: ArgumentParser, *,
 
     _load_modules()
 
-    parser.add_argument('TARGET', nargs='*',
-                        help=f'The file or target to make (default: {" ".join(default_targets)})')
+    parser.add_argument("TARGET", nargs="*", help=f'The file or target to make (default: {" ".join(default_targets)})')
 
-    parser.add_argument('--module', '-m', metavar='MODULE', action='append',
-                        help='A Python module to load (containing function definitions)')
+    parser.add_argument(
+        "--module",
+        "-m",
+        metavar="MODULE",
+        action="append",
+        help="A Python module to load (containing function definitions)",
+    )
 
     Parameter.add_to_parser(parser)
 
-    parser.add_argument('--list_steps', '-ls', default=False, action='store_true',
-                        help='List all the build steps and their targets, and exit.')
+    parser.add_argument(
+        "--list_steps",
+        "-ls",
+        default=False,
+        action="store_true",
+        help="List all the build steps and their targets, and exit.",
+    )
 
     args = parser.parse_args()
     Parameter.parse_args(args)
@@ -3533,8 +3624,7 @@ def make(parser: ArgumentParser, *,
     if args.list_steps:
         _list_steps()
     else:
-        _build_targets([path for path in args.TARGET if path is not None]
-                       or flatten(default_targets))
+        _build_targets([path for path in args.TARGET if path is not None] or flatten(default_targets))
 
 
 def _load_modules() -> None:
@@ -3543,14 +3633,15 @@ def _load_modules() -> None:
     # therefore employs a brutish option detection which may not be 100% correct.
     did_import = False
     for option, value in zip(sys.argv, sys.argv[1:]):
-        if option in ['-m', '--module']:
+        if option in ["-m", "--module"]:
             did_import = True
             import_module(value)
-    if not did_import and os.path.exists(DEFAULT_MODULE + '.py'):
+    if not did_import and os.path.exists(DEFAULT_MODULE + ".py"):
         import_module(DEFAULT_MODULE)
 
 
 def _compute_jobs() -> None:
+    global jobs  # pylint: disable=invalid-name
     amount = int(jobs.value)
     if jobs.value < 0:
         cpu_count = os.cpu_count() or 1
@@ -3558,7 +3649,7 @@ def _compute_jobs() -> None:
         amount = max(amount, 1)
         amount = min(amount, cpu_count)
     jobs.value = amount
-    Resources.available['jobs'] = Resources.total['jobs'] = amount
+    Resources.available["jobs"] = Resources.total["jobs"] = amount
 
 
 def _list_steps() -> None:
@@ -3571,32 +3662,32 @@ def _list_steps() -> None:
 
         doc = step.function.__doc__
         if doc:
-            print('# ' + dedent(doc).strip().replace('\n', '\n# '))
-        print(f'{step.name}:')
-        print(f'  priority: {step.priority}')
-        print('  outputs:')
+            print("# " + dedent(doc).strip().replace("\n", "\n# "))
+        print(f"{step.name}:")
+        print(f"  priority: {step.priority}")
+        print("  outputs:")
         for output in sorted(step.output):  # pylint: disable=redefined-outer-name
             properties = []
             if is_exists(output):
-                properties.append('exists')
+                properties.append("exists")
             if is_optional(output):
-                properties.append('optional')
+                properties.append("optional")
             if is_phony(output):
-                properties.append('phony')
+                properties.append("phony")
             if is_precious(output):
-                properties.append('precious')
+                properties.append("precious")
             if properties:
                 print(f'  - {output}: [{", ".join(properties)}]')
             else:
-                print(f'  - {output}')
+                print(f"  - {output}")
 
 
 def _build_targets(targets: List[str]) -> None:
-    Logger.trace('Targets: ' + ' '.join(targets))
+    Logger.trace("Targets: " + " ".join(targets))
     if Logger.isEnabledFor(logging.DEBUG):
         for value in Resources.available.values():
             if value > 0:
-                Logger.debug('Available resources: ' + _dict_to_str(Resources.available))
+                Logger.debug("Available resources: " + _dict_to_str(Resources.available))
                 break
     result: Optional[BaseException] = None
     try:
@@ -3608,20 +3699,20 @@ def _build_targets(targets: List[str]) -> None:
         Invocation.current = Invocation.top
 
     if result is not None and not isinstance(result, DryRunException):
-        Logger.error('Fail')
+        Logger.error("Fail")
         if _is_test:  # pylint: disable=protected-access
             no_additional_complaints()
             raise result
         sys.exit(1)
 
     if isinstance(result, DryRunException):
-        status = 'DryRun'
+        status = "DryRun"
     elif Invocation.actions_count > 0:
-        status = 'Done'
+        status = "Done"
     elif Invocation.skipped_count > 0:
-        status = 'Skipped'
+        status = "Skipped"
     else:
-        status = 'Complete'
+        status = "Complete"
     Logger.trace(status)
 
 
@@ -3768,7 +3859,7 @@ async def context(wrapped: AsyncGenerator) -> AsyncGenerator:
     invocation = Invocation.current
     async with wrapped:  # type: ignore
         invocation._become_current()  # pylint: disable=protected-access
-        yield()
+        yield ()
     invocation._become_current()  # pylint: disable=protected-access
 
 
@@ -3796,11 +3887,11 @@ def try_require(path: str) -> bool:
 
 
 def expand(*templates: Strings, **kwargs: Strings) -> List[str]:
-    '''
+    """
     Given some ``templates`` and one or more ``kwargs`` which specify a list of possible values,
     expand each template with every possible combination of keyword argument values and return the
     results as a list of strings.
-    '''
+    """
     formats = flatten(*templates)
     results: List[str] = []
     data: Dict[str, Any] = {}
