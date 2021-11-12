@@ -1,11 +1,11 @@
-DynaMake's Documentation
-========================
+DynaMake 0.6.0-dev.1 Documentation
+============================
 
 .. toctree::
    :maxdepth: 1
    :caption: Contents:
 
-   readme
+   README <readme>
    tutorial
    modules
    history

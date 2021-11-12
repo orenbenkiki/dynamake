@@ -1,5 +1,5 @@
-DynaMake - Dynamic Make in Python
-=================================
+DynaMake 0.6.0-dev.1 - Dynamic Make in Python
+=======================================
 
 .. image:: https://travis-ci.org/tanaylab/dynamake.svg?branch=master
     :target: https://travis-ci.org/tanaylab/dynamake

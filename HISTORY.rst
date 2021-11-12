@@ -1,7 +1,7 @@
 History
 =======
 
-0.6
----
+0.6.0
+-----
 
 * First release.
