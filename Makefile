@@ -227,7 +227,7 @@ dist: .make.dist  ## builds the release distribution package
 	touch $@
 
 upload: committed is_not_dev .make.dist  ## upload the release distribution package
-	else twine upload dist/*
+	twine upload dist/*
 
 current_version:  # report the current version number
 	@grep 'current_version =' setup.cfg

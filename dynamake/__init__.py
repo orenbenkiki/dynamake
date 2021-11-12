@@ -54,7 +54,7 @@ from yaml import Node
 
 __author__ = "Oren Ben-Kiki"
 __email__ = "oren@ben-kiki.org"
-__version__ = "0.6.1-dev.1"
+__version__ = "0.6.1"
 
 _REGEXP_ERROR_POSITION = re.compile(r"(.*) at position (\d+)")
 

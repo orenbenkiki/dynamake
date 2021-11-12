@@ -42,5 +42,5 @@ setup(  #
     tests_require=test_requirements,
     extras_require = {"dev": dev_requirements},
     url="https://github.com/orenbenkiki/dynamake.git",
-    version="0.6.1-dev.1",
+    version="0.6.1",
 )
