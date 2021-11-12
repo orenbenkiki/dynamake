@@ -1,8 +1,8 @@
 DynaMake 0.6.1-dev.1 - Dynamic Make in Python
 =======================================
 
-.. image:: https://travis-ci.org/tanaylab/dynamake.svg?branch=master
-    :target: https://travis-ci.org/tanaylab/dynamake
+.. image:: https://api.travis-ci.com/orenbenkiki/dynamake.svg?branch=master
+    :target: https://app.travis-ci.com/github/orenbenkiki/dynamake
     :alt: Build Status
 
 .. image:: https://readthedocs.org/projects/dynamake/badge/?version=latest

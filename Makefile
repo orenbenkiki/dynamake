@@ -56,7 +56,7 @@ clean-docs:
 
 TODO = todo$()x
 
-pc: $(TODO) history format smells docs staged pytest tox  ## check everything before commit
+pc: is_dev $(TODO) history format smells docs staged pytest tox  ## check everything before commit
 
 ci: history format smells docs tox  ## check everything in a CI server
 
