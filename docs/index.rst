@@ -1,4 +1,4 @@
-DynaMake 0.6.1 Documentation
+DynaMake 0.6.2-dev.1 Documentation
 ============================
 
 .. toctree::

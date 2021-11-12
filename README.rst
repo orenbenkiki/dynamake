@@ -1,4 +1,4 @@
-DynaMake 0.6.1 - Dynamic Make in Python
+DynaMake 0.6.2-dev.1 - Dynamic Make in Python
 =======================================
 
 .. image:: https://api.travis-ci.com/orenbenkiki/dynamake.svg?branch=master
