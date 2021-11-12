@@ -9,4 +9,9 @@ History
 0.6.1
 -----
 
-* Patch travis-ci build and links in README.rst
+* Patch ``travis-ci`` build and links in ``README.rst``.
+
+0.6.2 (WIP)
+-----
+
+* Improved ``mypy`` configuration.

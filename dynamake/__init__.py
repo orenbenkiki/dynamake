@@ -48,7 +48,7 @@ from aiorwlock import RWLock
 from aiorwlock import _ReaderLock
 from aiorwlock import _WriterLock
 from sortedcontainers import SortedDict  # type: ignore
-from yaml import Dumper  # type: ignore
+from yaml import Dumper
 from yaml import Loader
 from yaml import Node
 
