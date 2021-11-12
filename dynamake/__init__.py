@@ -402,8 +402,8 @@ def glob2re(glob: str) -> str:  # pylint: disable=too-many-branches
     """
     Translate a ``glob`` pattern to the equivalent ``re.Pattern`` (as a string).
 
-    This is subtly different from ``fnmatch.translate`` since we use it to match the result of a
-    successful ``glob`` rather than to actually perform the ``glob``.
+    This is subtly different from ``fnmatch.translate`` since we use it to match the result of a successful ``glob``
+    rather than to actually perform the ``glob``.
     """
     index = 0
     size = len(glob)
@@ -474,11 +474,10 @@ yaml.add_constructor("!r", _load_regexp, Loader=yaml.FullLoader)
 
 #: An arbitrarily nested list of strings.
 #:
-#: This should really have been ``Strings = Union[None, str, List[Strings]]`` but ``mypy`` can't
-#: handle nested types. Therefore, do not use this as a return type; as much as possible, return a
-#: concrete type (``str``, ``List[str]``, etc.). Instead use ``Strings`` as an argument type, for
-#: functions that :py:func:`dynamake.flatten` their arguments. This will allow the callers to easily
-#: nest lists without worrying about flattening themselves.
+#: This should really have been ``Strings = Union[None, str, List[Strings]]`` but ``mypy`` can't handle nested types.
+#: Therefore, do not use this as a return type; as much as possible, return a concrete type (``str``, ``List[str]``,
+#: etc.). Instead use ``Strings`` as an argument type, for functions that :py:func:`dynamake.flatten` their arguments.
+#: This will allow the callers to easily nest lists without worrying about flattening themselves.
 Strings = Union[
     None,
     str,
@@ -611,9 +610,9 @@ def fmt_capture(kwargs: Any, *patterns: Any) -> Any:  # type: ignore
     """
     Format one or more capture patterns using the specified values.
 
-    This is different from invoking ``pattern.format(**kwargs)`` on each pattern because ``format``
-    would be confused by the ``{*name}`` captures in the pattern(s). In contrast, ``fmt_capture``
-    will expand such directives, as long as the ``name`` does not start with ``_``.
+    This is different from invoking ``pattern.format(**kwargs)`` on each pattern because ``format`` would be confused by
+    the ``{*name}`` captures in the pattern(s). In contrast, ``fmt_capture`` will expand such directives, as long as the
+    ``name`` does not start with ``_``.
     """
     results = [copy_annotations(pattern, _fmt_capture(kwargs, pattern)) for pattern in each_string(*patterns)]
     if len(patterns) == 1 and isinstance(patterns[0], str):
@@ -647,12 +646,11 @@ def optional(*patterns: Any) -> Any:  # type: ignore
     """
     Annotate patterns as optional (for use in action ``input`` and/or ``output``).
 
-    An optional input is allowed not to exist before the action is executed.
-    This is useful if the action responds to the files but can execute without them.
+    An optional input is allowed not to exist before the action is executed. This is useful if the action responds to
+    the files but can execute without them.
 
-    An optional output is allowed not to exist after the action is executed.
-    This is useful to ensure such outputs are removed following a failed execution,
-    or before a new execution.
+    An optional output is allowed not to exist after the action is executed. This is useful to ensure such outputs are
+    removed following a failed execution, or before a new execution.
     """
     strings: List[str] = []
     for pattern in each_string(*patterns):
@@ -691,12 +689,11 @@ def exists(*patterns: Any) -> Any:  # type: ignore
     """
     Annotate patterns as exist-only (for use in action ``input`` and/or ``output``).
 
-    An exist-only input is only required to exist, but its modification date is ignored.
-    Directories are always treated this way because modification date on directories
-    is unreliable.
+    An exist-only input is only required to exist, but its modification date is ignored. Directories are always treated
+    this way because modification date on directories is unreliable.
 
-    An exist-only output is not touched following the execution, that is, the action
-    ensures the file will exist, but may choose to leave it unmodified.
+    An exist-only output is not touched following the execution, that is, the action ensures the file will exist, but
+    may choose to leave it unmodified.
     """
     strings: List[str] = []
     for pattern in each_string(*patterns):
@@ -735,8 +732,8 @@ def phony(*patterns: Any) -> Any:  # type: ignore
     """
     Annotate patterns as phony (for use in action ``input`` and/or ``output``).
 
-    A phony target does not exist as a disk file. When required as an input, its producer
-    step is always executed, and the dependent step always executes its sub-processes.
+    A phony target does not exist as a disk file. When required as an input, its producer step is always executed, and
+    the dependent step always executes its sub-processes.
     """
     strings: List[str] = []
     for pattern in each_string(*patterns):
@@ -775,8 +772,8 @@ def precious(*patterns: Any) -> Any:  # type: ignore
     """
     Annotate patterns as precious (for use in action ``output``).
 
-    A precious output is never deleted. This covers both deletion of "stale" outputs before an
-    action is run and deletion of "failed" outputs after an action has failed.
+    A precious output is never deleted. This covers both deletion of "stale" outputs before an action is run and
+    deletion of "failed" outputs after an action has failed.
     """
     strings: List[str] = []
     for pattern in each_string(*patterns):
@@ -794,22 +791,18 @@ class Captured:
     """
     The results of operations using a capture pattern.
 
-    A capture pattern is similar to a glob pattern. However, all wildcard matches must
-    be specified inside ``{...}`` as follows:
+    A capture pattern is similar to a glob pattern. However, all wildcard matches must be specified inside ``{...}`` as
+    follows:
 
-    * ``{*name}`` has the same effect as ``*``. The matching substring will be captured
-      using the key ``name``.
+    * ``{*name}`` has the same effect as ``*``. The matching substring will be captured using the key ``name``.
 
-    * ``/{**name}/`` has the same effect as ``/**/``. The matching substring will be captured
-      using the key ``name``.
+    * ``/{**name}/`` has the same effect as ``/**/``. The matching substring will be captured using the key ``name``.
 
-    If ``name`` starts with ``_`` then the matching substring will be discarded instead of being
-    captured.
+    If ``name`` starts with ``_`` then the matching substring will be discarded instead of being captured.
 
-    If ``name`` is followed by ``:``, it must be followed by the actual glob pattern. That is,
-    ``{*name}`` is a shorthand for ``{*name:*}`` and ``{**name}`` is shorthand for ``{*name:**}``.
-    This allows using arbitrary match patterns (for example ``{*digit:[0-9]}`` will capture a single
-    decimal digit).
+    If ``name`` is followed by ``:``, it must be followed by the actual glob pattern. That is, ``{*name}`` is a
+    shorthand for ``{*name:*}`` and ``{**name}`` is shorthand for ``{*name:**}``. This allows using arbitrary match
+    patterns (for example ``{*digit:[0-9]}`` will capture a single decimal digit).
     """
 
     def __init__(self) -> None:
@@ -844,44 +837,41 @@ class NonOptionalException(Exception):
 
 def glob_capture(*patterns: Strings) -> Captured:
     """
-    Given capture pattern, return the :py:class:`dynamake.Captured` information (paths and captured
-    values).
+    Given capture pattern, return the :py:class:`dynamake.Captured` information (paths and captured values).
 
     **Parameters**
 
     capture
-        The pattern may contain ``...{*captured_name}...``, as well as normal
-        ``glob`` patterns (``*``, ``**``). The ``...{name}..`` is expanded using the provided
-        ``wildcards``. The ``*`` and ``**`` are ``glob``-ed. A capture expression will cause the
-        matching substring to be collected in a list of dictionaries (one per matching existing path
-        name). Valid capture patterns are:
+        The pattern may contain ``...{*captured_name}...``, as well as normal ``glob`` patterns (``*``, ``**``). The
+        ``...{name}..`` is expanded using the provided ``wildcards``. The ``*`` and ``**`` are ``glob``-ed. A capture
+        expression will cause the matching substring to be collected in a list of dictionaries (one per matching
+        existing path name). Valid capture patterns are:
 
-        * ``...{*captured_name}...`` is treated as if it was a ``*`` glob pattern, and the matching
-          zero or more characters are entered into the dictionary under the ``captured_name`` key.
+        * ``...{*captured_name}...`` is treated as if it was a ``*`` glob pattern, and the matching zero or more
+          characters are entered into the dictionary under the ``captured_name`` key.
 
-        * ``...{*captured_name:pattern}...`` is similar but allows you to explicitly specify the
-          glob pattern
-          capture it under the key ``foo``.
+        * ``...{*captured_name:pattern}...`` is similar but allows you to explicitly specify the glob pattern capture it
+          under the key ``foo``.
 
-        * ``...{**captured_name}...`` is a shorthand for ``...{*captured_name:**}...``. That is, it
-          acts similarly to ``...{*captured_name}...`` except that the glob pattern is ``**``.
+        * ``...{**captured_name}...`` is a shorthand for ``...{*captured_name:**}...``. That is, it acts similarly to
+          ``...{*captured_name}...`` except that the glob pattern is ``**``.
 
           .. note::
 
-            Do not use the ``{*foo:**}`` form. There's some special treatment for the ``{**foo}``
-            form as it can expand to the empty string. In particular, it is expected to always be
-            used between ``/`` characters, as in ``.../{**foo}/...``, and may expand to either no
-            directory name, a single directory name, or a sequence of directory names.
+            Do not use the ``{*foo:**}`` form. There's some special treatment for the ``{**foo}`` form as it can expand
+            to the empty string. In particular, it is expected to always be used between ``/`` characters, as in
+            ``.../{**foo}/...``, and may expand to either no directory name, a single directory name, or a sequence of
+            directory names.
 
-        If a pattern is not annotated with :py:func:`dynamake.optional` and it matches no existing
-        files, an error is raised.
+        If a pattern is not annotated with :py:func:`dynamake.optional` and it matches no existing files, an error is
+        raised.
 
     **Returns**
 
     Captured
-        The list of existing file paths that match the patterns, and the list of dictionaries with
-        the captured values for each such path. The annotations (:py:class:`dynamake.AnnotatedStr`)
-        of the pattern are copied to the paths expanded from the pattern.
+        The list of existing file paths that match the patterns, and the list of dictionaries with the captured values
+        for each such path. The annotations (:py:class:`dynamake.AnnotatedStr`) of the pattern are copied to the paths
+        expanded from the pattern.
     """
     captured = Captured()
     for pattern in each_string(*patterns):
@@ -903,8 +893,8 @@ def glob_capture(*patterns: Strings) -> Captured:
 
 def glob_paths(*patterns: Strings) -> List[str]:
     """
-    Similar to :py:func:`dynamake.glob_capture`, but just return the list of matching paths,
-    ignoring any extracted values.
+    Similar to :py:func:`dynamake.glob_capture`, but just return the list of matching paths, ignoring any extracted
+    values.
     """
     paths: List[str] = []
 
@@ -923,8 +913,8 @@ def glob_paths(*patterns: Strings) -> List[str]:
 
 def glob_extract(*patterns: Strings) -> List[Dict[str, Any]]:
     """
-    Similar to :py:func:`dynamake.glob_capture`, but just return the list of extracted wildcards
-    dictionaries, ignoring the matching paths.
+    Similar to :py:func:`dynamake.glob_capture`, but just return the list of extracted wildcards dictionaries, ignoring
+    the matching paths.
     """
     return glob_capture(*patterns).wildcards
 
@@ -944,8 +934,8 @@ def _capture_string(pattern: str, regexp: Pattern, string: str) -> Dict[str, Any
 
 def glob_fmt(pattern: str, *templates: Strings) -> List[str]:
     """
-    For each file that matches the capture ``pattern``, extract its wildcards,
-    then use them to format each of the ``templates``.
+    For each file that matches the capture ``pattern``, extract its wildcards, then use them to format each of the
+    ``templates``.
     """
     results: List[str] = []
     for wildcards in glob_extract(pattern):
@@ -1167,8 +1157,8 @@ def clean_path(path: str) -> str:
     """
     Return a clean and hopefully "canonical" path.
 
-    We do not use absolute paths everywhere (as that would mess up the match patterns). Instead we
-    just convert each ``//`` to a single ``/`` and remove any final ``/``. Perhaps more is needed.
+    We do not use absolute paths everywhere (as that would mess up the match patterns). Instead we just convert each
+    ``//`` to a single ``/`` and remove any final ``/``. Perhaps more is needed.
     """
     previous_path = ""
     next_path = path
@@ -1261,8 +1251,7 @@ class Stat:
         """
         Fast glob through the cache.
 
-        If the pattern is a file name we know about, we can just return the result without touching
-        the file system.
+        If the pattern is a file name we know about, we can just return the result without touching the file system.
         """
 
         path = clean_path(pattern)
@@ -1283,8 +1272,8 @@ class Stat:
     @staticmethod
     def forget(path: str) -> None:
         """
-        Forget the cached ``stat`` data about a file. If it is a directory,
-        also forget all the data about any files it contains.
+        Forget the cached ``stat`` data about a file. If it is a directory, also forget all the data about any files it
+        contains.
         """
         path = clean_path(path)
         index = Stat._cache.bisect_left(path)
@@ -1348,9 +1337,8 @@ def exec_file(path: str, global_vars: Dict[str, Any]) -> None:
     """
     Execute the code in the specified ``path``.
 
-    This allows one ``DynaMake.py`` file to include steps from another file without going through
-    the trouble of setting up importable Python modules. To do so transparently, you must pass
-    ``globals()`` as the value of ``global_vars``.
+    This allows one ``DynaMake.py`` file to include steps from another file without going through the trouble of setting
+    up importable Python modules. To do so transparently, you must pass ``globals()`` as the value of ``global_vars``.
 
     "With great power comes great responsibility", etc.
     """
@@ -1419,8 +1407,8 @@ class Parameter:  # pylint: disable=too-many-instance-attributes
     @staticmethod
     def add_to_parser(parser: ArgumentParser) -> None:
         """
-        Add a command line flag for each parameter to the parser to allow
-        overriding parameter values directly from the command line.
+        Add a command line flag for each parameter to the parser to allow overriding parameter values directly from the
+        command line.
         """
         parser.add_argument(
             "--config", "-c", metavar="FILE", action="append", help="Load a parameters configuration YAML file"
@@ -1444,8 +1432,7 @@ class Parameter:  # pylint: disable=too-many-instance-attributes
     @staticmethod
     def parse_args(args: Namespace) -> None:
         """
-        Update the values based on loaded configuration files and/or explicit
-        command line flags.
+        Update the values based on loaded configuration files and/or explicit command line flags.
         """
         if os.path.exists(DEFAULT_CONFIG):
             Parameter.load_config(DEFAULT_CONFIG)
@@ -1515,11 +1502,10 @@ log_skipped_actions: Parameter
 
 #: Whether to not actually execute instructions (dry run).
 #
-#: If this is ``True``, then the build will just log actions but not actually execute them. This is
-#: very restricted compared to ``make -n``, specifically it will only log the 1st action (or 1st
-#: several parallel actions), since we can't safely continue execution following these actions as
-#: the code may depend on their results (e.g., examine the content of files generated by the
-#: action).
+#: If this is ``True``, then the build will just log actions but not actually execute them. This is very restricted
+#: compared to ``make -n``, specifically it will only log the 1st action (or 1st several parallel actions), since we
+#: can't safely continue execution following these actions as the code may depend on their results (e.g., examine the
+#: content of files generated by the action).
 no_actions: Parameter
 
 #: Whether to rebuild outputs if the actions have changed (by default, ``True``).
@@ -1530,30 +1516,24 @@ persistent_directory: Parameter
 
 #: Whether to stop the script if any action fails (by default, ``True``).
 #
-#: If this is ``False``, then the build will continue to execute unrelated
-#: actions. In all cases, actions that have already started will be allowed to
-#: end normally.
+#: If this is ``False``, then the build will continue to execute unrelated actions. In all cases, actions that have
+#: already started will be allowed to end normally.
 failure_aborts_build: Parameter
 
-#: Whether to remove old output files before executing an action (by default,
-#: ``True``).
+#: Whether to remove old output files before executing an action (by default, ``True``).
 remove_stale_outputs: Parameter
 
-# Whether to touch output files on a successful action to ensure they are newer
-# than the input file(s) (by default, ``False``).
+# Whether to touch output files on a successful action to ensure they are newer than the input file(s) (by default,
+# ``False``).
 #
-#: In these modern times, this is mostly unneeded as we use the nanosecond
-#: modification time, which pretty much guarantees that output files will be
-#: newer than input files. In the "bad old days", files created within a second
-#: of each other had the same modification time, which would confuse the build
-#: tools.
+#: In these modern times, this is mostly unneeded as we use the nanosecond modification time, which pretty much
+#: guarantees that output files will be newer than input files. In the "bad old days", files created within a second of
+#: each other had the same modification time, which would confuse the build tools.
 #
-#: This might still be needed if an output is a directory (not a file) and
-#: `remove_stale_outputs` is ``False``, since otherwise the ``mtime`` of an
-#: existing directory will not necessarily be updated to reflect the fact the
-#: action was executed. In general it is not advised to depend on the ``mtime``
-#: of directories; it is better to specify a glob matching the expected files
-#: inside them, or use an explicit timestamp file.
+#: This might still be needed if an output is a directory (not a file) and ``remove_stale_outputs`` is ``False``, since
+#: otherwise the ``mtime`` of an existing directory will not necessarily be updated to reflect the fact the action was
+#: executed. In general it is not advised to depend on the ``mtime`` of directories; it is better to specify a glob
+#: matching the expected files inside them, or use an explicit timestamp file.
 touch_success_outputs: Parameter
 
 #: Whether to remove output files on a failing action (by default, ``True``).
@@ -1804,9 +1784,8 @@ def resource_parameters(**default_amounts: int) -> None:
     """
     Declare additional resources for controlling parallel action execution.
 
-    Each resource should have been declared as a :py:class:`Parameter`.  The
-    value given here is the default amount of the resource used by each action
-    that does not specify an explicit value.
+    Each resource should have been declared as a :py:class:`Parameter`.  The value given here is the default amount of
+    the resource used by each action that does not specify an explicit value.
     """
     for name, amount in default_amounts.items():
         total = Resources.total.get(name)
@@ -1830,15 +1809,13 @@ def resource_parameters(**default_amounts: int) -> None:
 
 class StepException(Exception):
     """
-    Indicates a step has aborted and its output must not be used by other
-    steps.
+    Indicates a step has aborted and its output must not be used by other steps.
     """
 
 
 class DryRunException(StepException):
     """
-    Indicates a step has aborted and its output must not be used by other
-    steps.
+    Indicates a step has aborted and its output must not be used by other steps.
     """
 
     def __init__(self) -> None:
@@ -1974,8 +1951,8 @@ class PersistentAction:
     """
     An action taken during step execution.
 
-    We can persist this to ensure the action taken in a future invocation is
-    identical, to trigger rebuild if the list of actions changes.
+    We can persist this to ensure the action taken in a future invocation is identical, to trigger rebuild if the list
+    of actions changes.
     """
 
     def __init__(self, previous: Optional["PersistentAction"] = None) -> None:
@@ -2127,8 +2104,8 @@ class RwLocks:
         """
         Async context for actions that require some locked items.
 
-        Each item specifies the name and whether to lock it for reading or writing.
-        To avoid deadlocks, all invocations of this function must sort the items first.
+        Each item specifies the name and whether to lock it for reading or writing. To avoid deadlocks, all invocations
+        of this function must sort the items first.
         """
         if len(items) == 0:
             yield
@@ -2634,8 +2611,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
     def require(self, path: str) -> None:  # pylint: disable=too-many-branches
         """
-        Require a file to be up-to-date before executing any actions or
-        completing the current invocation.
+        Require a file to be up-to-date before executing any actions or completing the current invocation.
         """
         self._become_current()
         self.abort_due_to_other()
@@ -2826,8 +2802,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
         """
         Wait until the invocation is done.
 
-        This is used by other invocations that use this invocation's output(s)
-        as their input(s).
+        This is used by other invocations that use this invocation's output(s) as their input(s).
         """
         self._become_current()
 
@@ -2846,9 +2821,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
     def collect_initial_outputs(self) -> None:  # pylint: disable=too-many-branches
         """
-        Check which of the outputs already exist and what their modification
-        times are, to be able to decide whether actions need to be run to
-        create or update them.
+        Check which of the outputs already exist and what their modification times are, to be able to decide whether
+        actions need to be run to create or update them.
         """
         assert self.step is not None
         missing_outputs = []
@@ -2924,11 +2898,11 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
     async def collect_final_outputs(self) -> None:  # pylint: disable=too-many-branches
         """
-        Ensure that all the (required) outputs were actually created and are
-        newer than all input files specified so far.
+        Ensure that all the (required) outputs were actually created and are newer than all input files specified so
+        far.
 
-        If successful, this marks all the outputs as up-to-date so that steps
-        that depend on them will immediately proceed.
+        If successful, this marks all the outputs as up-to-date so that steps that depend on them will immediately
+        proceed.
         """
         self._become_current()
 
@@ -2998,8 +2972,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
     @staticmethod
     def remove_output(path: str) -> None:
         """
-        Remove an output file, and possibly the directories that became empty
-        as a result.
+        Remove an output file, and possibly the directories that became empty as a result.
         """
         try:
             Stat.remove(path)
@@ -3033,8 +3006,7 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
 
     def should_run_action(self) -> bool:  # pylint: disable=too-many-return-statements
         """
-        Test whether all (required) outputs already exist, and are newer than
-        all input files specified so far.
+        Test whether all (required) outputs already exist, and are newer than all input files specified so far.
         """
         if self.must_run_action:
             return True
@@ -3111,8 +3083,8 @@ class Invocation:  # pylint: disable=too-many-instance-attributes,too-many-publi
     @staticmethod
     def different_required(old_required: Dict[str, UpToDate], new_required: Dict[str, UpToDate]) -> bool:
         """
-        Check whether the required inputs of the new action are different from
-        the required inputs of the last build action.
+        Check whether the required inputs of the new action are different from the required inputs of the last build
+        action.
         """
         for new_path in sorted(new_required.keys()):
             if new_path not in old_required:
@@ -3483,10 +3455,9 @@ def step(
     """
     Decorate a build step functions.
 
-    The ``priority`` (default: 0) is used to pick between multiple steps
-    providing the same output. This is typically used to define low-priority
-    steps with pattern outputs and high-priority steps which override them for
-    specific output(s).
+    The ``priority`` (default: 0) is used to pick between multiple steps providing the same output. This is typically
+    used to define low-priority steps with pattern outputs and high-priority steps which override them for specific
+    output(s).
     """
 
     def _wrap(wrapped: Callable) -> Callable:
@@ -3500,8 +3471,7 @@ def require(*paths: Strings) -> None:
     """
     Require an input file for the step.
 
-    This queues an async build of the input file using the appropriate step,
-    and immediately returns.
+    This queues an async build of the input file using the appropriate step, and immediately returns.
     """
     for path in each_string(*paths):
         Invocation.current.require(path)
@@ -3521,18 +3491,16 @@ async def shell(*command: Strings, prefix: Optional[Strings] = None, **resources
     """
     Execute a shell command.
 
-    The caller is responsible for all quotations. If the first character of the
-    command is ``@`` then it is "silent", that is, it is logged in the FILE
-    level and not the INFO level.
+    The caller is responsible for all quotations. If the first character of the command is ``@`` then it is "silent",
+    that is, it is logged in the FILE level and not the INFO level.
 
     This first waits until all input files requested so far are ready.
 
-    The shell command is only executed after any ``resources`` are obtained.
-    This can be used to ensure a bounded total amount used by of any resource
-    declared by ``resource_parameters``.
+    The shell command is only executed after any ``resources`` are obtained. This can be used to ensure a bounded total
+    amount used by of any resource declared by ``resource_parameters``.
 
-    If ``prefix`` is specified, it is silently added to the command. By default this
-    is the value of the :py:const:`default_shell_prefix` parameter.
+    If ``prefix`` is specified, it is silently added to the command. By default this is the value of the
+    :py:const:`default_shell_prefix` parameter.
     """
     current = Invocation.current
     if prefix is None:
@@ -3556,8 +3524,8 @@ async def spawn(*command: Strings, **resources: int) -> None:
     """
     Execute an external program with arguments.
 
-    If the first character of the command is ``@`` then it is "silent", that
-    is, it is logged in the FILE level and not the INFO level.
+    If the first character of the command is ``@`` then it is "silent", that is, it is logged in the FILE level and not
+    the INFO level.
 
     This first waits until all input files requested so far are ready.
     """
@@ -3579,13 +3547,12 @@ def make(
     """
     A generic ``main`` function for ``DynaMake``.
 
-    If no explicit targets are given, will build the ``default_targets``
-    (default: ``all``).
+    If no explicit targets are given, will build the ``default_targets`` (default: ``all``).
 
     Uses the ``logger_name`` (default: ``dynamake``) to create the global :py:class:`Logger`.
 
-    The optional ``adapter`` may perform additional adaptation of the execution environment based on
-    the parsed command-line arguments before the actual function(s) are invoked.
+    The optional ``adapter`` may perform additional adaptation of the execution environment based on the parsed
+    command-line arguments before the actual function(s) are invoked.
     """
     default_targets = flatten(default_targets)
 
@@ -3628,9 +3595,8 @@ def make(
 
 
 def _load_modules() -> None:
-    # TODO: This needs to be done before we set up the command line options
-    # parser, because the options depend on the loaded modules. Catch-22. This
-    # therefore employs a brutish option detection which may not be 100% correct.
+    # TODO: This needs to be done before we set up the command line options parser, because the options depend on the
+    # loaded modules. Catch-22. This therefore employs a brutish option detection which may not be 100% correct.
     did_import = False
     for option, value in zip(sys.argv, sys.argv[1:]):
         if option in ["-m", "--module"]:
@@ -3721,9 +3687,9 @@ async def reading(*names: Strings) -> AsyncGenerator:
     """
     Async context for actions that reads some data which might be accessed by other actions.
 
-    The actual locks are only obtained when invoking the :py:func:`locks` function (which is
-    automatic for running actions). Otherwise, this just collects the required locks. Deferring the
-    actual locking allows us to avoid deadlocks.
+    The actual locks are only obtained when invoking the :py:func:`locks` function (which is automatic for running
+    actions). Otherwise, this just collects the required locks. Deferring the actual locking allows us to avoid
+    deadlocks.
     """
     invocation = Invocation.current
     assert not invocation.has_locks
@@ -3744,9 +3710,9 @@ async def writing(*names: Strings) -> AsyncGenerator:
     """
     Async context for actions that modify some data which might be accessed by other actions.
 
-    The actual locks are only obtained when invoking the :py:func:`locks` function (which is
-    automatic for running actions). Otherwise, this just collects the required locks. Deferring the
-    actual locking allows us to avoid deadlocks.
+    The actual locks are only obtained when invoking the :py:func:`locks` function (which is automatic for running
+    actions). Otherwise, this just collects the required locks. Deferring the actual locking allows us to avoid
+    deadlocks.
     """
     invocation = Invocation.current
     assert not invocation.has_locks
@@ -3764,11 +3730,10 @@ async def writing(*names: Strings) -> AsyncGenerator:
 @asynccontextmanager
 async def locks() -> AsyncGenerator:
     """
-    Async context for actually obtaining the locks collected by :py:func:`reading` and/or
-    :py:func:`writing`.
+    Async context for actually obtaining the locks collected by :py:func:`reading` and/or :py:func:`writing`.
 
-    It is not allowed to invoke :py:func:`reading` and/or :py:func:`writing` inside the ``with``
-    statement, to avoid deadlocks. Nested `locks` are allowed, but the inner ones are no-ops.
+    It is not allowed to invoke :py:func:`reading` and/or :py:func:`writing` inside the ``with`` statement, to avoid
+    deadlocks. Nested ``locks`` are allowed, but the inner ones are no-ops.
     """
     invocation = Invocation.current
     if invocation.has_locks:
@@ -3817,8 +3782,7 @@ def outputs() -> List[str]:
     """
     Return the list of expanded outputs of the current step.
 
-    These contain the concrete names for pattern outputs, except for the names
-    of dynamic outputs.
+    These contain the concrete names for pattern outputs, except for the names of dynamic outputs.
     """
     return Invocation.current.expanded_outputs
 
@@ -3876,8 +3840,8 @@ def can_make(path: str) -> bool:
 
 def try_require(path: str) -> bool:
     """
-    If there are steps to create the specified ``path``, ``require`` it, and return
-    ``True``; otherwise, return ``False``.
+    If there are steps to create the specified ``path``, ``require`` it, and return ``True``; otherwise, return
+    ``False``.
     """
     if can_make(path):
         require(path)
@@ -3888,9 +3852,8 @@ def try_require(path: str) -> bool:
 
 def expand(*templates: Strings, **kwargs: Strings) -> List[str]:
     """
-    Given some ``templates`` and one or more ``kwargs`` which specify a list of possible values,
-    expand each template with every possible combination of keyword argument values and return the
-    results as a list of strings.
+    Given some ``templates`` and one or more ``kwargs`` which specify a list of possible values, expand each template
+    with every possible combination of keyword argument values and return the results as a list of strings.
     """
     formats = flatten(*templates)
     results: List[str] = []
